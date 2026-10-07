@@ -1,0 +1,12 @@
+{
+  "name": "heroos",
+  "private": true,
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "web:dev": "pnpm --filter @heroos/web dev",
+    "web:build": "pnpm --filter @heroos/web build",
+    "web:lint": "pnpm --filter @heroos/web lint",
+    "web:typecheck": "pnpm --filter @heroos/web typecheck",
+    "web:test": "pnpm --filter @heroos/web test"
+  }
+}
