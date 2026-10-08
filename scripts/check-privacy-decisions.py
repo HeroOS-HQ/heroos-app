@@ -2,10 +2,11 @@
 """Validate the Privacy & Security Decision Register and the JJ review packet.
 
 Checks the governance rules in docs/privacy/decision-register.md §2-§5:
-unique, contiguous PRIV IDs; required packet fields and sections; controlled
-vocabularies; no decided status without JJ evidence; no legal confirmation
-without evidence; no implemented policy without approval; and agreement between
-packets, the summary table, the traceability matrix and the JJ review packet.
+unique, contiguous PRIV IDs; existing cross-references; required packet fields
+and sections; controlled vocabularies; no decided status without JJ evidence;
+no legal confirmation without evidence; no implemented policy without
+approval; and agreement between packets, the summary table, the traceability
+matrix and the JJ review packet.
 
 Standard library only. Usage:
     scripts/check-privacy-decisions.py              # check the repository
@@ -210,6 +211,9 @@ def check_register(text: str, errors: list[str]) -> dict[str, Packet]:
     ids = list(packets)
     for pid in ids:
         check_packet(pid, packets[pid], errors)
+        for ref in ANY_ID.findall(packets[pid]["fields"].get("Related decisions", "")):
+            if ref not in packets:
+                errors.append(f"{pid}: related decision {ref} does not exist")
     expected = [f"PRIV-{n:03d}" for n in range(1, len(ids) + 1)]
     if sorted(ids) != expected:
         errors.append(f"register: IDs are not contiguous from PRIV-001: {sorted(ids)}")
@@ -450,6 +454,12 @@ def self_test() -> int:
         ),
         ("JJ packet omits ready item", _register(good), "", "not listed"),
         ("JJ packet unknown ID", _register(good), good_jj + "PRIV-099\n", "does not exist"),
+        (
+            "related decision unknown",
+            _register([("PRIV-001", "One", {"Related decisions": "PRIV-099"})]),
+            "",
+            "related decision PRIV-099 does not exist",
+        ),
     ]
     failures = 0
     for name, register, jj, expected in cases:
