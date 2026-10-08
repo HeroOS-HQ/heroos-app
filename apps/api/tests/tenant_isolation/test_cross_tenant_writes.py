@@ -330,3 +330,62 @@ def test_same_company_create_update_delete_succeed(
         assert case.company_id == a.company
         # Company B untouched.
         assert count_rows(db, "company_blueprints") == 1
+
+
+# --- WITH CHECK on its own ---------------------------------------------------
+# ORM inserts use RETURNING and the UPDATEs above have a WHERE clause; in both
+# cases PostgreSQL also applies the policy's USING expression to the new row.
+# These statement shapes leave WITH CHECK as the only barrier (found by
+# mutation testing with WITH CHECK (true)).
+
+PLAIN_INSERTS = {
+    "companies": "INSERT INTO companies (id, name) VALUES (gen_random_uuid(), 'Forged')",
+    "memberships": (
+        "INSERT INTO memberships (id, company_id, user_id) "
+        "VALUES (gen_random_uuid(), :target, :carol)"
+    ),
+    "company_blueprints": (
+        "INSERT INTO company_blueprints (id, company_id) VALUES (gen_random_uuid(), :target)"
+    ),
+    "case_subjects": (
+        "INSERT INTO case_subjects (id, company_id, subject_type, display_name) "
+        "VALUES (gen_random_uuid(), :target, 'employee', 'Forged')"
+    ),
+    "cases": (
+        "INSERT INTO cases (id, company_id, case_type, title) "
+        "VALUES (gen_random_uuid(), :target, 'probation', 'Forged')"
+    ),
+}
+
+UNQUALIFIED_REPARENTS = {
+    "companies": "UPDATE companies SET id = gen_random_uuid()",
+    "memberships": "UPDATE memberships SET company_id = :target",
+    "company_blueprints": "UPDATE company_blueprints SET company_id = :target",
+    "case_subjects": "UPDATE case_subjects SET company_id = :target",
+    "cases": "UPDATE cases SET company_id = :target",
+}
+
+
+@pytest.mark.parametrize("table", TENANT_TABLES)
+@pytest.mark.parametrize("kind", ["insert-without-returning", "update-without-where"])
+def test_with_check_alone_blocks_other_company_rows(
+    runtime_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+    table: str,
+    kind: str,
+) -> None:
+    statement = (PLAIN_INSERTS if kind == "insert-without-returning" else UNQUALIFIED_REPARENTS)[
+        table
+    ]
+    before = _snapshot(admin_sessions, tenants.a)
+
+    with runtime_sessions() as db:
+        scope_for(db, tenants.a)
+        with pytest.raises(DBAPIError) as exc_info:
+            db.execute(text(statement), {"target": tenants.b.company, "carol": tenants.carol})
+
+    assert _sqlstate(exc_info.value) == RLS_VIOLATION
+    assert _snapshot(admin_sessions, tenants.a) == before
+    with admin_sessions() as db:
+        assert count_rows(db, table) == 2
