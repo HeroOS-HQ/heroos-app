@@ -1,14 +1,81 @@
+from typing import Literal, Self
+
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+Environment = Literal["development", "staging", "production"]
+AuthProviderName = Literal["development", "cognito"]
+
+# HS256 keys shorter than the 256-bit digest weaken the development signature.
+DEV_AUTH_SECRET_MIN_LENGTH = 32
 
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://heroos:heroos_local@localhost:5433/heroos"
 
+    heroos_env: Environment = "development"
+
+    # Authentication. See docs/architecture/authentication.md.
+    # Unset means no provider: protected routes reject every request.
+    heroos_auth_provider: AuthProviderName | None = None
+    heroos_dev_auth_secret: SecretStr | None = None
+    heroos_cognito_issuer: str | None = None
+    heroos_cognito_app_client_id: str | None = None
+    heroos_cognito_jwks_uri: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Validation errors must never echo raw configuration (secrets, DSNs).
+        hide_input_in_errors=True,
     )
+
+    @model_validator(mode="after")
+    def _validate_authentication(self) -> Self:
+        if self.heroos_env != "development":
+            # Deployed environments fail closed: Cognito only, and no development
+            # signing material may be present at all.
+            if self.heroos_auth_provider != "cognito":
+                raise ValueError(
+                    f"HEROOS_AUTH_PROVIDER must be 'cognito' when HEROOS_ENV={self.heroos_env}"
+                )
+            if self.heroos_dev_auth_secret is not None:
+                raise ValueError("HEROOS_DEV_AUTH_SECRET must not be set outside development")
+
+        if self.heroos_auth_provider == "development":
+            secret = self.heroos_dev_auth_secret
+            if secret is None or len(secret.get_secret_value()) < DEV_AUTH_SECRET_MIN_LENGTH:
+                raise ValueError(
+                    "HEROOS_DEV_AUTH_SECRET must be at least "
+                    f"{DEV_AUTH_SECRET_MIN_LENGTH} characters for the development provider"
+                )
+
+        if self.heroos_auth_provider == "cognito":
+            if not self.heroos_cognito_issuer or not self.heroos_cognito_app_client_id:
+                raise ValueError(
+                    "HEROOS_COGNITO_ISSUER and HEROOS_COGNITO_APP_CLIENT_ID are required "
+                    "for the cognito provider"
+                )
+            issuer = self.heroos_cognito_issuer
+            if not issuer.startswith("https://") or issuer.endswith("/"):
+                # Compared verbatim with the token `iss` claim, which has no
+                # trailing slash.
+                raise ValueError("HEROOS_COGNITO_ISSUER must be an https URL without a trailing /")
+            if self.heroos_cognito_jwks_uri and not self.heroos_cognito_jwks_uri.startswith(
+                "https://"
+            ):
+                raise ValueError("HEROOS_COGNITO_JWKS_URI must be an https URL")
+
+        return self
+
+    @property
+    def cognito_jwks_uri(self) -> str | None:
+        if self.heroos_cognito_jwks_uri:
+            return self.heroos_cognito_jwks_uri
+        if self.heroos_cognito_issuer:
+            return f"{self.heroos_cognito_issuer}/.well-known/jwks.json"
+        return None
 
 
 settings = Settings()
