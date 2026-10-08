@@ -135,3 +135,34 @@ jobs:
       - name: Stop PostgreSQL
         if: always()
         run: docker compose down --volumes
+
+  backup-restore:
+    name: Backup & Restore
+    runs-on: ubuntu-latest
+
+    # Recovery gate: logical backup -> restore -> verify on disposable
+    # databases in the Compose PostgreSQL 16 service, using its matching
+    # pg_dump/pg_restore. CI-only local credentials, no AWS and no secrets.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        run: pipx install uv==0.12.2
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      - name: Start PostgreSQL 16
+        run: docker compose up -d --wait db
+
+      - name: Backup and restore verification (data, schema, RLS, grants, cleanup)
+        run: make backup-restore-check
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
