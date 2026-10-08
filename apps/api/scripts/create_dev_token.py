@@ -14,6 +14,8 @@ import argparse
 import sys
 from datetime import timedelta
 
+from pydantic import ValidationError
+
 from app.auth.providers.development import (
     DEFAULT_DEVELOPMENT_TOKEN_LIFETIME,
     issue_development_token,
@@ -32,7 +34,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    settings = Settings()
+    try:
+        settings = Settings()  # type: ignore[call-arg]  # values come from the environment
+    except ValidationError as exc:
+        # Settings errors never include input values, so this cannot print secrets.
+        print(f"Refusing: invalid configuration.\n{exc}", file=sys.stderr)
+        return 1
     if (
         settings.heroos_env != "development"
         or settings.heroos_auth_provider != "development"

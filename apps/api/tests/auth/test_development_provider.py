@@ -161,9 +161,27 @@ def test_dev_token_script_refuses_without_development_configuration(
     from scripts.create_dev_token import main
 
     monkeypatch.chdir(tmp_path)  # no local .env
+    monkeypatch.setenv("HEROOS_ENV", "development")
 
     assert main(["alice-subject"]) == 1
     assert "Refusing" in capsys.readouterr().err
+
+
+def test_dev_token_script_refuses_without_heroos_env(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from scripts.create_dev_token import main
+
+    monkeypatch.chdir(tmp_path)  # no local .env
+    monkeypatch.setenv("HEROOS_AUTH_PROVIDER", "development")
+    monkeypatch.setenv("HEROOS_DEV_AUTH_SECRET", TEST_DEV_SECRET.get_secret_value())
+
+    assert main(["alice-subject"]) == 1
+    err = capsys.readouterr().err
+    assert "heroos_env" in err
+    assert TEST_DEV_SECRET.get_secret_value() not in err
 
 
 def test_dev_token_script_issues_verifiable_token(

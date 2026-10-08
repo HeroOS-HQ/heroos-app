@@ -7,8 +7,11 @@ docs/architecture/authentication.md). Validation:
 - ``iss`` equals the configured User Pool issuer
 - ``exp`` / ``iat`` present and ``exp`` not passed
 - ``token_use == "access"``
-- ``client_id`` equals the configured App Client ID (access tokens carry no
-  ``aud``; a token that does carry ``aud``, such as an ID token, is rejected)
+- ``client_id`` equals the configured App Client ID
+- ``aud`` only when a resource audience is configured: it must then be present
+  and match. Otherwise ``aud`` is ignored; it is never used to tell access
+  tokens from ID tokens (``token_use`` does that), because resource-bound
+  access tokens legitimately carry ``aud``
 - non-empty ``sub``, the stable identity mapped to ``users.identity_subject``
 
 No Cognito resource exists yet; live activation is M3 work.
@@ -37,10 +40,18 @@ def build_jwks_client(jwks_uri: str) -> jwt.PyJWKClient:
 
 
 class CognitoAccessTokenProvider:
-    def __init__(self, *, issuer: str, app_client_id: str, jwks_client: jwt.PyJWKClient) -> None:
+    def __init__(
+        self,
+        *,
+        issuer: str,
+        app_client_id: str,
+        jwks_client: jwt.PyJWKClient,
+        resource_audience: str | None = None,
+    ) -> None:
         self._issuer = issuer
         self._app_client_id = app_client_id
         self._jwks_client = jwks_client
+        self._resource_audience = resource_audience
 
     def authenticate(self, token: str) -> VerifiedIdentity:
         try:
@@ -50,7 +61,12 @@ class CognitoAccessTokenProvider:
                 signing_key,
                 algorithms=[COGNITO_ALGORITHM],
                 issuer=self._issuer,
-                options={"require": ["exp", "iat", "iss", "sub", "token_use", "client_id"]},
+                # With an audience, PyJWT requires `aud` and checks it matches.
+                audience=self._resource_audience,
+                options={
+                    "require": ["exp", "iat", "iss", "sub", "token_use", "client_id"],
+                    "verify_aud": self._resource_audience is not None,
+                },
             )
         except jwt.PyJWTError as exc:
             raise AuthenticationError(f"cognito token rejected ({type(exc).__name__})") from None

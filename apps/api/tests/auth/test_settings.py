@@ -25,7 +25,37 @@ COGNITO = {
 
 
 def make_settings(**values: Any) -> Settings:
+    values.setdefault("heroos_env", "development")
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]
+
+
+def test_missing_heroos_env_fails_closed() -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(_env_file=None)  # type: ignore[call-arg]
+
+    assert exc_info.value.errors()[0]["loc"] == ("heroos_env",)
+    assert exc_info.value.errors()[0]["type"] == "missing"
+
+
+def test_missing_heroos_env_does_not_default_to_development_auth() -> None:
+    with pytest.raises(ValidationError, match="heroos_env"):
+        Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            heroos_auth_provider="development",
+            heroos_dev_auth_secret=DEV_SECRET,
+        )
+
+
+@pytest.mark.parametrize("environment", ["", "dev", "test", "Production", "PRODUCTION"])
+def test_unrecognised_heroos_env_rejected(environment: str) -> None:
+    with pytest.raises(ValidationError):
+        make_settings(heroos_env=environment)
+
+
+def test_heroos_env_read_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HEROOS_ENV", "development")
+
+    assert Settings(_env_file=None).heroos_env == "development"  # type: ignore[call-arg]
 
 
 def test_development_provider_allowed_in_development() -> None:
@@ -69,11 +99,6 @@ def test_deployed_environments_accept_cognito(environment: str) -> None:
     assert isinstance(build_authentication_provider(settings), CognitoAccessTokenProvider)
 
 
-def test_unknown_environment_rejected() -> None:
-    with pytest.raises(ValidationError):
-        make_settings(heroos_env="Production")
-
-
 @pytest.mark.parametrize("secret", [None, "too-short"])
 def test_development_provider_requires_strong_secret(secret: str | None) -> None:
     with pytest.raises(ValidationError, match="HEROOS_DEV_AUTH_SECRET must be at least"):
@@ -88,11 +113,21 @@ def test_development_provider_requires_strong_secret(secret: str | None) -> None
         {"heroos_cognito_issuer": "http://cognito-idp.test.invalid/test-user-pool"},
         {"heroos_cognito_issuer": "https://cognito-idp.test.invalid/test-user-pool/"},
         {"heroos_cognito_jwks_uri": "http://jwks.test.invalid/jwks.json"},
+        {"heroos_cognito_resource_audience": "  "},
     ],
 )
 def test_incomplete_or_insecure_cognito_configuration_rejected(overrides: dict[str, Any]) -> None:
     with pytest.raises(ValidationError):
         make_settings(**{**COGNITO, **overrides})
+
+
+def test_cognito_resource_audience_passed_to_provider() -> None:
+    settings = make_settings(**COGNITO, heroos_cognito_resource_audience="https://api.test.invalid")
+
+    provider = build_authentication_provider(settings)
+
+    assert isinstance(provider, CognitoAccessTokenProvider)
+    assert provider._resource_audience == "https://api.test.invalid"
 
 
 def test_cognito_jwks_uri_derived_from_issuer() -> None:
@@ -170,6 +205,17 @@ def test_application_startup_fails_with_development_provider_outside_development
 
     assert result.returncode != 0
     assert "HEROOS_AUTH_PROVIDER must be 'cognito'" in result.stderr
+    assert DEV_SECRET not in result.stderr + result.stdout
+
+
+def test_application_startup_fails_without_heroos_env() -> None:
+    result = _import_app(
+        {"HEROOS_AUTH_PROVIDER": "development", "HEROOS_DEV_AUTH_SECRET": DEV_SECRET}
+    )
+
+    assert result.returncode != 0
+    assert "heroos_env" in result.stderr
+    assert "Field required" in result.stderr
     assert DEV_SECRET not in result.stderr + result.stdout
 
 

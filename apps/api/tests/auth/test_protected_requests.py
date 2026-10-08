@@ -109,6 +109,14 @@ def test_no_configured_provider_rejects_everything(
     assert response.status_code == 401
 
 
+def test_resource_bound_access_token_with_aud_allowed(
+    client: TestClient, seed: SeedData, make_cognito_token: CognitoTokenFactory
+) -> None:
+    token = make_cognito_token("alice-subject", aud="https://api.test.invalid")
+
+    assert client.get(url(seed.company_a), headers=bearer(token)).status_code == 200
+
+
 # H. Verified identity without a HeroOS User
 def test_verified_identity_without_user_forbidden(
     client: TestClient, seed: SeedData, make_cognito_token: CognitoTokenFactory

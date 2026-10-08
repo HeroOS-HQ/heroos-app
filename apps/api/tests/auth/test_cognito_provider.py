@@ -18,6 +18,18 @@ from tests.auth.conftest import (
     LocalJWKClient,
 )
 
+RESOURCE_AUDIENCE = "https://api.test.invalid"
+
+
+@pytest.fixture
+def resource_bound_provider(jwk_client: LocalJWKClient) -> CognitoAccessTokenProvider:
+    return CognitoAccessTokenProvider(
+        issuer=TEST_COGNITO_ISSUER,
+        app_client_id=TEST_APP_CLIENT_ID,
+        jwks_client=jwk_client,
+        resource_audience=RESOURCE_AUDIENCE,
+    )
+
 
 def test_valid_access_token_verifies(
     cognito_provider: CognitoAccessTokenProvider, make_cognito_token: CognitoTokenFactory
@@ -105,6 +117,16 @@ def test_id_token_rejected(
         cognito_provider.authenticate(token)
 
 
+def test_id_token_rejected_by_token_use_even_with_matching_client_id(
+    cognito_provider: CognitoAccessTokenProvider, make_cognito_token: CognitoTokenFactory
+) -> None:
+    # Every other check passes, so token_use alone must reject it.
+    token = make_cognito_token(token_use="id", aud=TEST_APP_CLIENT_ID)
+
+    with pytest.raises(AuthenticationError, match="token_use"):
+        cognito_provider.authenticate(token)
+
+
 @pytest.mark.parametrize("token_use", ["id", "refresh", ""])
 def test_wrong_token_use_rejected(
     cognito_provider: CognitoAccessTokenProvider,
@@ -115,11 +137,76 @@ def test_wrong_token_use_rejected(
         cognito_provider.authenticate(make_cognito_token(token_use=token_use))
 
 
-def test_access_token_carrying_audience_rejected(
+def test_access_token_without_aud_accepted(
     cognito_provider: CognitoAccessTokenProvider, make_cognito_token: CognitoTokenFactory
 ) -> None:
-    with pytest.raises(AuthenticationError, match="InvalidAudienceError"):
-        cognito_provider.authenticate(make_cognito_token(aud=TEST_APP_CLIENT_ID))
+    token = make_cognito_token()
+
+    assert "aud" not in jwt.decode(token, options={"verify_signature": False})
+    assert cognito_provider.authenticate(token).subject == "alice-subject"
+
+
+@pytest.mark.parametrize(
+    "aud", [RESOURCE_AUDIENCE, "https://other.test.invalid", [RESOURCE_AUDIENCE]]
+)
+def test_access_token_with_aud_accepted_when_no_resource_audience_configured(
+    cognito_provider: CognitoAccessTokenProvider,
+    make_cognito_token: CognitoTokenFactory,
+    aud: object,
+) -> None:
+    # Resource-bound access tokens carry aud; it must not be mistaken for an ID token.
+    assert cognito_provider.authenticate(make_cognito_token(aud=aud)).subject == "alice-subject"
+
+
+@pytest.mark.parametrize(
+    "aud", [RESOURCE_AUDIENCE, ["https://other.test.invalid", RESOURCE_AUDIENCE]]
+)
+def test_configured_resource_audience_accepted(
+    resource_bound_provider: CognitoAccessTokenProvider,
+    make_cognito_token: CognitoTokenFactory,
+    aud: object,
+) -> None:
+    identity = resource_bound_provider.authenticate(make_cognito_token(aud=aud))
+
+    assert identity.subject == "alice-subject"
+
+
+@pytest.mark.parametrize(
+    "aud",
+    [
+        pytest.param("https://other.test.invalid", id="wrong"),
+        pytest.param(["https://other.test.invalid"], id="wrong-list"),
+        pytest.param(TEST_APP_CLIENT_ID, id="app-client-id"),
+        pytest.param(OMIT, id="missing"),
+    ],
+)
+def test_configured_resource_audience_mismatch_rejected(
+    resource_bound_provider: CognitoAccessTokenProvider,
+    make_cognito_token: CognitoTokenFactory,
+    aud: object,
+) -> None:
+    with pytest.raises(AuthenticationError):
+        resource_bound_provider.authenticate(make_cognito_token(aud=aud))
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        pytest.param({"token_use": "id"}, id="id-token-use"),
+        pytest.param({"client_id": "another-app-client"}, id="wrong-client"),
+        pytest.param({"iss": "https://cognito-idp.test.invalid/other-pool"}, id="wrong-issuer"),
+        pytest.param({"exp": int(time.time()) - 60, "iat": int(time.time()) - 660}, id="expired"),
+    ],
+)
+def test_matching_resource_audience_does_not_relax_other_checks(
+    resource_bound_provider: CognitoAccessTokenProvider,
+    make_cognito_token: CognitoTokenFactory,
+    overrides: dict[str, object],
+) -> None:
+    with pytest.raises(AuthenticationError):
+        resource_bound_provider.authenticate(
+            make_cognito_token(**{"aud": RESOURCE_AUDIENCE, **overrides})
+        )
 
 
 @pytest.mark.parametrize("missing", ["sub", "iss", "exp", "iat", "token_use", "client_id"])

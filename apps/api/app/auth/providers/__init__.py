@@ -35,4 +35,5 @@ def build_authentication_provider(settings: Settings) -> AuthenticationProvider 
                 issuer=issuer,
                 app_client_id=app_client_id,
                 jwks_client=build_jwks_client(jwks_uri),
+                resource_audience=settings.heroos_cognito_resource_audience,
             )
