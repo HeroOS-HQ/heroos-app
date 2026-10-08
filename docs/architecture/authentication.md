@@ -1,6 +1,6 @@
 # HeroOS Authentication and Company Authorization
 
-**Status:** Implemented foundation (M1-05); live Cognito activation deferred to M3\
+**Status:** Implemented foundation (M1-05); live Cognito activation deferred to M5 (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-05 — Establish authentication & membership authorization foundation\
@@ -255,7 +255,7 @@ transaction-local PostgreSQL tenant context and Row-Level Security. M1-05
 authorizes entry into a Company. M1-06 scopes every query inside it. See
 [Tenant Isolation](tenant-isolation.md).
 
-**M3 — live Cognito activation** includes:
+**M5 — live Cognito activation** includes:
 
 - creating the Cognito User Pool and App Client (Terraform)
 - real issuer, App Client ID and JWKS configuration for Staging and Production

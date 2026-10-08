@@ -101,7 +101,7 @@ Existing local `.env` files must be updated: `DATABASE_URL` now uses
 
 Protected API routes require a Bearer JWT, and access to a Company is granted
 only through a HeroOS Membership. Production uses Amazon Cognito access tokens.
-Live Cognito activation is planned for M3.
+Live Cognito activation is planned for M5.
 
 Locally, set `HEROOS_AUTH_PROVIDER=development` and `HEROOS_DEV_AUTH_SECRET`
 (see `.env.example`), then issue a short-lived token for an existing
@@ -130,7 +130,7 @@ The development provider is refused outside `HEROOS_ENV=development`. See
   request IDs in `X-Request-ID`. Request content is never logged. See
   [Observability](docs/architecture/observability.md).
 - Production S3, RDS, Secrets Manager, TLS, CloudWatch and backup requirements
-  are activated in M3: [Production Security Gates](docs/architecture/production-security-gates.md).
+  are activated in M5: [Production Security Gates](docs/architecture/production-security-gates.md).
 - Material privacy/security policy choices (retention, deletion, backups,
   AI processing, vendors, residency) are recorded, not assumed, in the
   [Decision Register](docs/privacy/decision-register.md). JJ reviews them through
@@ -138,6 +138,14 @@ The development provider is refused outside `HEROOS_ENV=development`. See
 
 ## Milestones
 
-- M1 — Foundation & Security: complete. Verification evidence, M2 readiness and
-  the M3 cloud-activation deferral are in the
-  [M1 Closeout](docs/milestones/m1-foundation-security-closeout.md).
+- M1 — Foundation & Security — Done
+- M2 — Workflow Platform — Local + CI
+- M3 — Workflow Proof — Local + CI
+- M4 — Intelligence Layer — Local + CI
+- M5 — AWS activation, Staging hardening & Production release
+
+HeroOS stays local-first and CI-verified through M4; AWS activation begins in
+M5. Sequencing, the M5 Staging test/fix loop and the decision record are in the
+[Delivery Plan](docs/milestones/delivery-plan.md). M1 verification evidence and
+M2 readiness are in the
+[M1 Closeout](docs/milestones/m1-foundation-security-closeout.md).

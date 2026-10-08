@@ -4,7 +4,7 @@
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-01 — Finalize V1 architecture & security baseline; decision links added in M1-08\
-**Last updated:** 2026-10-08\
+**Last updated:** 2026-10-09\
 **Related:** [Privacy & Security Decision Register](decision-register.md)
 
 ## 1. Purpose
@@ -60,6 +60,14 @@ introduced if a demonstrated need arises.
 ---
 
 ## 3. Production / Customer-Data Services
+
+**Activation timing.** The AWS services below are selected for the V1
+architecture and planned for M5 cloud activation
+([Delivery Plan](../milestones/delivery-plan.md)). They are not currently
+provisioned and are not currently processing HeroOS production data. Through
+M4, HeroOS runs locally and in CI only. The AI provider is separate: an external
+AI provider could first be used in M4 (Intelligence Layer), and §6 applies
+before it receives identifiable or customer data, whichever milestone that is.
 
 | Service | Status | Purpose | Potential Data | Production Customer Data Expected? | Region / Residency Consideration | Privacy / Legal Review |
 |---|---|---|---|---|---|---|
@@ -280,12 +288,12 @@ Production Enablement
 
 | Service | Inventory fact | Open policy decision | Decision IDs | Agreement / DPA documented in repository? | Residency guarantee documented in repository? |
 |---|---|---|---|---|---|
-| AWS (RDS, S3, Secrets Manager, Step Functions) | Primary production infrastructure, planned in `me-central-1` (ADR-002). No AWS resource exists yet | Residency model and exceptions; backup retention; object versioning; vendor approval | PRIV-007, PRIV-013, PRIV-014, PRIV-017, PRIV-019 | No | No. Region selection is an architecture decision, not a residency guarantee |
-| Amazon Cognito | Selected identity provider; holds account identity such as email. Activation is M3 | Region and data handling; User account deletion | PRIV-008, PRIV-013 | No | No |
-| Amazon CloudWatch | Planned log and metric destination. HeroOS logs are minimized (M1-07) | Log retention | PRIV-006, PRIV-013 | No | No |
+| AWS (RDS, S3, Secrets Manager, Step Functions) | Primary production infrastructure, planned in `me-central-1` (ADR-002). Planned for M5 cloud activation. Not currently provisioned; not currently processing HeroOS production data | Residency model and exceptions; backup retention; object versioning; vendor approval | PRIV-007, PRIV-013, PRIV-014, PRIV-017, PRIV-019 | No | No. Region selection is an architecture decision, not a residency guarantee |
+| Amazon Cognito | Selected identity provider; holds account identity such as email. Planned for M5 cloud activation; not currently provisioned | Region and data handling; User account deletion | PRIV-008, PRIV-013 | No | No |
+| Amazon CloudWatch | Planned log and metric destination, for M5 cloud activation; not currently provisioned. HeroOS logs are minimized (M1-07) | Log retention | PRIV-006, PRIV-013 | No | No |
 | Amazon SES | Planned only if email is required | Email content and retention; region | PRIV-013, PRIV-015 | No | No |
 | AI Provider | Provider TBD. No integration exists | Provider, retention, training use, location, input data categories | PRIV-009, PRIV-010, PRIV-011, PRIV-012, PRIV-021 | No | No |
-| GitHub | Source control, pull requests, CI; deploys to AWS through OIDC (ADR-007) | Whether any production personal/HR data may be placed in GitHub | PRIV-014 | No | No |
+| GitHub | Source control, pull requests, CI. AWS deployment through OIDC is designed (ADR-007) and planned for M5; no deployment pipeline exists yet | Whether any production personal/HR data may be placed in GitHub | PRIV-014 | No | No |
 | Linear | Project and issue management | Whether any production personal/HR data may be placed in Linear | PRIV-014 | No | No |
 | Slack | Team communication | Whether any production personal/HR data may be shared in Slack | PRIV-014 | No | No |
 | Ubuntu Development VPS | Development only, synthetic data. Hosting provider not recorded; requires confirmation | Whether production data or restored production backups may ever be used in development; vendor review once the provider is identified | PRIV-014, PRIV-018 | No | No (provider unknown) |

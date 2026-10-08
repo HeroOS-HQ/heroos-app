@@ -61,6 +61,8 @@ Do not run `terraform apply` merely to validate infrastructure code.
 
 At the current M1-03 foundation stage, Terraform is initialized and validated locally without creating AWS resources.
 
+Live AWS activation is scheduled for M5 after local M2–M4 product completion. M1-03 remains the AWS-ready deployment foundation. See `docs/milestones/delivery-plan.md`.
+
 ## CI/CD Authentication
 
 GitHub Actions will authenticate to AWS using OIDC and temporary AWS credentials.

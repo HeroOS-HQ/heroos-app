@@ -1,6 +1,6 @@
 # HeroOS Observability: Privacy-Safe Logging and Errors
 
-**Status:** Implemented (M1-07) and proven locally. CloudWatch ingestion deferred to M3\
+**Status:** Implemented (M1-07) and proven locally. CloudWatch ingestion deferred to M5 (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-07 — Establish secure storage, secrets, logging & backup foundation\
@@ -28,7 +28,7 @@ logs, and then `install_observability(app)`.
 ## 2. Log format
 
 One JSON object per line on **stdout**, ready for container log collection
-(CloudWatch in M3). Example:
+(CloudWatch in M5). Example:
 
 ```json
 {"timestamp":"2026-10-08T14:28:44.841+00:00","level":"INFO","logger":"app.request","event":"request_completed","request_id":"c0768019054e0f772635976bef9fff99","method":"GET","route":"/companies/{company_id}/cases","status_code":200,"duration_ms":1.75,"company_id":"…","user_id":"…"}
@@ -149,7 +149,7 @@ Mutation checks (M1-07). Each of these made the suites fail: logging the
 request body, logging the exception message, rendering full tracebacks,
 echoing validation input, and re-enabling the Uvicorn access log.
 
-## 8. Deferred to M3
+## 8. Deferred to M5
 
 CloudWatch log groups and ingestion from ECS stdout, log retention (PRIV-006),
 metric filters and alarms for 5xx and `unhandled_exception`, and any

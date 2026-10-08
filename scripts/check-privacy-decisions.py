@@ -46,7 +46,7 @@ LEGAL = {"Required", "Review Required", "Not required", "Confirmed"}
 IMPACTS = {
     "Not currently blocking",
     "Blocks M2 feature",
-    "Blocks M3 production activation",
+    "Blocks M5 production activation",
     "Blocks external data processing",
     "Blocks deletion implementation",
 }

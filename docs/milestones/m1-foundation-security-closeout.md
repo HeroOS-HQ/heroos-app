@@ -1,6 +1,6 @@
 # M1 — Foundation & Security: Closeout and M2 Readiness
 
-**Status:** M1 verified complete on `main`. Live AWS Staging deferred to M3\
+**Status:** M1 verified complete on `main`. AWS Staging and live cloud activation deferred to M5 (post-closeout roadmap amendment, 2026-10-09; originally recorded as M3)\
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-09 — Verify M1 foundation & M2 readiness\
@@ -8,7 +8,29 @@
 **Related:** [Production Security Gates](../architecture/production-security-gates.md),
 [Tenant Isolation](../architecture/tenant-isolation.md),
 [Decision Register](../privacy/decision-register.md),
-[JJ Review Packet](../privacy/jj-decision-review-packet.md)
+[JJ Review Packet](../privacy/jj-decision-review-packet.md),
+[Delivery Plan](delivery-plan.md)
+
+## Post-closeout roadmap amendment — 2026-10-09
+
+M1 was completed and verified under the earlier plan, in which live AWS/Staging
+activation belonged to M3. This document originally recorded that M3 deferral.
+
+After M1 completion, delivery sequencing was refined
+([Delivery Plan](delivery-plan.md)):
+
+- **M2** — Workflow Platform: local + CI
+- **M3** — Workflow Proof: local + CI
+- **M4** — Intelligence Layer: local + CI
+- **M5** — AWS activation, Staging, cloud hardening and Production release
+
+The current-plan statements below (§1, §2, §7, §10, §11 and §12) now name M5
+for AWS and cloud activation. The original wording is in Git history at
+`7449a4b`. Verification results, commit SHAs and CI evidence are unchanged.
+
+This changes delivery timing only. It does not invalidate the M1 architecture,
+implementation, security controls, tests or acceptance evidence. **M1 remains
+Done.**
 
 ## 1. Purpose
 
@@ -17,7 +39,7 @@ who a user is, which Company they may act for, and that one Company's HR data
 (records and files) can never reach another Company. It also covers safe logging,
 recoverable data and recorded privacy decisions. M1 is **local-first,
 cloud-ready, cloud-late**: controls are proven locally and in CI; AWS activation
-is M3.
+is M5.
 
 This document records the M1-09 verification of current `main`. It adds no
 functionality.
@@ -52,7 +74,7 @@ HeroOS now has the secure foundation the product will be built on:
 
 **What is not claimed.** HeroOS is not yet running in AWS. There is no live
 Staging environment, no real Cognito sign-in and no customer-facing product
-screens yet. Cloud activation happens in **M3**, after the M3-blocking decisions
+screens yet. Cloud activation happens in **M5**, after the M5-blocking decisions
 in the register are made. Unresolved legal/privacy decisions stay visible in the
 register. M2 can proceed within those boundaries. In particular, M2 must not offer
 user-facing deletion until PRIV-020 is decided.
@@ -136,7 +158,7 @@ refuses privileged roles. On real PostgreSQL the suite proves the following:
 requires a `CompanyScope` and accepts no caller-supplied Company, key or path.
 - **Local provider.** Development-only. It is refused in staging/production and refuses a root inside the source tree or a web-served directory. It uses 0700 directories and 0600 files, writes each object once, and rejects symlinks and tampered keys.
 - **No public file routes.** The application exposes no static or file routes, and a foreign object ID behaves exactly like a missing one.
-- **S3.** The `s3` provider is refused until its M3 adapter exists.
+- **S3.** The `s3` provider is refused until its adapter exists (M5).
 - **Secrets and configuration.** Secrets are `SecretStr` and configuration-driven. Database URLs are never rendered.
 - **Logs and errors.** Logs are allowlisted JSON with SQL/HTTP-client loggers pinned to WARNING. Unhandled errors return a generic 500 with an `error_id`.
 - **Leakage tests.** These run at DEBUG.
@@ -145,7 +167,7 @@ requires a `CompanyScope` and accepts no caller-supplied Company, key or path.
 backup → restore → verification on disposable databases. After restore it
 re-checks schema, RLS, grants, the runtime-role startup guard and cross-tenant
 isolation. It never touches the development database. RDS automated backups/PITR
-are M3.
+are M5.
 
 **Privacy & governance (M1-08).** The single authoritative
 [Decision Register](../privacy/decision-register.md) holds PRIV-001 to PRIV-022:
@@ -154,7 +176,7 @@ legal approval is recorded, and the validator rejects approved, legally-confirme
 or implemented states without evidence. PRIV-022 (HeroOS data-protection role) is
 **Pending Analysis** and classifies nothing. The
 [JJ Review Packet](../privacy/jj-decision-review-packet.md) separates M2-blocking,
-M3/AI-blocking and safely-pending items.
+external-AI (M4), cloud/Production (M5) and safely-pending items.
 
 ## 8. Deletion boundary (PRIV-020)
 
@@ -193,9 +215,12 @@ RLS, so a missed step is caught in CI rather than in review.
 - No production customer data and no external AI processing (PRIV-009 to PRIV-012, PRIV-014, PRIV-021).
 - New loggers and log fields follow [Observability §6](../architecture/observability.md).
 
-## 10. M3 deferral (live cloud activation)
+## 10. M5 deferral (live cloud activation)
 
-None of the following exists or is claimed. Each is owned by M3 and specified in
+Originally recorded as the M3 deferral; moved to M5 by the post-closeout
+roadmap amendment above.
+
+None of the following exists or is claimed. Each is owned by M5 and specified in
 [Production Security Gates](../architecture/production-security-gates.md):
 - AWS account/service activation (`me-central-1`) and live Staging
 - ECS/Fargate
@@ -208,22 +233,25 @@ None of the following exists or is claimed. Each is owned by M3 and specified in
 - ACM/ALB HTTPS
 - Deployed revision traceability
 
-**M3 blockers (governance):**
+**M5 blockers (governance):**
 - PRIV-006, PRIV-007, PRIV-013, PRIV-014, PRIV-017, PRIV-019 and PRIV-022.
-- PRIV-009 to PRIV-012 and PRIV-021 before any AI provider receives production data.
 - Confirmation of the development VPS hosting provider ([Service Inventory](../privacy/third-party-service-inventory.md)).
+
+**Not an M5-only gate:** PRIV-009 to PRIV-012, PRIV-014 and PRIV-021 must be
+decided before any external AI provider receives identifiable or customer data,
+which may happen in M4 (Intelligence Layer). PRIV-020 remains an M2 boundary (§8).
 
 ## 11. Known technical debt (non-blocking)
 
 | Item | Evidence | Note |
 | --- | --- | --- |
 | `StarletteDeprecationWarning` (httpx with `starlette.testclient`) | pytest warning under `make check` | Test-only. Address on the next FastAPI/Starlette upgrade |
-| Cognito sign-out/disable takes effect at access-token expiry | `app/auth/providers/cognito.py` verifies JWTs statelessly | Removing a HeroOS User or Membership is immediate. Choose token lifetime at M3 |
+| Cognito sign-out/disable takes effect at access-token expiry | `app/auth/providers/cognito.py` verifies JWTs statelessly | Removing a HeroOS User or Membership is immediate. Choose token lifetime at M5 |
 | One issuer per environment | Users map by `identity_subject` only; one Cognito issuer configured; dev issuer refused outside development | Multiple pools/IdP federation would need issuer-qualified mapping |
-| JWKS availability | [Authentication §4.1](../architecture/authentication.md): fetch failure → 401 (1 h cache) | Fails closed. Cognito JWKS reachability is an M3 availability dependency |
+| JWKS availability | [Authentication §4.1](../architecture/authentication.md): fetch failure → 401 (1 h cache) | Fails closed. Cognito JWKS reachability is an M5 availability dependency |
 | Library log records keep their message text | [Observability §5](../architecture/observability.md) residual risk | Every new dependency needs a logging review (`QUIETED_LOGGERS`) |
 | Error after response started | `app/observability/middleware.py`; `test_exception_after_response_started_is_logged_not_reraised` | Connection is closed (truncated response) and the event is logged. No streaming routes exist yet |
-| RLS/runtime role not exercised on RDS | [Tenant Isolation §10](../architecture/tenant-isolation.md) | Re-review grants/ownership at RDS provisioning (M3) |
+| RLS/runtime role not exercised on RDS | [Tenant Isolation §10](../architecture/tenant-isolation.md) | Re-review grants/ownership at RDS provisioning (M5) |
 
 ## 12. M1 blocker assessment
 
@@ -232,6 +260,6 @@ None of the following exists or is claimed. Each is owned by M3 and specified in
 | Any failing gate, isolation regression or exposed cross-tenant/deletion path | **None found** |
 | Items in §11 | Non-blocking technical debt |
 | PRIV-001 to PRIV-022 (all JJ Pending), incl. PRIV-020 and PRIV-022 | Pending governance decision |
-| Live AWS, Cognito, RDS, S3, Secrets Manager, CloudWatch, ACM/ALB | Deferred to M3 |
+| Live AWS, Cognito, RDS, S3, Secrets Manager, CloudWatch, ACM/ALB | Deferred to M5 (originally M3; see the post-closeout amendment) |
 
 **No BLOCKER remains. M1 can be marked Done.**

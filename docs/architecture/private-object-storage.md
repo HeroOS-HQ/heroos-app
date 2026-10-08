@@ -1,6 +1,6 @@
 # HeroOS Private Object Storage
 
-**Status:** Storage primitive implemented (M1-07) and proven locally. Production S3 adapter deferred to M3\
+**Status:** Storage primitive implemented (M1-07) and proven locally. Production S3 adapter deferred to M5 (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-07 — Establish secure storage, secrets, logging & backup foundation\
@@ -27,7 +27,7 @@ StorageKey  companies/<company uuid>/<object uuid>    server-generated
         ↓
 PrivateObjectStorage provider                         app/storage/base.py
         ↓
-local filesystem (development)  |  private S3 (M3)
+local filesystem (development)  |  private S3 (M5)
 ```
 
 There is no database table for objects in M1-07. Company scoping comes from the
@@ -94,7 +94,7 @@ and fixed errors still apply.
 
 | Variable | Values | Rules |
 | --- | --- | --- |
-| `HEROOS_STORAGE_PROVIDER` | unset, `local`, `s3` | Unset: no storage, every object operation is refused (`StorageConfigurationError`), never a fallback. `local`: development only. `s3`: the M3 contract. The API **refuses to start** until the adapter exists. Other values are rejected |
+| `HEROOS_STORAGE_PROVIDER` | unset, `local`, `s3` | Unset: no storage, every object operation is refused (`StorageConfigurationError`), never a fallback. `local`: development only. `s3`: the M5 contract. The API **refuses to start** until the adapter exists. Other values are rejected |
 | `HEROOS_LOCAL_STORAGE_ROOT` | absolute path | Required for `local`. Rejected with any other provider and in staging/production |
 
 The provider is built at startup, so unsafe or unavailable storage
@@ -102,15 +102,15 @@ configuration stops the API instead of failing per request. There is no
 hard-coded bucket, AWS account, credential or fake signed URL anywhere, and no
 test contacts AWS.
 
-## 6. Production S3 contract (M3)
+## 6. Production S3 contract (M5)
 
-**Not active. Nothing in AWS exists for this yet.** The M3 S3 adapter must
+**Not active. Nothing in AWS exists for this yet.** The M5 S3 adapter must
 implement `PrivateObjectStorage` and satisfy all of the following:
 
 - **Private bucket** per environment, with S3 Block Public Access enabled at the
   account and bucket level, no public ACLs or bucket policies, and Object
   Ownership "bucket owner enforced" (ACLs disabled).
-- **Encryption at rest** (SSE-S3 or SSE-KMS; the KMS key choice is made at M3).
+- **Encryption at rest** (SSE-S3 or SSE-KMS; the KMS key choice is made at M5).
   **HTTPS only**: a bucket policy denies `aws:SecureTransport = false`.
 - **Scoped IAM**: the API task role gets only `s3:GetObject`, `s3:PutObject` and
   `s3:DeleteObject` on `arn:aws:s3:::<bucket>/companies/*`, no `s3:ListBucket`
@@ -129,7 +129,7 @@ implement `PrivateObjectStorage` and satisfy all of the following:
   ```
 
   A pre-signed URL may be generated **only after** Company authorization, for one
-  key, with a short expiry (the value is chosen at M3). Possession of a key or
+  key, with a short expiry (the value is chosen at M5). Possession of a key or
   path is never authorization. The bucket stays private.
 - **Errors**: AWS error messages, bucket names and keys are not returned to
   clients or logged verbatim. The provider raises the same fixed-message errors.
@@ -143,7 +143,7 @@ implement `PrivateObjectStorage` and satisfy all of the following:
 | --- | --- |
 | `tests/storage/test_storage_keys.py` | canonical layout and round trip; 21 unsafe object identifiers and 15 non-canonical keys rejected; nil and non-UUID values rejected |
 | `tests/storage/test_local_storage.py` | put/get/exists/delete, write-once, deleted and missing objects, no partial files after a failed publish, `0700`/`0600` under umask 0, broad existing modes tightened, namespace separation, raw strings and tampered keys rejected before filesystem access, symlinked Company directory and symlinked object refused, errors without paths, root refusals (environment, web-served, source tree, relative, symlink, file) |
-| `tests/storage/test_storage_settings.py` | local allowed in development only, root rules, unknown providers rejected, `s3` refused until M3, factory re-checks the environment |
+| `tests/storage/test_storage_settings.py` | local allowed in development only, root rules, unknown providers rejected, `s3` refused until an adapter exists, factory re-checks the environment |
 | `tests/storage/test_company_object_access.py` | A/B read, exists and delete in both directions; a known foreign UUID behaves exactly like a missing object; no overwrite path; only `CompanyScope` accepted; unconfigured storage fails closed; no static or file routes; HTTP over the real bearer → Membership → `CompanyScope` chain (404 in own Company, 403 for the other Company, client `company_id` in query/header ignored, traversal references never resolve, 401 without a credential) |
 
 Mutation checks (M1-07): removing the Company namespace, trusting raw key

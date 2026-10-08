@@ -177,7 +177,7 @@ catalog. It is idempotent, so it works on new and existing Docker volumes, and
 it does not depend on `/docker-entrypoint-initdb.d`. It refuses non-local hosts
 and refuses to use the admin role as the runtime role.
 
-Deployed environments (M3) must provision their runtime login role through
+Deployed environments (M5) must provision their runtime login role through
 deployment configuration with a secret-managed password, as a member of
 `heroos_app_runtime`. The startup guard enforces the same properties there.
 

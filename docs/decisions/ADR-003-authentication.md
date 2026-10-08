@@ -111,4 +111,5 @@ Recorded 2026-10-08 while implementing the foundation. Details:
    startup and the provider itself refuse it outside `HEROOS_ENV=development`;
    staging and production require the Cognito provider.
 6. **Activation.** Creating the User Pool, the App Client and real Staging
-   authentication is deferred to M3.
+   authentication is deferred to M5 (originally M3; cloud activation timing
+   updated 2026-10-09, see [Delivery Plan](../milestones/delivery-plan.md)).

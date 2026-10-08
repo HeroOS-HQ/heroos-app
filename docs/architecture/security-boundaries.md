@@ -173,7 +173,7 @@ Invariants enforced by the FastAPI authentication boundary:
 - Authorization headers, bearer tokens and authentication secrets are never
   written to logs or error responses.
 
-Live Cognito activation is M3.
+Live Cognito activation is M5.
 
 ---
 
@@ -218,7 +218,7 @@ Implemented in M1-07; see [Private Object Storage](private-object-storage.md).
   object UUID grants nothing.
 - Objects are write-once, never public, and never in a web-served directory or
   the repository. The local provider is development only (`0700`/`0600`,
-  containment and symlink checks). Production uses a private S3 bucket (M3), with
+  containment and symlink checks). Production uses a private S3 bucket (M5), with
   pre-signed access only after HeroOS authorization.
 
 ## 7. Secrets and Configuration
@@ -227,7 +227,7 @@ Implemented in M1-07; see [Private Object Storage](private-object-storage.md).
   are `SecretStr`. They never appear in `repr`, logs or validation errors.
 - Staging and production fail closed: no development auth, no development
   database default, no migration credential in the API, no local object storage.
-- Production secrets come from AWS Secrets Manager (M3). Nothing real is
+- Production secrets come from AWS Secrets Manager (M5). Nothing real is
   committed. `.env` is excluded from Git and Docker builds.
 
 ## 8. Operational Logging and Error Boundary
@@ -249,5 +249,5 @@ Implemented in M1-07; see [Backup and Recovery](backup-and-recovery.md).
   role. Archives are private (`0600`) and kept outside the repository.
 - Restores go only into empty, non-protected databases and are validated for
   schema, RLS, policies, grants and tenant isolation before use.
-- Production encryption, TLS, backups and PITR are M3 gates
+- Production encryption, TLS, backups and PITR are M5 gates
   ([Production Security Gates](production-security-gates.md)).
