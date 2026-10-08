@@ -236,6 +236,7 @@ Audit of the register as it stood on `main` at `5551675` (after M1-07).
 | PRIV-009 / PRIV-014 | Selecting an AI provider is one instance of the processor approval process | PRIV-009 follows the PRIV-014 process |
 | PRIV-010 / PRIV-001 / PRIV-004 | AI outputs saved into a Case or document become Case/document data | PRIV-010 covers provider-side retention and raw prompt/response storage only |
 | PRIV-016 / all retention and deletion decisions | Legal hold suspends deletion | PRIV-016 is referenced by each deletion-related packet |
+| PRIV-022 / PRIV-003 / PRIV-008 / PRIV-014 | HeroOS's data-protection role was referred to by these packets but decided nowhere | PRIV-022 added; the role question moved there from PRIV-014. PRIV-014 keeps vendor classification |
 | PRIV-008 | "Account" is ambiguous (customer Company or individual User account) | Interpreted as covering both. Scope confirmation requested from JJ. No new ID |
 
 ---
@@ -269,6 +270,7 @@ in each packet under *Engineering recommendation*.
 | PRIV-019 | Private object versioning and deleted-object recoverability | Ready for JJ Review | Pending | Review Required | Blocks M3 production activation |
 | PRIV-020 | Deletion mechanics and interim deletion behavior | Ready for JJ Review | Pending | Review Required | Blocks M2 feature |
 | PRIV-021 | AI input data categories and identifiability | Ready for JJ Review | Pending | Required | Blocks external data processing |
+| PRIV-022 | HeroOS data-protection role by processing activity | Pending Analysis | Pending | Required | Blocks M3 production activation |
 
 ---
 
@@ -315,6 +317,7 @@ Rules:
 | PRIV-019 | S3 versioning and lifecycle | M3 S3 | Technical foundation complete; Blocked pending decision | Write-once objects (M1-07) |
 | PRIV-020 | Repository delete functions; FK behavior; M2 deletion features | M2 | Technical foundation complete | Company-scoped delete primitives tested in M1-06; no route exposes them |
 | PRIV-021 | AI request construction; redaction layer | First AI feature; M3 AI provider activation | Not started | [Data Flow §2.7](../architecture/data-flow.md) |
+| PRIV-022 | Customer agreements, privacy notices, DPAs, request handling | Before production customer data is accepted (M3) | Not started | No code depends on it; legal classification pending |
 
 ---
 
@@ -498,7 +501,7 @@ not started. End-of-retention job: blocked pending decision.
 | Decision version | — |
 | Implementation impact | Blocks deletion implementation (Case Subject retention and deletion) |
 | Implementation status | Not started |
-| Related decisions | PRIV-001, PRIV-002, PRIV-008, PRIV-016, PRIV-020 |
+| Related decisions | PRIV-001, PRIV-002, PRIV-008, PRIV-016, PRIV-020, PRIV-022 |
 | First recorded | M1-01 |
 
 **Question.** How long is data about an employee / Case Subject kept, including
@@ -530,7 +533,7 @@ remove identifying content from Cases or documents.
 handling of requests from individuals to access or delete their data. Who
 receives and decides such requests (HeroOS or the customer company) depends on
 HeroOS's legal role, which is not established in engineering documentation
-(see PRIV-014). Legal/privacy confirmation required.
+(see PRIV-022). Legal/privacy confirmation required.
 
 **UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
 and DIFC applicability.
@@ -550,7 +553,7 @@ advisory cases, what changes when the employee leaves, and who handles deletion
 requests from customer companies' employees?
 
 **Information required before decision.** The legal/privacy answer above;
-HeroOS role classification (PRIV-014).
+HeroOS role classification (PRIV-022).
 
 **Implementation traceability.** M2 subject lifecycle: not started. Subject
 deletion/anonymization: blocked pending decision.
@@ -563,6 +566,7 @@ deletion/anonymization: blocked pending decision.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08 hardening): role reference moved from PRIV-014 to PRIV-022; no change to status or recommendation | Technical Lead |
 
 ### PRIV-004 — Uploaded and generated document retention
 
@@ -878,7 +882,7 @@ findings.
 | Decision version | — |
 | Implementation impact | Blocks deletion implementation (Company offboarding, User account deletion) |
 | Implementation status | Not started |
-| Related decisions | PRIV-003, PRIV-004, PRIV-005, PRIV-006, PRIV-016, PRIV-018, PRIV-020 |
+| Related decisions | PRIV-003, PRIV-004, PRIV-005, PRIV-006, PRIV-016, PRIV-018, PRIV-020, PRIV-022 |
 | First recorded | M1-01 |
 
 **Scope.** "Account" is read as both the customer Company and an individual
@@ -913,8 +917,8 @@ attribution (PRIV-005).
 
 **EU/GDPR-standard considerations.** Storage-limitation consideration and
 handling of deletion requests. The obligations depend on customer contract
-terms and HeroOS's legal role, neither of which is documented in the
-repository. Legal/privacy confirmation required.
+terms and HeroOS's legal role (PRIV-022), neither of which is documented in
+the repository. Legal/privacy confirmation required.
 
 **UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
 and DIFC applicability.
@@ -951,6 +955,7 @@ available.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; scope note added; status to `Legal Review Required` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08 hardening): linked to PRIV-022; no change to status or recommendation | Technical Lead |
 
 ### PRIV-009 — Production AI provider and model
 
@@ -1331,7 +1336,7 @@ proposed; a non-UAE customer.
 | Decision version | — |
 | Implementation impact | Blocks M3 production activation (vendor approval before production data); Blocks external data processing (any vendor not yet approved) |
 | Implementation status | Technical foundation complete |
-| Related decisions | PRIV-006, PRIV-009, PRIV-013, PRIV-015 |
+| Related decisions | PRIV-006, PRIV-009, PRIV-013, PRIV-015, PRIV-022 |
 | First recorded | M1-01 |
 
 **Question.**
@@ -1345,9 +1350,8 @@ proposed; a non-UAE customer.
 **Technical facts.** The service inventory lists confirmed, planned and TBD
 services and the §8 approval rule. It does not classify legal roles. No
 data-processing agreement or vendor contract is documented in the repository
-for any service. HeroOS's own legal role toward its customers (for example
-whether it acts on customers' instructions for their employees' data) is not
-established in engineering documentation. Engineering rules already say not to
+for any service. HeroOS's own legal role toward its customers is not
+established in engineering documentation and is decided in PRIV-022. Engineering rules already say not to
 put production HR data in GitHub, Linear or Slack; that is an engineering rule,
 not a JJ-approved policy.
 
@@ -1363,9 +1367,9 @@ unreviewed vendors. Development and project tools are not designed or reviewed
 for HR data.
 
 **EU/GDPR-standard considerations.** Processor and subprocessor due diligence
-and contractual terms are privacy considerations. Legal role classification is
-not established in engineering documentation; legal/privacy confirmation
-required.
+and contractual terms are privacy considerations. Vendor classification depends
+on HeroOS's own role (PRIV-022) and is not established in engineering
+documentation; legal/privacy confirmation required.
 
 **UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
 applicability.
@@ -1377,12 +1381,11 @@ legal review has a cost. B adds customer communication obligations.
 and review material data-processing changes before activation.* M1-08: A now,
 including Q2. Decide B with legal input.
 
-**Legal/privacy question.** What is HeroOS's legal role toward its customers for
-their HR data, how is each vendor classified, and which agreements are needed
-before production use?
+**Legal/privacy question.** Given HeroOS's role (PRIV-022), how is each vendor
+classified, and which agreements are needed before production use?
 
 **Information required before decision.** None for direction A. Legal input for
-B and for classification.
+B and for classification; PRIV-022 for classification.
 
 **Implementation traceability.** Service inventory and §8 rule: technical
 foundation complete (documented). Per-vendor approval records: not started.
@@ -1396,6 +1399,7 @@ input received.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; engineering-tool data rule and legal-role question made explicit; status to `Ready for JJ Review` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08 hardening): HeroOS role question moved to PRIV-022; vendor classification stays here; no change to status or recommendation | Technical Lead |
 
 ### PRIV-015 — Transactional email content and retention
 
@@ -1957,6 +1961,140 @@ not started.
 | --- | --- | --- | --- |
 | — | 2026-10-08 | Recorded in M1-08, `Ready for JJ Review` | Technical Lead |
 
+### PRIV-022 — HeroOS data-protection role by processing activity
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M3 production activation (production privacy posture: customer agreements, privacy notices, data-processing agreements and data-subject request handling; not technical build work) |
+| Implementation status | Not started |
+| Related decisions | PRIV-001, PRIV-003, PRIV-008, PRIV-009, PRIV-011, PRIV-014, PRIV-021 |
+| First recorded | M1-08 |
+
+**Why a new ID.** The M1-08 audit found that HeroOS's own data-protection role
+was referred to in PRIV-003, PRIV-008 and PRIV-014 but decided nowhere. It
+underlies several other decisions, so it is tracked on its own instead of as a
+sub-question of the vendor process.
+
+**Question.** For each HeroOS processing activity, what is HeroOS's
+data-protection role toward its customers and toward the individuals whose data
+it processes? **No role is proposed or assumed in this register.**
+
+**Technical facts.** The architecture establishes how data is separated and
+accessed, not who is legally responsible for it:
+
+- the Company is the tenant boundary; Company-scoped authorization and
+  PostgreSQL RLS separate customers (M1-05, M1-06);
+- HeroOS operates the infrastructure and the application for all Companies;
+- customer Users enter employee and Case data; HeroOS supplies approved HR
+  knowledge, workflows and deterministic Conditions;
+- no customer agreement, privacy notice or data-processing agreement is
+  documented in the repository.
+
+Engineering does not infer a legal role from multi-tenant isolation, hosting
+location or who operates the servers. Legal classification and technical
+architecture are separate questions.
+
+**The role may differ by processing activity.** Activities to classify (to be
+completed by engineering and JJ before legal review):
+
+| Activity | Data | Notes |
+| --- | --- | --- |
+| HR advisory Case processing | Employee/Case Subject data and Case content entered by customers | Core product |
+| Customer User accounts and Membership | Customer staff identity and access data | Identity provider at M3 |
+| Approved HR knowledge and Playbooks | HeroOS content; normally no customer personal data | Confirm no customer data flows in |
+| Operational logging and security monitoring | Pseudonymous identifiers (M1-07) | |
+| Backups and recovery | Full copies of production data | PRIV-007, PRIV-018 |
+| AI-assisted processing | Data allowed by PRIV-021 | PRIV-009 to PRIV-012 |
+| Transactional email | Recipient details, message content | PRIV-015 |
+| HeroOS staff support or escalation access | Case data viewed by HeroOS personnel, if any | Not defined in the repository |
+| Any HeroOS use of customer data for its own purposes (analytics, product or guidance improvement, benchmarking) | To be defined | None exists; PRIV-011 covers provider training only |
+| Commercial relationship (billing, customer contacts) | Customer contact data | Not in the repository |
+
+**Questions that must be answered before legal review.**
+
+Business (JJ):
+
+1. Does HeroOS process customer HR data only to deliver the service each
+   customer requests, or will it use that data for any purpose of its own?
+2. Do HeroOS personnel (for example HR experts handling escalations) access or
+   act on customer Case data, and on whose instructions?
+3. Who decides retention and deletion of customer data: the customer, HeroOS,
+   or HeroOS within customer-set bounds (PRIV-001 to PRIV-004, PRIV-008)?
+4. Which customer agreement and data-processing terms are planned?
+
+Engineering (Technical Lead):
+
+5. A complete list of processing activities, data categories, systems and
+   vendors per activity (the table above, kept current).
+6. Which customer-facing controls exist or are planned (export, deletion,
+   access requests, retention settings) and which can only be performed by
+   HeroOS.
+
+Legal/privacy:
+
+7. HeroOS's role for each activity under the applicable frameworks.
+8. Which customer agreements, notices and vendor agreements follow from it.
+
+**Options.** Possible outcomes are legal classifications per activity, decided
+by legal/privacy review and accepted by JJ. Engineering does not list or rank
+them, to avoid presenting a legal conclusion as a technical option.
+
+**Privacy implications.** The role determines who answers individuals' requests,
+who sets retention, who must be informed of vendors (PRIV-014), who may use data
+for which purposes (PRIV-011, PRIV-021), and what customer agreements and
+privacy notices must say. Until it is decided, none of these can be treated as
+settled.
+
+**EU/GDPR-standard considerations.** EU/GDPR-standard privacy frameworks
+distinguish roles in processing and attach different responsibilities to them,
+assessed per processing activity. HeroOS's role is not established in
+engineering documentation; legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+applicability, including how those frameworks describe and allocate roles.
+
+**Cost / operational implications.** Legal review per activity. Depending on
+the outcome: drafting customer agreements and notices, managing vendor
+agreements, a request-handling process, and possibly customer-facing tooling
+(export, deletion, retention settings). These costs cannot be estimated before
+the role is known.
+
+**Engineering recommendation.** No recommended role. Engineering recommends:
+complete the activity inventory above; obtain legal/privacy classification per
+activity before production customer data is accepted; and meanwhile do not
+build features that use customer data for HeroOS's own purposes, and keep
+customer-controlled retention and deletion possible, so that no outcome is
+foreclosed by code.
+
+**Legal/privacy question.** What is HeroOS's data-protection role for each
+processing activity listed above, for UAE Federal and DIFC customers, and what
+agreements, notices and request-handling duties follow?
+
+**Information required before decision.** Answers to questions 1 to 6; an
+assigned legal/privacy reviewer (register §1).
+
+**Implementation traceability.** Customer agreements, privacy notices, DPAs and
+request handling: not started. No code depends on the outcome today; the
+production privacy posture does.
+
+**Re-review trigger.** Business model change; new processing activity; HeroOS
+uses customer data for a new purpose; new jurisdiction; legal input received.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-08 | Recorded in M1-08 (pre-merge hardening), `Pending Analysis` | Technical Lead |
+
 ---
 
 ## Important Principle: Retention
@@ -2132,3 +2270,4 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-08 | M1-08 | Retention, deletion, legal-hold and backup/recovery packets completed (PRIV-001 to PRIV-008, PRIV-016 to PRIV-019). PRIV-020 added (deletion mechanics and interim behavior; no existing ID covered it). Status moves recorded in each packet history |
 | 2026-10-08 | M1-08 | JJ review packet added (`jj-decision-review-packet.md`), grouped by implementation dependency |
 | 2026-10-08 | M1-08 | `make privacy-decision-check` added (register/JJ packet consistency and evidence rules), run in CI |
+| 2026-10-08 | M1-08 | Pre-merge hardening: PRIV-022 added (HeroOS data-protection role by processing activity; previously only referenced from PRIV-003, PRIV-008 and PRIV-014). Role references repointed with packet history rows |

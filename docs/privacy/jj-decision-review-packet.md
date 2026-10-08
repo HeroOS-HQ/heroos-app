@@ -45,6 +45,7 @@
 | D | PRIV-013 | Production data residency | Legal Review Required | Route to legal/privacy |
 | D | PRIV-016 | Legal hold | Legal Review Required | Route to legal/privacy |
 | D | PRIV-018 | Deletion vs backups; restored data | Legal Review Required | Route to legal/privacy |
+| D | PRIV-022 | HeroOS data-protection role by processing activity | Pending Analysis | Answer business questions; route to legal/privacy |
 
 Groups: **A** needed before M2 implementation. **B** needed before M3 production
 activation or before any AI provider receives customer data. **C** may remain
@@ -102,8 +103,8 @@ name who answers the legal/privacy questions in the register.**
   vendor.
 - **Cost/operations impact:** Light process; per-vendor legal review has a cost.
 - **Engineering recommendation:** A now; B with legal input.
-- **Legal/privacy review:** Required for HeroOS's legal role and vendor
-  classification.
+- **Legal/privacy review:** Required for vendor classification, which depends
+  on HeroOS's own role (PRIV-022).
 - **Implementation impact:** Blocks M3 production activation and external data
   processing.
 - **JJ is asked to decide:** A, B or C, and name the contract reviewer.
@@ -216,3 +217,30 @@ meantime. Each register packet states the exact legal/privacy question.
 
 **JJ is asked now:** confirm that these questions go to the legal/privacy
 reviewer, and confirm the PRIV-008 scope.
+
+### PRIV-022 — HeroOS data-protection role by processing activity
+
+- **Register status:** Pending Analysis
+- **Question:** What is HeroOS's data-protection role toward customers and the
+  individuals whose data it processes? It may differ per activity (Case
+  processing, User accounts, logging, backups, AI, email, staff support access,
+  any HeroOS use of customer data for its own purposes).
+- **Why needed:** customer agreements, privacy notices, data-processing
+  agreements, handling of individuals' requests, retention ownership and vendor
+  classification (PRIV-014) all depend on it.
+- **Options:** legal classifications per activity, decided by legal/privacy
+  review. Engineering proposes no role.
+- **Privacy/compliance impact:** until decided, none of the items above can be
+  treated as settled.
+- **Cost/operations impact:** legal review; later agreements, notices and
+  possibly customer-facing request tooling. Not estimable before the outcome.
+- **Engineering recommendation:** complete the processing-activity inventory,
+  obtain legal classification before production customer data is accepted, and
+  meanwhile build nothing that uses customer data for HeroOS's own purposes.
+- **Legal/privacy review:** Required.
+- **Implementation impact:** blocks the M3 production privacy posture, not
+  current code development.
+- **JJ is asked now:** answer the business questions in the register packet
+  (own-purpose use of customer data; HeroOS staff access to Cases; who decides
+  retention and deletion; planned customer terms), then route to the
+  legal/privacy reviewer.
