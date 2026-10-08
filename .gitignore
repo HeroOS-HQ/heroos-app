@@ -30,8 +30,14 @@ Thumbs.db
 
 # Terraform
 .terraform/
+**/.terraform/
 *.tfstate
 *.tfstate.*
+*.tfvars
+*.tfvars.json
+*.tfplan
+crash.log
+crash.*.log
 .terraform.lock.hcl.backup
 
 # Logs
