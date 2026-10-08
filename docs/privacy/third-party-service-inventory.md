@@ -1,10 +1,11 @@
 # HeroOS V1 Third-Party Service Inventory
 
-**Status:** Initial V1 inventory  
-**Owner:** Technical Lead  
-**Milestone:** M1 — Foundation & Security  
-**Issue:** M1-01 — Finalize V1 architecture & security baseline  
-**Last updated:** 2026-10-08
+**Status:** Initial V1 inventory\
+**Owner:** Technical Lead\
+**Milestone:** M1 — Foundation & Security\
+**Issue:** M1-01 — Finalize V1 architecture & security baseline; decision links added in M1-08\
+**Last updated:** 2026-10-08\
+**Related:** [Privacy & Security Decision Register](decision-register.md)
 
 ## 1. Purpose
 
@@ -27,6 +28,11 @@ processor, subprocessor, controller or other legal role.
 
 Formal privacy/legal classification must be confirmed separately where
 required.
+
+This inventory records **facts** (what is used, for what, with which data). The
+**policy decisions** about those services (which vendors may receive production
+data, residency, retention) live only in the
+[decision register](decision-register.md). §9 maps one to the other.
 
 ---
 
@@ -65,7 +71,7 @@ introduced if a demonstrated need arises.
 | Amazon CloudWatch | Confirmed | Logs, metrics and operational monitoring | Minimized technical telemetry | Limited; sensitive HR content must not intentionally be logged | Logging region/retention must be configured deliberately | Covered as part of AWS review |
 | AWS Step Functions | Planned | Bounded technical orchestration | Job identifiers and minimum required technical context | Potentially limited context only | UAE-region use planned when introduced | Covered as part of AWS review |
 | Amazon SES | Planned / as required | Transactional email | Recipient identity, email address, controlled message content | Potentially | Region and email-content handling must be reviewed before sensitive use | Covered as part of AWS review |
-| AI Provider | Decision Required | Language interpretation, structured extraction, controlled explanation and drafting | Minimum required customer/case context and approved HeroOS content | Potentially yes | Provider processing location, retention, training use and subprocessors must be reviewed before production-sensitive use | Explicit JJ/privacy/legal decision required |
+| AI Provider | Decision Required (provider TBD) | Language interpretation, structured extraction, controlled explanation and drafting | Minimum required customer/case context and approved HeroOS content | Potentially yes | Provider processing location, retention, training use and subprocessors must be reviewed before production-sensitive use | Explicit JJ/privacy/legal decision required (PRIV-009 to PRIV-012, PRIV-021) |
 
 ---
 
@@ -75,6 +81,10 @@ The following services support development and project management.
 
 They should not be used as general-purpose storage for production customer HR
 data.
+
+"Customer HR Data Intended? No" is an engineering rule. JJ confirmation that
+these tools are not approved for production customer HR data is requested in
+PRIV-014.
 
 | Service | Status | Purpose | Intended Data | Customer HR Data Intended? | Notes |
 |---|---|---|---|---|---|
@@ -256,3 +266,32 @@ JJ / Legal Decision where required
       |
       v
 Production Enablement
+```
+
+---
+
+## 9. Inventory Facts vs. Pending Decisions
+
+| Service | Inventory fact | Open policy decision | Decision IDs | Agreement / DPA documented in repository? | Residency guarantee documented in repository? |
+|---|---|---|---|---|---|
+| AWS (RDS, S3, Secrets Manager, Step Functions) | Primary production infrastructure, planned in `me-central-1` (ADR-002). No AWS resource exists yet | Residency model and exceptions; backup retention; object versioning; vendor approval | PRIV-007, PRIV-013, PRIV-014, PRIV-017, PRIV-019 | No | No. Region selection is an architecture decision, not a residency guarantee |
+| Amazon Cognito | Selected identity provider; holds account identity such as email. Activation is M3 | Region and data handling; User account deletion | PRIV-008, PRIV-013 | No | No |
+| Amazon CloudWatch | Planned log and metric destination. HeroOS logs are minimized (M1-07) | Log retention | PRIV-006, PRIV-013 | No | No |
+| Amazon SES | Planned only if email is required | Email content and retention; region | PRIV-013, PRIV-015 | No | No |
+| AI Provider | Provider TBD. No integration exists | Provider, retention, training use, location, input data categories | PRIV-009, PRIV-010, PRIV-011, PRIV-012, PRIV-021 | No | No |
+| GitHub | Source control, pull requests, CI; deploys to AWS through OIDC (ADR-007) | Whether any production personal/HR data may be placed in GitHub | PRIV-014 | No | No |
+| Linear | Project and issue management | Whether any production personal/HR data may be placed in Linear | PRIV-014 | No | No |
+| Slack | Team communication | Whether any production personal/HR data may be shared in Slack | PRIV-014 | No | No |
+| Ubuntu Development VPS | Development only, synthetic data | Whether production data or restored production backups may ever be used in development | PRIV-014, PRIV-018 | No | No |
+
+"No" means no such document is referenced in this repository. It does not mean
+that no agreement exists outside the repository.
+
+## 10. Known Inventory Gaps
+
+- The hosting provider of the development VPS is not recorded.
+- Engineering tooling that may receive source code (for example AI-assisted
+  development tools, package registries) is not inventoried. It is not intended
+  to receive customer data, but should be listed if used.
+- No legal/privacy reviewer is assigned to confirm vendor classification
+  (decision register §1).

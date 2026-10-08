@@ -1,11 +1,11 @@
 # HeroOS V1 Privacy & Security Decision Register
 
-**Status:** Authoritative engineering decision record (normalized in M1-08)  
-**Owner:** Technical Lead  
-**Business Decision Owner:** JJ  
-**Milestone:** M1 — Foundation & Security  
-**Issues:** M1-01 (created), M1-07 (PRIV-016 to PRIV-019 added), M1-08 (normalized)  
-**Last updated:** 2026-10-08  
+**Status:** Authoritative engineering decision record (normalized in M1-08)\
+**Owner:** Technical Lead\
+**Business Decision Owner:** JJ\
+**Milestone:** M1 — Foundation & Security\
+**Issues:** M1-01 (created), M1-07 (PRIV-016 to PRIV-019 added), M1-08 (normalized)\
+**Last updated:** 2026-10-08\
 **Related:** [Third-Party Service Inventory](third-party-service-inventory.md),
 [Production Security Gates](../architecture/production-security-gates.md)
 
@@ -233,28 +233,33 @@ Audit of the register as it stood on `main` at `5551675` (after M1-07).
 
 ## Decision Register
 
-| ID | Decision | Status | Technical Recommendation | JJ Decision | Legal Review |
+Summary view. Each row must match its packet below; the packet is the full
+record. The original one-line technical recommendations are preserved verbatim
+in each packet under *Engineering recommendation*.
+
+| ID | Decision | Status | JJ Decision | Legal Review | Implementation Impact |
 |---|---|---|---|---|---|
-| PRIV-001 | Active and closed Case data retention | Legal Review Required | Define retention based on product need, legal obligations and storage limitation rather than an arbitrary universal duration | Pending | Required |
-| PRIV-002 | Closed-case deletion vs anonymization vs continued retention | Legal Review Required | Support explicit lifecycle behavior rather than universal soft deletion | Pending | Required |
-| PRIV-003 | Employee / Case Subject data retention | Legal Review Required | Align retention with active case/company need and applicable legal requirements | Pending | Required |
-| PRIV-004 | Uploaded and generated document retention | Legal Review Required | Keep document lifecycle configurable and tied to approved policy | Pending | Required |
-| PRIV-005 | Audit-event retention | Legal Review Required | Preserve sufficient audit history while minimizing unnecessary sensitive content | Pending | Review Required |
-| PRIV-006 | Application-log retention | Pending Analysis | Use minimized operational logs and shorter retention than business records unless operational need requires otherwise | Pending | Review Required |
-| PRIV-007 | Database-backup retention | Pending Analysis | Balance recoverability with storage limitation and approved operational need | Pending | Review Required |
-| PRIV-008 | Account / Company deletion behavior | Legal Review Required | Define controlled deletion/anonymization workflow rather than immediate unrestricted cascade deletion | Pending | Required |
-| PRIV-009 | Production AI provider and model | Pending Analysis | Select only after capability, privacy, residency and cost comparison | Pending | Required |
-| PRIV-010 | AI input/output retention | Pending Analysis | Prefer provider configuration minimizing or disabling provider retention where commercially/technically feasible | Pending | Required |
-| PRIV-011 | AI provider training/data-use policy | Pending Analysis | Production customer data should not be used for general provider model training without explicit approved basis | Pending | Required |
-| PRIV-012 | AI processing location / cross-border transfer | Pending Analysis | Evaluate actual provider processing location rather than assuming UAE hosting keeps AI processing in UAE | Pending | Required |
-| PRIV-013 | Production data residency model | Pending Analysis | Keep primary HeroOS application/database/document infrastructure in AWS UAE; separately review every external processor | Pending | Required |
-| PRIV-014 | Production subprocessor/vendor approval process | Pending Analysis | Maintain service inventory and review material data-processing changes before activation | Pending | Required |
-| PRIV-015 | Transactional email content and retention | Pending Analysis | Minimize HR-sensitive content in email; prefer secure in-product access for sensitive case details | Pending | Review Required |
-| PRIV-016 | Legal hold requirements | Legal Review Required | Define whether and when a legal hold suspends deletion of Cases, documents/objects, logs and backups before any automated deletion is implemented | Pending | Required |
-| PRIV-017 | Recovery point objective (RPO) and recovery time objective (RTO) | Pending Analysis | Approve explicit RPO/RTO targets before M3 configures RDS backups/PITR and restore drills; engineering will present the cost of each option | Pending | Review Required |
-| PRIV-018 | Deletion requests vs. existing backups, and treatment of restored backups | Legal Review Required | Decide whether deleted data may persist in backups until they expire, how such backups are protected meanwhile, and how deletions are re-applied after any restore | Pending | Required |
-| PRIV-019 | Private object versioning and deleted-object recoverability | Ready for JJ Review | Decide whether S3 versioning / a recovery window applies to private objects, consistent with PRIV-004 and PRIV-018 | Pending | Review Required |
-| PRIV-020 | Deletion mechanics and interim deletion behavior | Ready for JJ Review | No user-facing deletion in M2 until the retention decisions are approved; no universal soft delete | Pending | Review Required |
+| PRIV-001 | Active and closed Case data retention | Legal Review Required | Pending | Required | Blocks deletion implementation |
+| PRIV-002 | Closed-case deletion vs anonymization vs continued retention | Legal Review Required | Pending | Required | Blocks deletion implementation |
+| PRIV-003 | Employee / Case Subject data retention | Legal Review Required | Pending | Required | Blocks deletion implementation |
+| PRIV-004 | Uploaded and generated document retention | Legal Review Required | Pending | Required | Blocks deletion implementation |
+| PRIV-005 | Audit-event retention | Legal Review Required | Pending | Review Required | Blocks deletion implementation |
+| PRIV-006 | Application-log retention | Pending Analysis | Pending | Review Required | Blocks M3 production activation |
+| PRIV-007 | Database-backup retention | Pending Analysis | Pending | Review Required | Blocks M3 production activation |
+| PRIV-008 | Account / Company deletion behavior | Legal Review Required | Pending | Required | Blocks deletion implementation |
+| PRIV-009 | Production AI provider and model | Pending Analysis | Pending | Required | Blocks external data processing |
+| PRIV-010 | AI input/output retention | Pending Analysis | Pending | Required | Blocks external data processing |
+| PRIV-011 | AI provider training/data-use policy | Ready for JJ Review | Pending | Required | Blocks external data processing |
+| PRIV-012 | AI processing location / cross-border transfer | Pending Analysis | Pending | Required | Blocks external data processing |
+| PRIV-013 | Production data residency model | Legal Review Required | Pending | Required | Blocks M3 production activation |
+| PRIV-014 | Production subprocessor/vendor approval process | Ready for JJ Review | Pending | Required | Blocks M3 production activation; Blocks external data processing |
+| PRIV-015 | Transactional email content and retention | Pending Analysis | Pending | Review Required | Not currently blocking |
+| PRIV-016 | Legal hold requirements | Legal Review Required | Pending | Required | Blocks deletion implementation |
+| PRIV-017 | Recovery point objective (RPO) and recovery time objective (RTO) | Pending Analysis | Pending | Review Required | Blocks M3 production activation |
+| PRIV-018 | Deletion requests vs. existing backups, and treatment of restored backups | Legal Review Required | Pending | Required | Blocks deletion implementation |
+| PRIV-019 | Private object versioning and deleted-object recoverability | Ready for JJ Review | Pending | Review Required | Blocks M3 production activation |
+| PRIV-020 | Deletion mechanics and interim deletion behavior | Ready for JJ Review | Pending | Review Required | Blocks M2 feature |
+| PRIV-021 | AI input data categories and identifiability | Ready for JJ Review | Pending | Required | Blocks external data processing |
 
 ---
 
@@ -892,6 +897,512 @@ available.
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; scope note added; status to `Legal Review Required` | Technical Lead |
 
+### PRIV-009 — Production AI provider and model
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks external data processing (any production or real customer data sent to an AI provider) |
+| Implementation status | Not started |
+| Related decisions | PRIV-010, PRIV-011, PRIV-012, PRIV-014, PRIV-021 |
+| First recorded | M1-01 |
+
+**Question.** Which AI provider and model(s) does HeroOS use in production?
+
+**Technical facts.** No AI integration exists in the code. The provider is
+**TBD** ([Service Inventory §6](third-party-service-inventory.md)). AI is not
+the source of HR truth; approved HeroOS content and deterministic Conditions
+stay authoritative
+([V1 System Architecture §3.4](../architecture/v1-system-architecture.md)).
+
+**Options.** No candidate provider is recorded in the repository. Categories to
+evaluate:
+
+- A. A model provider's own API.
+- B. Model access through a service of the primary infrastructure provider
+  (AWS), if a suitable model and region exist (not yet assessed).
+- C. A self-hosted model on HeroOS infrastructure.
+
+**Privacy implications.** The provider receives Case context to the extent
+allowed by PRIV-021. Its retention (PRIV-010), training use (PRIV-011),
+location (PRIV-012) and subprocessors (PRIV-014) follow from this choice.
+
+**EU/GDPR-standard considerations.** Processor due diligence and contractual
+safeguards are privacy considerations. Not established in engineering
+documentation; legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+applicability, including cross-border processing (PRIV-012).
+
+**Cost / operational implications.** A and B are usage-priced; privacy controls
+such as reduced retention may depend on specific commercial terms, to be
+confirmed per provider. C has fixed infrastructure and operations cost and
+needs in-house model operations skills.
+
+**Engineering recommendation.** Original (M1-01): *Select only after
+capability, privacy, residency and cost comparison.* M1-08: produce a written
+comparison against the [Service Inventory §6](third-party-service-inventory.md)
+checklist before any selection.
+
+**Legal/privacy question.** Are the selected provider's contractual and
+data-processing terms acceptable for HeroOS customer HR data?
+
+**Information required before decision.** Candidate providers; capability
+evaluation; contract and data-processing terms; processing and storage regions;
+subprocessors; cost estimate.
+
+**Implementation traceability.** M3 AI provider activation: not started; blocked
+pending decision.
+
+**Re-review trigger.** Provider terms or regions change; a new model is
+proposed.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; remains `Pending Analysis` | Technical Lead |
+
+### PRIV-010 — AI input/output retention
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks external data processing (AI provider activation) |
+| Implementation status | Not started |
+| Related decisions | PRIV-001, PRIV-004, PRIV-009, PRIV-011, PRIV-021 |
+| First recorded | M1-01 |
+
+**Question.** How long may the AI provider keep HeroOS prompts and outputs, and
+does HeroOS itself store raw prompts and responses?
+
+**Scope.** Separate from general HeroOS retention. AI outputs that a user
+accepts into a Case or document become Case or document data and follow
+PRIV-001 and PRIV-004.
+
+**Technical facts.** No AI integration exists. HeroOS logs never contain HR
+guidance input or output
+([Observability §2](../architecture/observability.md)), so raw prompts are
+excluded from application logs by design. Provider retention terms are unknown
+until a provider is chosen.
+
+**Options.**
+
+- Provider side: A. a zero or minimal-retention configuration, where offered;
+  B. the provider's standard retention.
+- HeroOS side: C. store only outputs that become Case data; D. also store raw
+  prompts and responses for quality review, with their own retention.
+
+**Privacy implications.** Provider-retained copies are outside HeroOS deletion:
+a HeroOS deletion (PRIV-002, PRIV-008) cannot reach them, so provider
+retention bounds how long deleted data may still exist. D creates another copy
+of HR content inside HeroOS.
+
+**EU/GDPR-standard considerations.** Data-minimization and storage-limitation
+considerations. Not established in engineering documentation; legal/privacy
+confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+applicability.
+
+**Cost / operational implications.** Reduced-retention options may depend on
+commercial tier or provider approval, to be confirmed per provider. D adds
+storage, access control and its own retention handling.
+
+**Engineering recommendation.** Original (M1-01): *Prefer provider
+configuration minimizing or disabling provider retention where
+commercially/technically feasible.* M1-08: A where available, and C. No raw
+prompts or responses in logs or telemetry (already enforced for logs).
+
+**Legal/privacy question.** What provider-side retention is acceptable for HR
+content, and does it need to be disclosed to customers?
+
+**Information required before decision.** Selected provider's retention terms
+and configuration options (PRIV-009).
+
+**Implementation traceability.** M3 AI provider activation: not started; blocked
+pending decision.
+
+**Re-review trigger.** PRIV-009 decided; provider terms change.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; scope separated from application retention; remains `Pending Analysis` | Technical Lead |
+
+### PRIV-011 — AI provider training/data-use policy
+
+| Field | Value |
+| --- | --- |
+| Status | Ready for JJ Review |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks external data processing (AI provider activation) |
+| Implementation status | Not started |
+| Related decisions | PRIV-009, PRIV-010, PRIV-014, PRIV-021 |
+| First recorded | M1-01 |
+
+**Question.** May HeroOS customer data sent to an AI provider be used by that
+provider for model training or model improvement?
+
+**Technical facts.** No AI integration exists. Provider terms are unknown until
+a provider is chosen (PRIV-009).
+
+**Options.**
+
+- A. Prohibited. The provider must exclude HeroOS data from training and
+  improvement by contract or configuration; a provider that cannot is not
+  eligible.
+- B. Allowed only with explicit customer opt-in.
+- C. Allowed.
+
+**Privacy implications.** Under B or C, HR data would contribute to a model
+outside HeroOS control, and HeroOS could not delete it afterwards.
+
+**EU/GDPR-standard considerations.** Purpose-limitation consideration. Any
+basis for B or C is not established in engineering documentation;
+legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+applicability.
+
+**Cost / operational implications.** A may narrow the provider choice or
+require specific commercial terms, to be confirmed per provider. B needs
+consent capture and per-customer routing.
+
+**Engineering recommendation.** Original (M1-01): *Production customer data
+should not be used for general provider model training without explicit
+approved basis.* M1-08: A. JJ can approve A now as a provider-selection
+criterion. B or C would need legal/privacy confirmation before approval.
+
+**Legal/privacy question.** Do the selected provider's terms meet the approved
+policy? (Asked when PRIV-009 is decided.)
+
+**Information required before decision.** None for direction A.
+
+**Implementation traceability.** Provider selection criteria (PRIV-009) and M3
+AI provider configuration: not started.
+
+**Re-review trigger.** PRIV-009 decided; provider terms change.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Ready for JJ Review` | Technical Lead |
+
+### PRIV-012 — AI processing location / cross-border transfer
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks external data processing (AI provider activation) |
+| Implementation status | Not started |
+| Related decisions | PRIV-009, PRIV-013, PRIV-014, PRIV-021 |
+| First recorded | M1-01 |
+
+**Question.** In which locations may AI processing of HeroOS customer data take
+place?
+
+**Scope.** AI cross-border processing is decided here only. PRIV-013 covers all
+other residency questions.
+
+**Technical facts.** Primary HeroOS infrastructure is planned in AWS
+`me-central-1` (ADR-002). ADR-002 states that UAE hosting does not by itself
+keep AI processing in the UAE. Provider regions are unknown until PRIV-009.
+
+**Options.**
+
+- A. In-UAE processing only.
+- B. Specific approved regions.
+- C. Any region, with contractual safeguards.
+
+**Privacy implications.** Processing and any provider-side storage (including
+abuse monitoring and subprocessors) may be in other jurisdictions.
+
+**EU/GDPR-standard considerations.** Cross-border transfer considerations. Not
+established in engineering documentation; legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+cross-border transfer applicability.
+
+**Cost / operational implications.** A may restrict available models or cost
+more, to be confirmed per provider.
+
+**Engineering recommendation.** Original (M1-01): *Evaluate actual provider
+processing location rather than assuming UAE hosting keeps AI processing in
+UAE.* M1-08: decide together with PRIV-009, using evidence of actual processing
+and storage locations, including subprocessors.
+
+**Legal/privacy question.** Which cross-border processing of HR data is
+permitted for UAE Federal and DIFC customers, and with which safeguards?
+
+**Information required before decision.** Candidate providers' processing and
+storage regions and subprocessors (PRIV-009).
+
+**Implementation traceability.** M3 AI provider activation: not started; blocked
+pending decision.
+
+**Re-review trigger.** PRIV-009 decided; provider region changes.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; remains `Pending Analysis` | Technical Lead |
+
+### PRIV-013 — Production data residency model
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M3 production activation (regions for Cognito, SES, backups, monitoring; any cross-region copy) |
+| Implementation status | Not started |
+| Related decisions | PRIV-007, PRIV-012, PRIV-014, PRIV-015, PRIV-017 |
+| First recorded | M1-01 |
+
+**Question.** Is keeping HeroOS customer data in the UAE a requirement or a
+preference, and which exceptions are permitted (for example cross-region backup
+copies, identity, email, monitoring, administrative access from outside the
+UAE)?
+
+**Technical facts.** ADR-002 (an accepted architecture decision) places primary
+infrastructure in `me-central-1`. It is not a recorded JJ residency decision.
+ADR-002 notes that UAE hosting does not guarantee all data stays in the UAE.
+The service inventory flags Cognito and SES region and data handling for
+review. No AWS resource exists. No residency guarantee from any provider is
+documented in the repository.
+
+**Options.**
+
+- A. All production personal data in the UAE, without exception.
+- B. UAE primary, with a listed set of approved exceptions.
+- C. No residency constraint beyond contractual safeguards.
+
+**Privacy implications.** Each exception is a cross-border flow that needs its
+own justification and safeguards.
+
+**EU/GDPR-standard considerations.** Cross-border transfer considerations. Not
+established in engineering documentation; legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+data-residency and cross-border applicability.
+
+**Cost / operational implications.** A may exclude services not available in
+`me-central-1` or require more expensive alternatives, and rules out
+cross-region recovery copies (PRIV-017). B needs an exception list kept current.
+
+**Engineering recommendation.** Original (M1-01): *Keep primary HeroOS
+application/database/document infrastructure in AWS UAE; separately review
+every external processor.* M1-08: B, with the exception list maintained in the
+service inventory and each exception approved through PRIV-014.
+
+**Legal/privacy question.** Do UAE Federal or DIFC rules restrict where HeroOS
+customer HR data may be stored or processed, and does remote administrative or
+support access from outside the UAE count as a transfer?
+
+**Information required before decision.** The legal/privacy answer above;
+regional availability of Cognito, SES and monitoring features (engineering, M3
+planning).
+
+**Implementation traceability.** M3 region configuration and cross-region
+copies: not started; blocked pending decision.
+
+**Re-review trigger.** Legal input received; a new external service or region
+proposed; a non-UAE customer.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-014 — Production subprocessor/vendor approval process
+
+| Field | Value |
+| --- | --- |
+| Status | Ready for JJ Review |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M3 production activation (vendor approval before production data); Blocks external data processing (any vendor not yet approved) |
+| Implementation status | Technical foundation complete |
+| Related decisions | PRIV-006, PRIV-009, PRIV-013, PRIV-015 |
+| First recorded | M1-01 |
+
+**Question.**
+
+1. Is the [Service Inventory §8](third-party-service-inventory.md) approval rule
+   the gate every vendor must pass before receiving production customer data?
+2. Are engineering and project tools (GitHub, Linear, Slack, the development
+   VPS) confirmed as **not** approved to receive production customer HR data?
+3. Who reviews vendor contracts and data-processing terms?
+
+**Technical facts.** The service inventory lists confirmed, planned and TBD
+services and the §8 approval rule. It does not classify legal roles. No
+data-processing agreement or vendor contract is documented in the repository
+for any service. HeroOS's own legal role toward its customers (for example
+whether it acts on customers' instructions for their employees' data) is not
+established in engineering documentation. Engineering rules already say not to
+put production HR data in GitHub, Linear or Slack; that is an engineering rule,
+not a JJ-approved policy.
+
+**Options.**
+
+- A. Approve the inventory and §8 rule as the gate, and confirm Q2.
+- B. A, plus commitments to customers about subprocessor changes (for example
+  advance notice).
+- C. Defer until legal review.
+
+**Privacy implications.** Without an approved gate, production data could reach
+unreviewed vendors. Development and project tools are not designed or reviewed
+for HR data.
+
+**EU/GDPR-standard considerations.** Processor and subprocessor due diligence
+and contractual terms are privacy considerations. Legal role classification is
+not established in engineering documentation; legal/privacy confirmation
+required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+applicability.
+
+**Cost / operational implications.** The process itself is light. Per-vendor
+legal review has a cost. B adds customer communication obligations.
+
+**Engineering recommendation.** Original (M1-01): *Maintain service inventory
+and review material data-processing changes before activation.* M1-08: A now,
+including Q2. Decide B with legal input.
+
+**Legal/privacy question.** What is HeroOS's legal role toward its customers for
+their HR data, how is each vendor classified, and which agreements are needed
+before production use?
+
+**Information required before decision.** None for direction A. Legal input for
+B and for classification.
+
+**Implementation traceability.** Service inventory and §8 rule: technical
+foundation complete (documented). Per-vendor approval records: not started.
+
+**Re-review trigger.** A new vendor; a vendor changes regions or terms; legal
+input received.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; engineering-tool data rule and legal-role question made explicit; status to `Ready for JJ Review` | Technical Lead |
+
+### PRIV-015 — Transactional email content and retention
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Review Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Not currently blocking (required before any email containing customer data is sent) |
+| Implementation status | Not started |
+| Related decisions | PRIV-013, PRIV-014 |
+| First recorded | M1-01 |
+
+**Question.** What HeroOS content may transactional emails contain, and how long
+are email records and logs kept?
+
+**Technical facts.** Amazon SES is "planned / as required". No email feature
+exists in M1 and no email requirement is recorded.
+
+**Options.**
+
+- A. Notification only, with a secure HeroOS link and no Case details.
+- B. A limited Case summary.
+- C. Full content.
+
+**Privacy implications.** Email leaves HeroOS control once delivered and may be
+forwarded or stored indefinitely by recipients.
+
+**EU/GDPR-standard considerations.** Data-minimization consideration. Not
+established in engineering documentation; legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE/DIFC
+applicability; SES region under PRIV-013.
+
+**Cost / operational implications.** A is cheapest and simplest to review. B and
+C need content rules and testing per template.
+
+**Engineering recommendation.** Original (M1-01): *Minimize HR-sensitive content
+in email; prefer secure in-product access for sensitive case details.* M1-08: A.
+
+**Legal/privacy question.** Do any constraints apply to HR content in
+notification emails?
+
+**Information required before decision.** Product email requirements (JJ).
+
+**Implementation traceability.** SES activation: not started.
+
+**Re-review trigger.** First email feature proposed.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; remains `Pending Analysis` | Technical Lead |
+
 ### PRIV-016 — Legal hold requirements
 
 | Field | Value |
@@ -1310,6 +1821,87 @@ PRIV-016 decided.
 | --- | --- | --- | --- |
 | — | 2026-10-08 | Recorded in M1-08, `Ready for JJ Review` | Technical Lead |
 
+### PRIV-021 — AI input data categories and identifiability
+
+| Field | Value |
+| --- | --- |
+| Status | Ready for JJ Review |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks external data processing (AI provider activation; design of any AI feature that sends Case content) |
+| Implementation status | Not started |
+| Related decisions | PRIV-009, PRIV-010, PRIV-011, PRIV-012 |
+| First recorded | M1-08 |
+
+**Why a new ID.** PRIV-009 to PRIV-012 decide who processes AI requests, for how
+long, for what use and where. None decides which HeroOS data may be sent at
+all, or whether identifiable employee data may be sent. The service inventory
+lists minimization preferences (§7), but these are not an approved decision.
+
+**Question.** Which data categories may be sent to an external AI provider, and
+may directly identifying employee data (names, employee identifiers, contact
+details) be sent, or must it be removed or replaced first?
+
+**Technical facts.** No AI integration exists. Possible AI request content is
+listed in [Data Flow §2.7](../architecture/data-flow.md): user-entered
+situation text, selected structured Case facts, workflow context, approved
+HeroOS guidance and the response schema. User-entered free text can contain
+names and sensitive details whatever the rules say.
+
+**Options.**
+
+- A. No personal data: only approved content and de-identified facts.
+- B. Pseudonymized: direct identifiers replaced with placeholders before
+  sending and restored by HeroOS afterwards.
+- C. Identifiable data allowed, minimized per task.
+- D. In addition to B or C, exclude defined sensitive categories (for example
+  health information) entirely.
+
+**Privacy implications.** Free text cannot be guaranteed free of identifiers.
+Pseudonymized text may still identify a person from context. C sends
+identifiable HR data to a third party.
+
+**EU/GDPR-standard considerations.** Data-minimization consideration;
+sensitive-category data in HR cases (for example health) attracts additional
+considerations. Not established in engineering documentation; legal/privacy
+confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal and DIFC
+applicability.
+
+**Cost / operational implications.** B needs a placeholder/redaction layer and
+testing, and may reduce answer quality. A limits usefulness. C is cheapest
+technically and has the highest exposure.
+
+**Engineering recommendation.** B combined with D as the default design, with
+per-task minimization and the free-text limitation stated to customers. JJ can
+approve this direction now. C would need legal/privacy confirmation before
+approval.
+
+**Legal/privacy question.** May identifiable or pseudonymized employee HR data,
+including sensitive categories, be sent to an external AI provider, and under
+which conditions?
+
+**Information required before decision.** None for direction B+D. Legal input
+for C.
+
+**Implementation traceability.** AI request construction and redaction layer:
+not started.
+
+**Re-review trigger.** PRIV-009 decided; first AI feature designed.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-08 | Recorded in M1-08, `Ready for JJ Review` | Technical Lead |
+
 ---
 
 ## Important Principle: Retention
@@ -1480,4 +2072,5 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-07 | M1-01 | Register created with PRIV-001 to PRIV-015, all `Pending Analysis` |
 | 2026-10-08 | M1-07 | PRIV-016 to PRIV-019 added, all `Pending Analysis`. M1-07 technical inputs recorded (Appendix A) |
 | 2026-10-08 | M1-08 | Ownership, lifecycle, vocabularies, evidence rules and versioning defined (§1 to §5). Audit findings recorded (§6). M1-07 technical inputs moved to Appendix A unchanged |
+| 2026-10-08 | M1-08 | AI-provider, processor and residency packets completed (PRIV-009 to PRIV-015). PRIV-021 added (AI input data categories; no existing ID covered it). Summary table regenerated from the packets: the one-line recommendation column moved verbatim into each packet, Implementation Impact column added |
 | 2026-10-08 | M1-08 | Retention, deletion, legal-hold and backup/recovery packets completed (PRIV-001 to PRIV-008, PRIV-016 to PRIV-019). PRIV-020 added (deletion mechanics and interim behavior; no existing ID covered it). Status moves recorded in each packet history |
