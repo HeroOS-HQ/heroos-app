@@ -1,10 +1,11 @@
 # HeroOS V1 Third-Party Service Inventory
 
-**Status:** Initial V1 inventory  
-**Owner:** Technical Lead  
-**Milestone:** M1 — Foundation & Security  
-**Issue:** M1-01 — Finalize V1 architecture & security baseline  
-**Last updated:** 2026-10-08
+**Status:** Initial V1 inventory\
+**Owner:** Technical Lead\
+**Milestone:** M1 — Foundation & Security\
+**Issue:** M1-01 — Finalize V1 architecture & security baseline; decision links added in M1-08\
+**Last updated:** 2026-10-08\
+**Related:** [Privacy & Security Decision Register](decision-register.md)
 
 ## 1. Purpose
 
@@ -27,6 +28,11 @@ processor, subprocessor, controller or other legal role.
 
 Formal privacy/legal classification must be confirmed separately where
 required.
+
+This inventory records **facts** (what is used, for what, with which data). The
+**policy decisions** about those services (which vendors may receive production
+data, residency, retention) live only in the
+[decision register](decision-register.md). §9 maps one to the other.
 
 ---
 
@@ -65,7 +71,7 @@ introduced if a demonstrated need arises.
 | Amazon CloudWatch | Confirmed | Logs, metrics and operational monitoring | Minimized technical telemetry | Limited; sensitive HR content must not intentionally be logged | Logging region/retention must be configured deliberately | Covered as part of AWS review |
 | AWS Step Functions | Planned | Bounded technical orchestration | Job identifiers and minimum required technical context | Potentially limited context only | UAE-region use planned when introduced | Covered as part of AWS review |
 | Amazon SES | Planned / as required | Transactional email | Recipient identity, email address, controlled message content | Potentially | Region and email-content handling must be reviewed before sensitive use | Covered as part of AWS review |
-| AI Provider | Decision Required | Language interpretation, structured extraction, controlled explanation and drafting | Minimum required customer/case context and approved HeroOS content | Potentially yes | Provider processing location, retention, training use and subprocessors must be reviewed before production-sensitive use | Explicit JJ/privacy/legal decision required |
+| AI Provider | Decision Required (provider TBD) | Language interpretation, structured extraction, controlled explanation and drafting | Minimum required customer/case context and approved HeroOS content | Potentially yes | Provider processing location, retention, training use and subprocessors must be reviewed before production-sensitive use | Explicit JJ/privacy/legal decision required (PRIV-009 to PRIV-012, PRIV-021) |
 
 ---
 
@@ -76,12 +82,22 @@ The following services support development and project management.
 They should not be used as general-purpose storage for production customer HR
 data.
 
+"Customer HR Data Intended? No" is an engineering rule. JJ confirmation that
+these tools are not approved for production customer HR data is requested in
+PRIV-014.
+
+Engineering AI-assisted development tools are listed here, not in §3: they
+process source code, not customer data. Using one for development does not
+make its provider a candidate or an approved processor for production AI
+processing (PRIV-009) or for production customer data (PRIV-014).
+
 | Service | Status | Purpose | Intended Data | Customer HR Data Intended? | Notes |
 |---|---|---|---|---|---|
 | GitHub | Confirmed | Source control, pull requests and CI/CD integration | Source code, configuration templates, build metadata | No | Secrets and production customer data must not be committed |
 | Linear | Confirmed | Project and engineering issue management | Product planning, technical issues, delivery metadata | No | Avoid placing real employee/case-sensitive information in issues |
 | Slack | Confirmed | Team communication | Project discussions and coordination | No | Sensitive production HR data and credentials should not be shared in Slack |
-| Ubuntu Development VPS | Confirmed development environment | Engineering workstation/runtime | Source code, synthetic development/test data | No production customer HR data intended | Development only; not Staging or Production |
+| Ubuntu Development VPS | Confirmed development environment | Engineering workstation/runtime | Source code, synthetic development/test data | No production customer HR data intended | Development only; not Staging or Production. **Hosting provider not recorded in the repository: provider identity, location and contractual terms require confirmation** |
+| Claude Code (Anthropic) | In use for engineering (commits on `main` carry `Co-Authored-By: Claude … <noreply@anthropic.com>` trailers from M1-04 onward) | AI-assisted development: reading, writing and reviewing code and documentation and running local commands on the development VPS | Source code, documentation, configuration templates and command output in the development workspace (synthetic data only), processed through the tool as part of development | No | Engineering tooling only. Not approved for production customer HR data, and not the production AI provider (PRIV-009). Data-processing terms, retention, training use and processing location are not documented in the repository. Local development credentials in the workspace may be visible to the tool, so production secrets must never be placed there |
 
 ---
 
@@ -256,3 +272,40 @@ JJ / Legal Decision where required
       |
       v
 Production Enablement
+```
+
+---
+
+## 9. Inventory Facts vs. Pending Decisions
+
+| Service | Inventory fact | Open policy decision | Decision IDs | Agreement / DPA documented in repository? | Residency guarantee documented in repository? |
+|---|---|---|---|---|---|
+| AWS (RDS, S3, Secrets Manager, Step Functions) | Primary production infrastructure, planned in `me-central-1` (ADR-002). No AWS resource exists yet | Residency model and exceptions; backup retention; object versioning; vendor approval | PRIV-007, PRIV-013, PRIV-014, PRIV-017, PRIV-019 | No | No. Region selection is an architecture decision, not a residency guarantee |
+| Amazon Cognito | Selected identity provider; holds account identity such as email. Activation is M3 | Region and data handling; User account deletion | PRIV-008, PRIV-013 | No | No |
+| Amazon CloudWatch | Planned log and metric destination. HeroOS logs are minimized (M1-07) | Log retention | PRIV-006, PRIV-013 | No | No |
+| Amazon SES | Planned only if email is required | Email content and retention; region | PRIV-013, PRIV-015 | No | No |
+| AI Provider | Provider TBD. No integration exists | Provider, retention, training use, location, input data categories | PRIV-009, PRIV-010, PRIV-011, PRIV-012, PRIV-021 | No | No |
+| GitHub | Source control, pull requests, CI; deploys to AWS through OIDC (ADR-007) | Whether any production personal/HR data may be placed in GitHub | PRIV-014 | No | No |
+| Linear | Project and issue management | Whether any production personal/HR data may be placed in Linear | PRIV-014 | No | No |
+| Slack | Team communication | Whether any production personal/HR data may be shared in Slack | PRIV-014 | No | No |
+| Ubuntu Development VPS | Development only, synthetic data. Hosting provider not recorded; requires confirmation | Whether production data or restored production backups may ever be used in development; vendor review once the provider is identified | PRIV-014, PRIV-018 | No | No (provider unknown) |
+| Claude Code (Anthropic) | Engineering AI-assisted development tool; processes source code and workspace content during development | Confirmation that it is not approved for production customer HR data; vendor review of the tool's terms | PRIV-014 | No | No |
+
+"No" means no such document is referenced in this repository. It does not mean
+that no agreement exists outside the repository.
+
+## 10. Known Inventory Gaps
+
+- **Development VPS hosting provider:** not recorded in the repository. The
+  provider's identity, location and terms must be confirmed by the Technical
+  Lead and added to §4 and §9. Nothing here may be assumed about it.
+- **Engineering AI-assisted development tools:** Claude Code (Anthropic) is
+  recorded in §4 on the basis of commit trailers. Any other AI development tool
+  in use must be added the same way.
+- **Software supply-chain sources** referenced by the repository are not
+  inventoried as services: npm registry (pnpm), PyPI (uv, pipx), Docker Hub base
+  images (`node`, `python`, `postgres`) and the third-party GitHub Action
+  `pnpm/action-setup`. They receive no HeroOS data beyond download requests, but
+  are dependencies to review for supply-chain risk.
+- No legal/privacy reviewer is assigned to confirm vendor classification
+  (decision register §1).

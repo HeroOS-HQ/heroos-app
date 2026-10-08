@@ -111,7 +111,22 @@ recommendation.
 - Infrastructure alarms (CPU, memory, storage, connections) are chosen during
   M3.
 
-## 8. Explicitly not done in M1
+## 8. Decisions that gate activation
+
+These register decisions are pending. M3 must not answer them with a default
+configuration. See the
+[traceability matrix](../privacy/decision-register.md#decision-to-implementation-traceability).
+
+| Decision | Blocks |
+| --- | --- |
+| PRIV-006 log retention | CloudWatch log-group retention (§6) |
+| PRIV-007 backup retention, PRIV-017 RPO/RTO | RDS backup/PITR configuration and restore-drill criteria (§3) |
+| PRIV-013 residency | Region choices for Cognito, SES, monitoring and any cross-region copy |
+| PRIV-014 vendor approval | Any vendor receiving production customer data |
+| PRIV-019 object versioning | S3 versioning and lifecycle (§2) |
+| PRIV-009 to PRIV-012, PRIV-021 | Any AI provider receiving production customer data |
+
+## 9. Explicitly not done in M1
 
 No AWS account access, Terraform apply, S3 bucket, Secrets Manager secret,
 CloudWatch log group, RDS instance, KMS key, ACM certificate, ALB or backup

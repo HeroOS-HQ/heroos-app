@@ -140,6 +140,10 @@ Possible content includes:
 
 AI provider processing and retention rules are subject to separate provider,
 privacy and product decisions.
+They are tracked in the
+[decision register](../privacy/decision-register.md): provider (PRIV-009),
+retention (PRIV-010), training use (PRIV-011), location (PRIV-012) and which
+data categories may be sent (PRIV-021).
 
 ---
 

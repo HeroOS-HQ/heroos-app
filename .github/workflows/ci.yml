@@ -166,3 +166,17 @@ jobs:
       - name: Stop PostgreSQL
         if: always()
         run: docker compose down --volumes
+
+  privacy-decisions:
+    name: Privacy Decisions
+    runs-on: ubuntu-latest
+
+    # Governance gate: the decision register and JJ review packet stay
+    # consistent, and no decision appears approved, legally confirmed or
+    # implemented without the evidence fields. Standard library only.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate privacy decision register
+        run: make privacy-decision-check
