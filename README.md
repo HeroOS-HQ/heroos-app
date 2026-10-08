@@ -37,6 +37,7 @@ apps/
 docs/
   architecture/
   decisions/
+  milestones/
   privacy/
 
 infrastructure/
@@ -134,3 +135,9 @@ The development provider is refused outside `HEROOS_ENV=development`. See
   AI processing, vendors, residency) are recorded, not assumed, in the
   [Decision Register](docs/privacy/decision-register.md). JJ reviews them through
   the [JJ Review Packet](docs/privacy/jj-decision-review-packet.md).
+
+## Milestones
+
+- M1 — Foundation & Security: complete. Verification evidence, M2 readiness and
+  the M3 cloud-activation deferral are in the
+  [M1 Closeout](docs/milestones/m1-foundation-security-closeout.md).
