@@ -3,7 +3,7 @@ from typing import Literal, Self
 
 from pydantic import SecretStr, model_validator
 
-from app.core.database_settings import DatabaseSettings
+from app.core.database_settings import DEVELOPMENT_DATABASE_URL, DatabaseSettings
 
 Environment = Literal["development", "staging", "production"]
 AuthProviderName = Literal["development", "cognito"]
@@ -101,6 +101,26 @@ class Settings(DatabaseSettings):
             if audience is not None and not audience.strip():
                 raise ValueError("HEROOS_COGNITO_RESOURCE_AUDIENCE must not be blank when set")
 
+        return self
+
+    @model_validator(mode="after")
+    def _validate_database(self) -> Self:
+        if self.heroos_env == "development":
+            return self
+        # Deployed environments never fall back to the local development role,
+        # and the API never receives the migration/admin credential.
+        if (
+            "database_url" not in self.model_fields_set
+            or self.database_url.get_secret_value() == DEVELOPMENT_DATABASE_URL
+        ):
+            raise ValueError(
+                f"DATABASE_URL must be explicitly configured when HEROOS_ENV={self.heroos_env}; "
+                "the local development default is refused"
+            )
+        if "migration_database_url" in self.model_fields_set:
+            raise ValueError(
+                "MIGRATION_DATABASE_URL must not be provided to the API outside development"
+            )
         return self
 
     @property

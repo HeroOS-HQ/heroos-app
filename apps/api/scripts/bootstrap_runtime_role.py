@@ -104,12 +104,15 @@ def bootstrap_runtime_role(admin_url: str, runtime_url: str) -> None:
 def main() -> int:
     settings = DatabaseSettings()
     try:
-        bootstrap_runtime_role(settings.migration_database_url, settings.database_url)
+        bootstrap_runtime_role(
+            settings.migration_database_url.get_secret_value(),
+            settings.database_url.get_secret_value(),
+        )
     except (BootstrapError, psycopg.Error) as exc:
         # psycopg errors never include the connection password.
         print(f"error: {exc}", file=sys.stderr)
         return 1
-    print(f"Runtime role {make_url(settings.database_url).username} is ready.")
+    print(f"Runtime role {make_url(settings.database_url.get_secret_value()).username} is ready.")
     return 0
 
 

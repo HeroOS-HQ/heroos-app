@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.config import settings
 
 engine = create_engine(
-    settings.database_url,
+    settings.database_url.get_secret_value(),
     pool_pre_ping=True,
 )
 

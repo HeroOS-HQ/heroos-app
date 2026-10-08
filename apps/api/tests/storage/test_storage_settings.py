@@ -15,6 +15,7 @@ COGNITO = {
     "heroos_auth_provider": "cognito",
     "heroos_cognito_issuer": "https://cognito-idp.test.invalid/test-user-pool",
     "heroos_cognito_app_client_id": "test-app-client-id",
+    "database_url": "postgresql+psycopg://heroos_app:deployed-test-password@db.test.invalid/heroos",
 }
 ROOT_CANARY = "/srv/SUPER_SECRET_STORAGE_ROOT_CANARY"
 
