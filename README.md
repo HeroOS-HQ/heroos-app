@@ -52,7 +52,13 @@ M1 development uses PostgreSQL 16 from the local Docker Compose `db` service
 (host port `5433`). Amazon RDS for PostgreSQL remains the target for deployed
 environments and is provisioned separately; it is not required locally.
 
-`DATABASE_URL` is the single connection setting (see `.env.example`).
+Two connection settings with different privileges (see `.env.example`):
+
+- `DATABASE_URL`: the API runtime role `heroos_app`. It is not superuser, has no
+  `BYPASSRLS` and owns no tables, so PostgreSQL Row-Level Security applies. The
+  API refuses to start with a privileged role.
+- `MIGRATION_DATABASE_URL`: the migration/admin role `heroos`, which owns the
+  schema. Alembic uses it; the API never does.
 
 Alembic migrations in `apps/api/migrations/versions/` are the only supported way
 to change the schema. Committed migrations are immutable history; add a new
@@ -61,8 +67,9 @@ revision instead of editing an old one.
 ```bash
 docker compose up -d db
 
-# Apply migrations to the local development database
-make migrate
+# Apply migrations and create/update the local runtime login role
+# (idempotent; works for new and existing Docker volumes)
+make db-setup
 
 # Generate a new revision after changing models (review it before applying)
 cd apps/api && uv run alembic revision --autogenerate -m "describe change"
@@ -70,9 +77,18 @@ cd apps/api && uv run alembic revision --autogenerate -m "describe change"
 # Verify the full migration chain (base -> head -> base -> head) against a
 # disposable `heroos_migration_test` database. The dev database is untouched.
 make migration-check
+
+# Real-PostgreSQL cross-tenant security suite (RLS, runtime role, pool leakage)
+# against a disposable `heroos_tenant_isolation_test` database.
+make tenant-isolation-check
 ```
 
 `make check` runs source quality gates only and does not need a database.
+
+Existing local `.env` files must be updated: `DATABASE_URL` now uses
+`heroos_app`, and `MIGRATION_DATABASE_URL` is new (copy both from
+`.env.example`). See
+[docs/architecture/tenant-isolation.md](docs/architecture/tenant-isolation.md).
 
 ## Local Authentication
 
@@ -91,7 +107,7 @@ make dev-token SUBJECT=<identity-subject>
 `HEROOS_ENV` is required and has no default; the API will not start without it.
 Docker Compose sets it for the `api` service. To run the API directly, load the
 root `.env`: `cd apps/api && uv run --env-file ../../.env uvicorn app.main:app`.
-Alembic needs only `DATABASE_URL`.
+Alembic needs only `MIGRATION_DATABASE_URL`.
 
 The development provider is refused outside `HEROOS_ENV=development`. See
 [docs/architecture/authentication.md](docs/architecture/authentication.md).

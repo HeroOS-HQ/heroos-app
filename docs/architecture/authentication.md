@@ -36,6 +36,8 @@ users.identity_subject == subject          app/auth/service.py: resolve_user
         |  403 if no User (no just-in-time provisioning)
         v
 memberships(user_id, company_id)           app/auth/service.py: authorize_company
+        |  (RLS: looked up under a transaction-local candidate
+        |   scope that is discarded before returning)
         |  403 if no Membership
         v
 AuthenticatedCompanyContext                app/auth/models.py
@@ -56,6 +58,14 @@ def list_cases(context: CompanyContext) -> ...:
 `AuthenticatedCompanyContext` exists only after credential verification, User
 resolution and a Membership lookup. Its `company_id` is taken from the Membership
 row.
+
+`memberships` is protected by PostgreSQL Row-Level Security (M1-06), so the
+Membership lookup runs with the requested Company as a transaction-local
+*candidate* scope, restricted to the authenticated User, and the scope is
+discarded before `authorize_company` returns. Setting the candidate scope is
+not authorization: only an existing Membership is. Routes that touch tenant
+data then depend on `CompanyDb`, which scopes a new transaction to the trusted
+context. See [Tenant Isolation §6](tenant-isolation.md#6-membership-authorization-bootstrap).
 
 ## 3. Security Invariants
 
@@ -192,11 +202,13 @@ neither repr nor startup errors print the development secret or `DATABASE_URL`.
 Cognito access-token verification needs no client secret.
 
 Database configuration is separate. `DatabaseSettings`
-(`app/core/database_settings.py`) holds only `DATABASE_URL`, and the API
-`Settings` extends it with environment and authentication. Alembic
-(`migrations/env.py`) loads `DatabaseSettings` and never imports the API settings
-module, so migration jobs need `DATABASE_URL` only, with no `HEROOS_ENV` or
-Cognito configuration.
+(`app/core/database_settings.py`) holds only `DATABASE_URL` (the API's
+RLS-restricted runtime role) and `MIGRATION_DATABASE_URL` (the migration/admin
+role), and the API `Settings` extends it with environment and authentication.
+Alembic (`migrations/env.py`) loads `DatabaseSettings`, connects with
+`MIGRATION_DATABASE_URL` and never imports the API settings module, so
+migration jobs need no `HEROOS_ENV` or Cognito configuration. See
+[Tenant Isolation §5](tenant-isolation.md#5-database-roles).
 
 ## 7. Credential Logging
 
@@ -223,17 +235,23 @@ Future logging or observability middleware must preserve this: never record
   key-selection code runs against that local JWKS.
 - Users, Companies and Memberships use the real SQLAlchemy models and queries on
   in-memory SQLite, so the Membership query itself is exercised. The lookup is
-  plain equality on UUID columns, which behaves the same on PostgreSQL.
+  plain equality on UUID columns, which behaves the same on PostgreSQL. SQLite
+  has no RLS, so the PostgreSQL tenant-context calls are inert stand-ins there.
+- The same semantics (401, identical 403s, member allowed) are re-proven on
+  real PostgreSQL with RLS and the runtime role by `make tenant-isolation-check`
+  (`tests/tenant_isolation/test_http_isolation.py`,
+  `test_membership_bootstrap.py`).
 - Protected-request tests mount a test-only route on a test FastAPI app using the
   real dependencies. Only the provider (a real verifier with local keys) and the
   database session are injected. No production debug endpoint exists.
 
 ## 9. Boundaries and Deferred Work
 
-**M1-06 — tenant isolation** consumes `AuthenticatedCompanyContext` to add
-service/query Company scoping, PostgreSQL Row Level Security as defense in depth,
-and cross-tenant data tests. M1-05 authorizes entry into a Company. It does not
-scope queries inside the Company.
+**M1-06 — tenant isolation** (implemented) consumes
+`AuthenticatedCompanyContext` for Company-scoped repositories, a
+transaction-local PostgreSQL tenant context and Row-Level Security. M1-05
+authorizes entry into a Company. M1-06 scopes every query inside it. See
+[Tenant Isolation](tenant-isolation.md).
 
 **M3 — live Cognito activation** includes:
 
