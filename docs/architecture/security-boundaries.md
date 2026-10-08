@@ -203,4 +203,51 @@ Company is the tenant boundary. Invariants:
   within a Company, 403 for a Company without Membership).
 - New private tenant tables (M2 onward) must follow the contract in
   [Tenant Isolation §9](tenant-isolation.md#9-contract-for-future-private-entities-m2-and-later).
-- Private documents and objects are secured separately in M1-07.
+- Private documents and objects are secured in M1-07 (section 6).
+
+---
+
+## 6. Private Object Storage Boundary
+
+Implemented in M1-07; see [Private Object Storage](private-object-storage.md).
+
+- Objects are accessed only through `PrivateObjectService`, which takes a trusted
+  `CompanyScope`. Keys (`companies/<company uuid>/<object uuid>`) are generated
+  by HeroOS. No caller supplies a Company, key, path or filename.
+- Another Company's object is indistinguishable from a missing one. Knowing an
+  object UUID grants nothing.
+- Objects are write-once, never public, and never in a web-served directory or
+  the repository. The local provider is development only (`0700`/`0600`,
+  containment and symlink checks). Production uses a private S3 bucket (M3), with
+  pre-signed access only after HeroOS authorization.
+
+## 7. Secrets and Configuration
+
+- Secrets (`HEROOS_DEV_AUTH_SECRET`, `DATABASE_URL`, `MIGRATION_DATABASE_URL`)
+  are `SecretStr`. They never appear in `repr`, logs or validation errors.
+- Staging and production fail closed: no development auth, no development
+  database default, no migration credential in the API, no local object storage.
+- Production secrets come from AWS Secrets Manager (M3). Nothing real is
+  committed. `.env` is excluded from Git and Docker builds.
+
+## 8. Operational Logging and Error Boundary
+
+Implemented in M1-07; see [Observability](observability.md).
+
+- Structured JSON logs carry request IDs, route templates, status, duration,
+  opaque Company/User IDs (after authorization) and sanitized exception metadata.
+- Headers, tokens, cookies, secrets, bodies, query strings, HR content and
+  exception messages are never logged. The Uvicorn access log is disabled.
+- Unexpected failures return a generic 500 with `request_id` and `error_id`.
+  401/403/404/422 behaviour is unchanged.
+
+## 9. Backup and Recovery
+
+Implemented in M1-07; see [Backup and Recovery](backup-and-recovery.md).
+
+- Backups run as the migration/admin role, never the RLS-restricted runtime
+  role. Archives are private (`0600`) and kept outside the repository.
+- Restores go only into empty, non-protected databases and are validated for
+  schema, RLS, policies, grants and tenant isolation before use.
+- Production encryption, TLS, backups and PITR are M3 gates
+  ([Production Security Gates](production-security-gates.md)).

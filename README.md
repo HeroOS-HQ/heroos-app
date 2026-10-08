@@ -81,9 +81,15 @@ make migration-check
 # Real-PostgreSQL cross-tenant security suite (RLS, runtime role, pool leakage)
 # against a disposable `heroos_tenant_isolation_test` database.
 make tenant-isolation-check
+
+# Logical backup -> restore -> verification (data, schema, RLS, grants, tenant
+# isolation) on disposable `heroos_backup_*_test` databases; artifacts are
+# private and always deleted. Never touches the dev database.
+make backup-restore-check
 ```
 
 `make check` runs source quality gates only and does not need a database.
+See [Backup and Recovery](docs/architecture/backup-and-recovery.md).
 
 Existing local `.env` files must be updated: `DATABASE_URL` now uses
 `heroos_app`, and `MIGRATION_DATABASE_URL` is new (copy both from
@@ -112,3 +118,15 @@ Alembic needs only `MIGRATION_DATABASE_URL`.
 
 The development provider is refused outside `HEROOS_ENV=development`. See
 [docs/architecture/authentication.md](docs/architecture/authentication.md).
+
+## Private Storage, Logging and Production Gates
+
+- Private objects: `HEROOS_STORAGE_PROVIDER=local` with an absolute
+  `HEROOS_LOCAL_STORAGE_ROOT` outside the repository (development only). Unset
+  means no object storage. See
+  [Private Object Storage](docs/architecture/private-object-storage.md).
+- Logs: structured JSON on stdout (`HEROOS_LOG_LEVEL`, default `INFO`), with
+  request IDs in `X-Request-ID`. Request content is never logged. See
+  [Observability](docs/architecture/observability.md).
+- Production S3, RDS, Secrets Manager, TLS, CloudWatch and backup requirements
+  are activated in M3: [Production Security Gates](docs/architecture/production-security-gates.md).
