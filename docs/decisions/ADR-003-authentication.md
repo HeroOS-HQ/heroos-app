@@ -80,4 +80,35 @@ HeroOS User
 Company Membership
   |
   v
-Authorized Tenant Context
+Authorized Tenant Context```
+
+---
+
+## Implementation Decisions (M1-05)
+
+Recorded 2026-10-08 while implementing the foundation. Details:
+[Authentication and Company Authorization](../architecture/authentication.md).
+
+1. **Identity mapping.** The Cognito `sub` claim is stored as
+   `users.identity_subject` and is the only key used to resolve a HeroOS User.
+   Email is never used for identity mapping or authorization. Users are not
+   provisioned just-in-time; an unknown identity is denied.
+2. **Token type.** The HeroOS API accepts Cognito **access tokens**. It
+   validates RS256 signature via the User Pool JWKS, `iss`, `exp`, `iat`,
+   `token_use == "access"`, `client_id` equal to the configured App Client, and
+   a non-empty `sub`. `token_use` alone separates access tokens from ID
+   tokens. `aud` is validated only when a resource audience
+   (`HEROOS_COGNITO_RESOURCE_AUDIENCE`) is configured, because resource-bound
+   access tokens legitimately carry `aud`.
+3. **Company authorization.** Access to a Company requires a `memberships` row
+   for the resolved User and the requested Company. A client-supplied Company ID
+   only identifies the requested resource.
+4. **Failure semantics.** Authentication failures return a generic 401;
+   authorization failures (unknown User, missing Membership) return an identical
+   generic 403.
+5. **Development authentication.** Local development uses a signed HS256 JWT
+   provider behind the same provider contract. Settings validation, application
+   startup and the provider itself refuse it outside `HEROOS_ENV=development`;
+   staging and production require the Cognito provider.
+6. **Activation.** Creating the User Pool, the App Client and real Staging
+   authentication is deferred to M3.

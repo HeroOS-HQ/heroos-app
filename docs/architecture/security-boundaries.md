@@ -148,4 +148,30 @@ AWS administrative access
 CI/CD deployment identity
 Production secrets
 Database administration
-Infrastructure configuration
+Infrastructure configuration```
+
+---
+
+## 4. Authentication and Company Authorization Boundary
+
+Implemented in M1-05; see
+[Authentication and Company Authorization](authentication.md).
+
+Invariants enforced by the FastAPI authentication boundary:
+
+- A verified credential establishes identity only. It never grants Company access.
+- Identity maps to a HeroOS User solely through `users.identity_subject`.
+- Company access requires a server-side Membership lookup for that User and the
+  requested Company. Client-supplied Company IDs, headers and token claims are
+  never authorization evidence.
+- Missing, malformed, unsigned, expired or invalid credentials return 401.
+  Unknown Users and missing Memberships return an identical 403.
+- Protected handlers receive an `AuthenticatedCompanyContext`, which exists only
+  after all of the above succeed.
+- Development authentication is impossible outside `HEROOS_ENV=development`:
+  staging and production require Cognito and refuse to start otherwise.
+- Authorization headers, bearer tokens and authentication secrets are never
+  written to logs or error responses.
+
+M1-06 builds tenant isolation (query scoping and PostgreSQL RLS) on top of
+`AuthenticatedCompanyContext`. Live Cognito activation is M3.

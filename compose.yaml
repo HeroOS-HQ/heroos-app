@@ -10,6 +10,7 @@ services:
     ports:
       - "8001:8000"
     environment:
+      HEROOS_ENV: development
       DATABASE_URL: postgresql+psycopg://heroos:heroos_local@db:5432/heroos
     depends_on:
       db:

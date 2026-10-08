@@ -13,7 +13,7 @@ format-check:
 
 typecheck:
 	pnpm --filter @heroos/web typecheck
-	cd apps/api && uv run mypy app
+	cd apps/api && uv run mypy app scripts
 
 test:
 	pnpm --filter @heroos/web test
@@ -44,3 +44,11 @@ migrate:
 
 migration-check:
 	./scripts/verify-migrations.sh
+
+.PHONY: dev-token
+
+# Local development bearer token for an existing users.identity_subject.
+# Authentication only: grants no Company access by itself. Development only.
+dev-token:
+	@test -n "$(SUBJECT)" || { echo "usage: make dev-token SUBJECT=<identity-subject>" >&2; exit 2; }
+	@cd apps/api && uv run $(if $(wildcard .env),--env-file ../../.env,) python -m scripts.create_dev_token "$(SUBJECT)"
