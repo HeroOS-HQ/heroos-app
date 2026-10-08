@@ -45,12 +45,38 @@ def _run_alembic(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
 )
 def test_migrations_run_without_api_auth_configuration(env: dict[str, str]) -> None:
     result = _run_alembic(
-        {**env, "DATABASE_URL": "postgresql+psycopg://heroos:unused@db.invalid/heroos"}
+        {**env, "MIGRATION_DATABASE_URL": "postgresql+psycopg://heroos:unused@db.invalid/heroos"}
     )
 
     assert result.returncode == 0, result.stderr
     assert "CREATE TABLE companies" in result.stdout
     assert "CREATE TABLE memberships" in result.stdout
+    assert "ALTER TABLE memberships ENABLE ROW LEVEL SECURITY" in result.stdout
+
+
+def test_migrations_connect_with_migration_role_not_runtime_role() -> None:
+    # Online mode against unresolvable hosts: the connection error names the
+    # host Alembic actually used.
+    clean_env = {
+        name: value for name, value in os.environ.items() if not name.startswith("HEROOS_")
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "current"],
+        cwd=API_ROOT,
+        env={
+            **clean_env,
+            "DATABASE_URL": "postgresql+psycopg://runtime:unused@runtime.invalid/heroos",
+            "MIGRATION_DATABASE_URL": "postgresql+psycopg://admin:unused@admin.invalid/heroos",
+        },
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "admin.invalid" in result.stderr
+    assert "runtime.invalid" not in result.stderr
 
 
 def test_api_settings_still_enforce_auth_rules_in_same_environment() -> None:

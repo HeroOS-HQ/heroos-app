@@ -2,7 +2,8 @@
 
 Everything is local: RSA keys and the JWKS are generated in-process, the database
 is in-memory SQLite built from the real HeroOS models, and the protected route
-exists only in a test application. No AWS, Cognito or network access.
+exists only in a test application. PostgreSQL behaviour, including Row-Level
+Security, is covered by tests/tenant_isolation. No AWS, Cognito or network access.
 """
 
 import time
@@ -18,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jwt.algorithms import RSAAlgorithm
 from pydantic import SecretStr
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -160,6 +161,15 @@ def session_factory() -> Iterator[sessionmaker[Session]]:
         poolclass=StaticPool,
         connect_args={"check_same_thread": False},
     )
+
+    @event.listens_for(engine, "connect")
+    def _postgresql_setting_functions(dbapi_connection: Any, _: Any) -> None:
+        # authorize_company sets the PostgreSQL tenant context. SQLite has no RLS,
+        # so these are inert stand-ins; tests/tenant_isolation proves the real
+        # behaviour on PostgreSQL.
+        dbapi_connection.create_function("set_config", 3, lambda _name, value, _local: value)
+        dbapi_connection.create_function("current_setting", 2, lambda _name, _missing_ok: None)
+
     Base.metadata.create_all(
         engine, tables=[Company.__table__, User.__table__, Membership.__table__]
     )

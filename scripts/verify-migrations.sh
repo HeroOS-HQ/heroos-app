@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Verify the full Alembic migration chain against a disposable, empty local
-# PostgreSQL database: base -> head, schema assertions, base, head again.
+# PostgreSQL database: base -> head, schema and Row-Level Security assertions,
+# base, head again. Alembic runs as the migration/admin role.
 #
 # Uses only the local Docker Compose `db` service. Never touches the normal
 # development database. Local development credentials only.
@@ -54,6 +55,17 @@ EXPECTED_CONSTRAINTS=(
   fk_cases_company_id_subject_id_case_subjects
 )
 
+# Tenant-owned tables protected by Row-Level Security. `users` is a global
+# identity table and deliberately has no tenant policy.
+RLS_TABLES=(
+  case_subjects
+  cases
+  companies
+  company_blueprints
+  memberships
+)
+RUNTIME_ROLE=heroos_app_runtime
+
 log() {
   printf '\n==> %s\n' "$*"
 }
@@ -67,7 +79,7 @@ psql_test() {
 }
 
 alembic() {
-  (cd apps/api && DATABASE_URL="${TEST_DATABASE_URL}" uv run alembic "$@")
+  (cd apps/api && MIGRATION_DATABASE_URL="${TEST_DATABASE_URL}" uv run alembic "$@")
 }
 
 drop_test_db() {
@@ -121,6 +133,36 @@ assert_schema() {
     return 1
   fi
   echo "Composite tenant-safe case -> case_subject FK OK"
+
+  actual="$(psql_test "SELECT string_agg(relname, ' ' ORDER BY relname) FROM pg_class
+    WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' AND relrowsecurity;")"
+  expected="${RLS_TABLES[*]}"
+  if [[ "${actual}" != "${expected}" ]]; then
+    echo "Unexpected Row-Level Security tables." >&2
+    echo "  expected: ${expected}" >&2
+    echo "  actual:   ${actual}" >&2
+    return 1
+  fi
+  # Exactly one permissive FOR ALL policy per table, with USING and WITH CHECK.
+  if [[ "$(psql_test "SELECT count(*) FROM pg_policies WHERE schemaname = 'public'
+      AND policyname = 'tenant_isolation' AND permissive = 'PERMISSIVE' AND cmd = 'ALL'
+      AND qual LIKE '%heroos_current_company_id()%'
+      AND with_check LIKE '%heroos_current_company_id()%';")" != "${#RLS_TABLES[@]}" \
+      || "$(psql_test "SELECT count(*) FROM pg_policies WHERE schemaname = 'public';")" \
+      != "${#RLS_TABLES[@]}" ]]; then
+    echo "Unexpected tenant isolation policies." >&2
+    psql_test "SELECT tablename, policyname, permissive, cmd, qual, with_check
+      FROM pg_policies WHERE schemaname = 'public';" >&2
+    return 1
+  fi
+  echo "RLS OK: ${actual} (one tenant_isolation policy each)"
+
+  if [[ "$(psql_test "SELECT count(*) FROM pg_roles WHERE rolname = '${RUNTIME_ROLE}'
+      AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin;")" != "1" ]]; then
+    echo "Runtime role ${RUNTIME_ROLE} is missing or privileged." >&2
+    return 1
+  fi
+  echo "Runtime privilege role ${RUNTIME_ROLE} OK (NOLOGIN, no SUPERUSER, no BYPASSRLS)"
 }
 
 assert_at_head() {
@@ -172,6 +214,12 @@ if [[ "${remaining}" != "0" ]]; then
   exit 1
 fi
 echo "Downgrade to base removed all application tables"
+if [[ "$(psql_test "SELECT count(*) FROM pg_proc
+    WHERE proname = 'heroos_current_company_id';")" != "0" ]]; then
+  echo "Downgrade to base left heroos_current_company_id() behind." >&2
+  exit 1
+fi
+echo "Downgrade to base removed the tenant context function"
 
 log "Upgrading base -> head again"
 alembic upgrade head

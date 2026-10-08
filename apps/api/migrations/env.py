@@ -13,8 +13,9 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # Database configuration only: migrations must not require the API's
-# environment or authentication settings.
-config.set_main_option("sqlalchemy.url", DatabaseSettings().database_url)
+# environment or authentication settings. Migrations run as the migration/admin
+# role that owns the schema, never as the RLS-restricted API runtime role.
+config.set_main_option("sqlalchemy.url", DatabaseSettings().migration_database_url)
 
 target_metadata = Base.metadata
 
