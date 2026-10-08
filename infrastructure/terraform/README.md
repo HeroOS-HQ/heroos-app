@@ -60,3 +60,12 @@ Infrastructure is provisioned only when there is an approved deployment requirem
 Do not run `terraform apply` merely to validate infrastructure code.
 
 At the current M1-03 foundation stage, Terraform is initialized and validated locally without creating AWS resources.
+
+## CI/CD Authentication
+
+GitHub Actions will authenticate to AWS using OIDC and temporary AWS credentials.
+
+See:
+
+`docs/decisions/ADR-007-github-aws-oidc.md`
+EOF
