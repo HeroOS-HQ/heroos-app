@@ -98,9 +98,11 @@ def test_session_closed_mid_transaction_clears_context(
     # A request that ends without commit or explicit rollback (e.g. an exception
     # before the handler finishes): the pool's reset-on-return rolls back.
     db = sessions()
-    pid = backend_pid(db)
-    _assert_sees_only(db, tenants.a)
-    db.close()
+    try:
+        pid = backend_pid(db)
+        _assert_sees_only(db, tenants.a)
+    finally:
+        db.close()
 
     with sessions() as db:
         _assert_fresh_checkout(db, pid)

@@ -115,7 +115,11 @@ def tenant_database() -> Iterator[TenantDatabase]:
 @pytest.fixture(scope="session")
 def admin_engine(tenant_database: TenantDatabase) -> Iterator[Engine]:
     """Migration/admin role (local superuser). Bypasses RLS: setup and ground truth only."""
-    engine = create_engine(tenant_database.admin_url)
+    # A transaction leaked by a failing test must fail the next setup loudly
+    # instead of blocking its TRUNCATE forever.
+    engine = create_engine(
+        tenant_database.admin_url, connect_args={"options": "-c lock_timeout=10s"}
+    )
     yield engine
     engine.dispose()
 
