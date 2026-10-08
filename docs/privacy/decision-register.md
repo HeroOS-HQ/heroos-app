@@ -263,6 +263,52 @@ in each packet under *Engineering recommendation*.
 
 ---
 
+## Decision-to-Implementation Traceability
+
+```text
+PRIV decision -> affected architecture/module -> milestone/work -> implementation status -> evidence
+```
+
+Rules:
+
+- Linear issue IDs are not recorded in the repository, so work is identified by
+  milestone and module. When a Linear issue exists, add its ID in the *Work*
+  column; do not invent IDs.
+- The *Status* column uses the implementation-status vocabulary (§3) and must
+  match the packet's `Implementation status`.
+- A row moves to `Implementation tracked` only after the decision is approved,
+  to `Implemented` only with PR/commit evidence, and to `Verified` only with
+  test, drill or configuration evidence.
+- Engineering work that a pending decision blocks must not ship a default that
+  answers the decision. Where a technical default is unavoidable (for example a
+  required AWS setting), it is proposed in the packet and approved first.
+
+| ID | Affected architecture / module | Work (milestone) | Status | Evidence / gate |
+|---|---|---|---|---|
+| PRIV-001 | Case lifecycle and retention | M2 Case lifecycle; later retention job | Not started | — |
+| PRIV-002 | Case end-of-retention handling | M2 Case lifecycle; later deletion/anonymization job | Not started | `delete_case` primitive exists (M1-04); not exposed |
+| PRIV-003 | Case Subject lifecycle | M2 subject lifecycle | Not started | FK `ON DELETE SET NULL (subject_id)` (M1-04) is referential integrity only |
+| PRIV-004 | Private object storage; M2 Document metadata; M3 S3 lifecycle | M1-07 storage; M2 Document domain; M3 S3 | Technical foundation complete; Blocked pending decision | [Private Object Storage](../architecture/private-object-storage.md) |
+| PRIV-005 | Audit events | M2 audit events | Not started | [Tenant Isolation §9](../architecture/tenant-isolation.md) contract applies |
+| PRIV-006 | Observability; CloudWatch log groups | M1-07 logging; M3 CloudWatch | Technical foundation complete; Blocked pending decision | [Observability](../architecture/observability.md); [Production Security Gates §6](../architecture/production-security-gates.md) |
+| PRIV-007 | Backup and recovery; RDS backups | M1-07 backup tooling; M3 RDS | Technical foundation complete; Blocked pending decision | `make backup-restore-check`; [Backup and Recovery §7](../architecture/backup-and-recovery.md) |
+| PRIV-008 | Company offboarding; User deletion; identity provider | Not scheduled | Not started | Schema cascades from `companies` and `users` (M1-04) are not a deletion workflow |
+| PRIV-009 | AI provider integration | M3 AI provider activation | Not started | [Service Inventory §6](third-party-service-inventory.md) gate |
+| PRIV-010 | AI provider configuration; AI request handling | M3 AI provider activation | Not started | Logs exclude HR guidance input/output (M1-07) |
+| PRIV-011 | AI provider configuration and contract | M3 AI provider activation | Not started | — |
+| PRIV-012 | AI provider region | M3 AI provider activation | Not started | — |
+| PRIV-013 | AWS region configuration; Cognito; SES; backup copies | M3 infrastructure | Not started | ADR-002 (`me-central-1`) is an architecture decision only |
+| PRIV-014 | Service inventory; vendor approval | Before any production data reaches a vendor (M3) | Technical foundation complete | [Service Inventory §8](third-party-service-inventory.md) |
+| PRIV-015 | Transactional email | Not scheduled | Not started | — |
+| PRIV-016 | Every deletion path; S3 object lock option | Before the first deletion feature | Not started | — |
+| PRIV-017 | RDS backups/PITR; restore drills | M3 RDS | Technical foundation complete; Blocked pending decision | `make backup-restore-check` |
+| PRIV-018 | Restore procedure; deletion ledger | M1-07 recovery procedure; first deletion feature | Technical foundation complete; Blocked pending decision | [Backup and Recovery §4](../architecture/backup-and-recovery.md) sign-off gate |
+| PRIV-019 | S3 versioning and lifecycle | M3 S3 | Technical foundation complete; Blocked pending decision | Write-once objects (M1-07) |
+| PRIV-020 | Repository delete functions; FK behavior; M2 deletion features | M2 | Technical foundation complete | Company-scoped delete primitives tested in M1-06; no route exposes them |
+| PRIV-021 | AI request construction; redaction layer | First AI feature; M3 AI provider activation | Not started | [Data Flow §2.7](../architecture/data-flow.md) |
+
+---
+
 ## Decision Packets
 
 Each packet uses the same fields. Analysis sections are engineering analysis,
@@ -2073,4 +2119,5 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-08 | M1-07 | PRIV-016 to PRIV-019 added, all `Pending Analysis`. M1-07 technical inputs recorded (Appendix A) |
 | 2026-10-08 | M1-08 | Ownership, lifecycle, vocabularies, evidence rules and versioning defined (§1 to §5). Audit findings recorded (§6). M1-07 technical inputs moved to Appendix A unchanged |
 | 2026-10-08 | M1-08 | AI-provider, processor and residency packets completed (PRIV-009 to PRIV-015). PRIV-021 added (AI input data categories; no existing ID covered it). Summary table regenerated from the packets: the one-line recommendation column moved verbatim into each packet, Implementation Impact column added |
+| 2026-10-08 | M1-08 | Decision-to-implementation traceability matrix added; architecture documents cross-linked |
 | 2026-10-08 | M1-08 | Retention, deletion, legal-hold and backup/recovery packets completed (PRIV-001 to PRIV-008, PRIV-016 to PRIV-019). PRIV-020 added (deletion mechanics and interim behavior; no existing ID covered it). Status moves recorded in each packet history |

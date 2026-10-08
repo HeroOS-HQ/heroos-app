@@ -282,6 +282,10 @@ facts, decisions or audit events) must have:
 without RLS unless it is added to the exemption list with a documented reason.
 Global, non-tenant tables (like `users`) need that explicit justification.
 
+Retention and deletion behavior of new entities (delete routes, soft-delete
+columns, cascades from Cases) is not a technical default. It follows the
+[decision register](../privacy/decision-register.md), in particular PRIV-020.
+
 ## 10. Out of scope
 
 - Private documents and object storage are secured separately in **M1-07**
