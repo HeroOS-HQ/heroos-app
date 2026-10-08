@@ -4,10 +4,10 @@ from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TimestampMixin
 
 
-class CaseSubject(Base):
+class CaseSubject(TimestampMixin, Base):
     """Lightweight tenant-owned person involved in a case (employee or candidate).
 
     Deliberately minimal: HeroOS is not an HRIS, so no sensitive HR profile data

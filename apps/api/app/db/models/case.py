@@ -4,10 +4,10 @@ from sqlalchemy import ForeignKey, ForeignKeyConstraint, Index, String, UniqueCo
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TimestampMixin
 
 
-class Case(Base):
+class Case(TimestampMixin, Base):
     """Persistent real-world HR matter owned directly by a Company.
 
     Workflow state is intentionally absent; workflow instances attach to a Case

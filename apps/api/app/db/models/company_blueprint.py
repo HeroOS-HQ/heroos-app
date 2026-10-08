@@ -4,10 +4,10 @@ from sqlalchemy import CheckConstraint, ForeignKey, Integer, String, UniqueConst
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base
+from app.db.base import Base, TimestampMixin
 
 
-class CompanyBlueprint(Base):
+class CompanyBlueprint(TimestampMixin, Base):
     __tablename__ = "company_blueprints"
     __table_args__ = (
         UniqueConstraint(
