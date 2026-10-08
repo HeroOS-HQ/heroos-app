@@ -6,7 +6,8 @@
 **Milestone:** M1 — Foundation & Security\
 **Issues:** M1-01 (created), M1-07 (PRIV-016 to PRIV-019 added), M1-08 (normalized)\
 **Last updated:** 2026-10-08\
-**Related:** [Third-Party Service Inventory](third-party-service-inventory.md),
+**Related:** [JJ Review Packet](jj-decision-review-packet.md),
+[Third-Party Service Inventory](third-party-service-inventory.md),
 [Production Security Gates](../architecture/production-security-gates.md)
 
 ## Purpose
@@ -32,6 +33,8 @@ This file is the **single authoritative register**. Architecture documents, the
 service inventory and any review packet refer to decisions by ID. They must not
 restate a decision outcome differently. If another document disagrees with this
 register, this register is correct and the other document is fixed.
+The [JJ Review Packet](jj-decision-review-packet.md) is a short, derived view for
+JJ; it records no decisions itself.
 
 ---
 
@@ -2121,3 +2124,4 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-08 | M1-08 | AI-provider, processor and residency packets completed (PRIV-009 to PRIV-015). PRIV-021 added (AI input data categories; no existing ID covered it). Summary table regenerated from the packets: the one-line recommendation column moved verbatim into each packet, Implementation Impact column added |
 | 2026-10-08 | M1-08 | Decision-to-implementation traceability matrix added; architecture documents cross-linked |
 | 2026-10-08 | M1-08 | Retention, deletion, legal-hold and backup/recovery packets completed (PRIV-001 to PRIV-008, PRIV-016 to PRIV-019). PRIV-020 added (deletion mechanics and interim behavior; no existing ID covered it). Status moves recorded in each packet history |
+| 2026-10-08 | M1-08 | JJ review packet added (`jj-decision-review-packet.md`), grouped by implementation dependency |

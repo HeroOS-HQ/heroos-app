@@ -130,3 +130,7 @@ The development provider is refused outside `HEROOS_ENV=development`. See
   [Observability](docs/architecture/observability.md).
 - Production S3, RDS, Secrets Manager, TLS, CloudWatch and backup requirements
   are activated in M3: [Production Security Gates](docs/architecture/production-security-gates.md).
+- Material privacy/security policy choices (retention, deletion, backups,
+  AI processing, vendors, residency) are recorded, not assumed, in the
+  [Decision Register](docs/privacy/decision-register.md). JJ reviews them through
+  the [JJ Review Packet](docs/privacy/jj-decision-review-packet.md).
