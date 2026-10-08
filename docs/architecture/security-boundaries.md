@@ -173,5 +173,34 @@ Invariants enforced by the FastAPI authentication boundary:
 - Authorization headers, bearer tokens and authentication secrets are never
   written to logs or error responses.
 
-M1-06 builds tenant isolation (query scoping and PostgreSQL RLS) on top of
-`AuthenticatedCompanyContext`. Live Cognito activation is M3.
+Live Cognito activation is M3.
+
+---
+
+## 5. Tenant Isolation Boundary
+
+Implemented in M1-06; see [Tenant Isolation](tenant-isolation.md).
+
+Company is the tenant boundary. Invariants:
+
+- `AuthenticatedCompanyContext` (Membership-derived) is the only trusted source
+  of the Company used for data access. Client-supplied Company IDs never
+  authorize.
+- Two independent layers, each tested alone:
+  1. Company-scoped repositories (`CompanyScope`): every lookup, update and
+     delete filters by the trusted Company as well as the resource ID.
+  2. PostgreSQL Row-Level Security on `companies`, `memberships`,
+     `company_blueprints`, `case_subjects` and `cases`, driven by a
+     transaction-local `heroos.company_id` setting.
+- The API connects as a runtime role that is not superuser, has no `BYPASSRLS`
+  and owns no tables, and it refuses to start otherwise. Migrations use a
+  separate migration/admin role.
+- Missing or invalid tenant context fails closed: no rows are visible and writes
+  are rejected.
+- Tenant context is transaction-local and cannot leak through the connection
+  pool. Session-level `SET` is forbidden.
+- Another Company's resource is indistinguishable from a missing one (404
+  within a Company, 403 for a Company without Membership).
+- New private tenant tables (M2 onward) must follow the contract in
+  [Tenant Isolation §9](tenant-isolation.md#9-contract-for-future-private-entities-m2-and-later).
+- Private documents and objects are secured separately in M1-07.
