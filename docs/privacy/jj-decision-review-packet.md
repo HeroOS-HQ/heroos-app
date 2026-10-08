@@ -93,8 +93,8 @@ name who answers the legal/privacy questions in the register.**
 - **Register status:** Ready for JJ Review
 - **Question:** (1) Is the service-inventory approval rule the gate for every
   vendor before it receives production customer data? (2) Are GitHub, Linear,
-  Slack and the development VPS confirmed as not approved for production
-  customer HR data? (3) Who reviews vendor contracts and data-processing terms?
+  Slack, the development VPS and the engineering AI development tool (Claude
+  Code) confirmed as not approved for production customer HR data? (3) Who reviews vendor contracts and data-processing terms?
 - **Why now:** M3 activates AWS services that will hold production data.
 - **Options:** A. Approve the rule and (2). B. A plus commitments to customers
   about subprocessor changes. C. Defer until legal review.

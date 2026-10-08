@@ -1344,7 +1344,8 @@ proposed; a non-UAE customer.
 1. Is the [Service Inventory §8](third-party-service-inventory.md) approval rule
    the gate every vendor must pass before receiving production customer data?
 2. Are engineering and project tools (GitHub, Linear, Slack, the development
-   VPS) confirmed as **not** approved to receive production customer HR data?
+   VPS, the engineering AI-assisted development tool Claude Code) confirmed as
+   **not** approved to receive production customer HR data?
 3. Who reviews vendor contracts and data-processing terms?
 
 **Technical facts.** The service inventory lists confirmed, planned and TBD
@@ -1400,6 +1401,7 @@ input received.
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; engineering-tool data rule and legal-role question made explicit; status to `Ready for JJ Review` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08 hardening): HeroOS role question moved to PRIV-022; vendor classification stays here; no change to status or recommendation | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08 hardening): Claude Code (engineering AI-assisted development tool, newly inventoried) added to Q2; no change to status or recommendation | Technical Lead |
 
 ### PRIV-015 — Transactional email content and retention
 
@@ -2271,3 +2273,4 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-08 | M1-08 | JJ review packet added (`jj-decision-review-packet.md`), grouped by implementation dependency |
 | 2026-10-08 | M1-08 | `make privacy-decision-check` added (register/JJ packet consistency and evidence rules), run in CI |
 | 2026-10-08 | M1-08 | Pre-merge hardening: PRIV-022 added (HeroOS data-protection role by processing activity; previously only referenced from PRIV-003, PRIV-008 and PRIV-014). Role references repointed with packet history rows |
+| 2026-10-08 | M1-08 | Pre-merge hardening: service inventory records Claude Code (engineering AI tool) and flags the unrecorded development VPS provider; PRIV-014 Q2 extended to Claude Code |
