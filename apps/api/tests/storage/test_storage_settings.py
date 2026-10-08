@@ -101,7 +101,7 @@ def test_s3_provider_refused_until_implemented(environment: str) -> None:
     extra = COGNITO if environment != "development" else {}
     settings = make_settings(heroos_env=environment, heroos_storage_provider="s3", **extra)
 
-    with pytest.raises(StorageConfigurationError, match="not available yet"):
+    with pytest.raises(StorageConfigurationError, match="not currently enabled"):
         build_private_object_storage(settings)
 
 

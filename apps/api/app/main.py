@@ -19,7 +19,7 @@ configure_logging(settings.heroos_log_level)
 # configuration (e.g. the development provider outside development) stops
 # startup instead of surfacing per request.
 get_authentication_provider()
-# Same for private object storage: an unavailable provider (e.g. s3 before M3)
+# Same for private object storage: an unavailable provider (e.g. s3 without an adapter)
 # or an unsafe local root stops startup; nothing falls back to local disk.
 get_private_object_storage()
 

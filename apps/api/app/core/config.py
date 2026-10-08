@@ -7,7 +7,7 @@ from app.core.database_settings import DEVELOPMENT_DATABASE_URL, DatabaseSetting
 
 Environment = Literal["development", "staging", "production"]
 AuthProviderName = Literal["development", "cognito"]
-# "s3" is the M3 production contract; no adapter exists yet, so selecting it
+# "s3" is the production contract; no adapter exists yet, so selecting it
 # stops startup instead of falling back to anything else.
 StorageProviderName = Literal["local", "s3"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
