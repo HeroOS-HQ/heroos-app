@@ -9,6 +9,11 @@ services:
     init: true
     ports:
       - "8001:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg://heroos:heroos_local@db:5432/heroos
+    depends_on:
+      db:
+        condition: service_healthy
 
   web:
     build:
@@ -33,3 +38,22 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 3
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: heroos
+      POSTGRES_USER: heroos
+      POSTGRES_PASSWORD: heroos_local
+    ports:
+      - "5433:5432"
+    volumes:
+      - heroos_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U heroos -d heroos"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  heroos_postgres_data:
