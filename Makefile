@@ -24,7 +24,7 @@ build:
 
 check: lint format-check typecheck test build
 
-.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup
+.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check
 
 # Root .env (if present) supplies DATABASE_URL / MIGRATION_DATABASE_URL overrides.
 API_ENV_FILE = $(if $(wildcard .env),--env-file ../../.env,)
@@ -57,6 +57,10 @@ db-setup: migrate db-runtime-role
 
 migration-check:
 	./scripts/verify-migrations.sh
+
+# Real-PostgreSQL cross-tenant security suite on a disposable database.
+tenant-isolation-check:
+	./scripts/verify-tenant-isolation.sh
 
 .PHONY: dev-token
 
