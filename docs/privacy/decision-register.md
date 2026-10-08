@@ -222,7 +222,7 @@ Audit of the register as it stood on `main` at `5551675` (after M1-07).
   definition. Both are preserved and now defined (§3).
 - No decision had an owner field per decision, a date, a version,
   implementation status, implementation impact or re-review trigger.
-- New M1 evidence: M1-04 schema foreign-key behavior and Company-scoped
+- New M1 evidence: M1-04 schema foreign-key behavior and M1-06 Company-scoped
   repository delete functions (PRIV-002, PRIV-003, PRIV-008), M1-07 storage,
   logging and backup foundations (see Appendix A).
 
@@ -295,7 +295,7 @@ Rules:
 | ID | Affected architecture / module | Work (milestone) | Status | Evidence / gate |
 |---|---|---|---|---|
 | PRIV-001 | Case lifecycle and retention | M2 Case lifecycle; later retention job | Not started | — |
-| PRIV-002 | Case end-of-retention handling | M2 Case lifecycle; later deletion/anonymization job | Not started | `delete_case` primitive exists (M1-04); not exposed |
+| PRIV-002 | Case end-of-retention handling | M2 Case lifecycle; later deletion/anonymization job | Not started | `delete_case` primitive exists (M1-06); not exposed |
 | PRIV-003 | Case Subject lifecycle | M2 subject lifecycle | Not started | FK `ON DELETE SET NULL (subject_id)` (M1-04) is referential integrity only |
 | PRIV-004 | Private object storage; M2 Document metadata; M3 S3 lifecycle | M1-07 storage; M2 Document domain; M3 S3 | Technical foundation complete; Blocked pending decision | [Private Object Storage](../architecture/private-object-storage.md) |
 | PRIV-005 | Audit events | M2 audit events | Not started | [Tenant Isolation §9](../architecture/tenant-isolation.md) contract applies |
@@ -1863,9 +1863,9 @@ handled in the interim?
 
 **Information required before decision.** None for JJ direction.
 
-**Implementation traceability.** M1-04/M1-06 delete primitives: technical
-foundation complete. M2 Case/Subject/document user-facing deletion: must
-follow the approved interim rule.
+**Implementation traceability.** M1-04 foreign keys and M1-06 delete
+primitives: technical foundation complete. M2 Case/Subject/document
+user-facing deletion: must follow the approved interim rule.
 
 **Re-review trigger.** PRIV-001, PRIV-002, PRIV-003, PRIV-004, PRIV-008 or
 PRIV-016 decided.
