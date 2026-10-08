@@ -44,6 +44,7 @@ infrastructure/
 
 .github/
   workflows/
+```
 
 ## Local Database
 
@@ -72,3 +73,20 @@ make migration-check
 ```
 
 `make check` runs source quality gates only and does not need a database.
+
+## Local Authentication
+
+Protected API routes require a Bearer JWT, and access to a Company is granted
+only through a HeroOS Membership. Production uses Amazon Cognito access tokens.
+Live Cognito activation is planned for M3.
+
+Locally, set `HEROOS_AUTH_PROVIDER=development` and `HEROOS_DEV_AUTH_SECRET`
+(see `.env.example`), then issue a short-lived token for an existing
+`users.identity_subject`:
+
+```bash
+make dev-token SUBJECT=<identity-subject>
+```
+
+The development provider is refused outside `HEROOS_ENV=development`. See
+[docs/architecture/authentication.md](docs/architecture/authentication.md).
