@@ -66,6 +66,15 @@ tenant-isolation-check:
 backup-restore-check:
 	./scripts/verify-backup-restore.sh
 
+.PHONY: privacy-decision-check
+
+# Governance check of docs/privacy/decision-register.md and the JJ review packet
+# (unique IDs, vocabularies, evidence for decided/confirmed/implemented states).
+# The self-test first proves the checks reject bad registers.
+privacy-decision-check:
+	python3 scripts/check-privacy-decisions.py --self-test
+	python3 scripts/check-privacy-decisions.py
+
 .PHONY: dev-token
 
 # Local development bearer token for an existing users.identity_subject.

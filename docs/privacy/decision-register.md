@@ -186,6 +186,12 @@ backup tooling does not implement a backup retention policy.
 - Decision IDs are never renumbered, deleted or reused. A decision replaced by
   another ID is marked `Superseded` with a pointer to the new ID.
 - Register-level changes are listed in the [Change Log](#change-log).
+- `make privacy-decision-check` (also run in CI) validates this register and the
+  JJ review packet: unique, contiguous IDs; required fields and sections;
+  controlled vocabularies; evidence for every decided, legally confirmed or
+  implemented state; and agreement between packets, the summary table, the
+  traceability matrix and the JJ review packet. It cannot judge whether the
+  evidence itself is genuine; reviewers do.
 
 ### How JJ records a decision on one item
 
@@ -2125,3 +2131,4 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-08 | M1-08 | Decision-to-implementation traceability matrix added; architecture documents cross-linked |
 | 2026-10-08 | M1-08 | Retention, deletion, legal-hold and backup/recovery packets completed (PRIV-001 to PRIV-008, PRIV-016 to PRIV-019). PRIV-020 added (deletion mechanics and interim behavior; no existing ID covered it). Status moves recorded in each packet history |
 | 2026-10-08 | M1-08 | JJ review packet added (`jj-decision-review-packet.md`), grouped by implementation dependency |
+| 2026-10-08 | M1-08 | `make privacy-decision-check` added (register/JJ packet consistency and evidence rules), run in CI |
