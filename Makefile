@@ -24,7 +24,7 @@ build:
 
 check: lint format-check typecheck test build
 
-.PHONY: local-up local-down local-logs local-ps
+.PHONY: local-up local-down local-logs local-ps migrate migration-check
 
 local-up:
 	docker compose up --build -d
@@ -37,3 +37,10 @@ local-logs:
 
 local-ps:
 	docker compose ps
+
+# Database targets require the local Docker Compose `db` service.
+migrate:
+	cd apps/api && uv run alembic upgrade head
+
+migration-check:
+	./scripts/verify-migrations.sh
