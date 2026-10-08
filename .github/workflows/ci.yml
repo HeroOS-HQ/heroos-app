@@ -102,3 +102,36 @@ jobs:
             -f apps/api/Dockerfile \
             -t heroos-api:ci \
             .
+
+  tenant-isolation:
+    name: Tenant Isolation
+    runs-on: ubuntu-latest
+
+    # Security gate: real PostgreSQL 16 (the same Compose `db` service used
+    # locally), CI-only local credentials, no AWS and no secrets.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        run: pipx install uv==0.12.2
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      - name: Start PostgreSQL 16
+        run: docker compose up -d --wait db
+
+      - name: Verify migrations (base -> head -> base -> head, RLS assertions)
+        run: make migration-check
+
+      - name: Tenant isolation suite (runtime role, RLS, cross-tenant, pool leakage)
+        run: make tenant-isolation-check
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker compose down --volumes
