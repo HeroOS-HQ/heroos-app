@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import SecretStr, model_validator
@@ -6,6 +7,9 @@ from app.core.database_settings import DatabaseSettings
 
 Environment = Literal["development", "staging", "production"]
 AuthProviderName = Literal["development", "cognito"]
+# "s3" is the M3 production contract; no adapter exists yet, so selecting it
+# stops startup instead of falling back to anything else.
+StorageProviderName = Literal["local", "s3"]
 
 # HS256 keys shorter than the 256-bit digest weaken the development signature.
 DEV_AUTH_SECRET_MIN_LENGTH = 32
@@ -28,6 +32,35 @@ class Settings(DatabaseSettings):
     # Optional resource-server audience. When set, access tokens must carry a
     # matching `aud`; when unset, `aud` is not used for any decision.
     heroos_cognito_resource_audience: str | None = None
+
+    # Private object storage. See docs/architecture/private-object-storage.md.
+    # Unset means no storage: every storage operation fails; nothing falls back
+    # to local disk.
+    heroos_storage_provider: StorageProviderName | None = None
+    heroos_local_storage_root: Path | None = None
+
+    @model_validator(mode="after")
+    def _validate_storage(self) -> Self:
+        if self.heroos_env != "development":
+            # Deployed environments never store private objects on local disk.
+            if self.heroos_storage_provider == "local":
+                raise ValueError(
+                    "HEROOS_STORAGE_PROVIDER=local is not allowed when "
+                    f"HEROOS_ENV={self.heroos_env}"
+                )
+            if self.heroos_local_storage_root is not None:
+                raise ValueError("HEROOS_LOCAL_STORAGE_ROOT must not be set outside development")
+
+        if self.heroos_storage_provider == "local":
+            root = self.heroos_local_storage_root
+            if root is None or not root.is_absolute():
+                raise ValueError(
+                    "HEROOS_LOCAL_STORAGE_ROOT must be an absolute path for the local provider"
+                )
+        elif self.heroos_local_storage_root is not None:
+            raise ValueError("HEROOS_LOCAL_STORAGE_ROOT is only valid with the local provider")
+
+        return self
 
     @model_validator(mode="after")
     def _validate_authentication(self) -> Self:

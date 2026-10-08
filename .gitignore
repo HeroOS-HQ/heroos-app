@@ -42,3 +42,7 @@ crash.*.log
 
 # Logs
 *.log
+# Private object storage (local development provider). The provider refuses
+# roots inside the repository; this is a second guard against committing objects.
+.heroos-storage/
+private-objects/
