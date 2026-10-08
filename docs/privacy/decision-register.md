@@ -235,14 +235,14 @@ Audit of the register as it stood on `main` at `5551675` (after M1-07).
 
 | ID | Decision | Status | Technical Recommendation | JJ Decision | Legal Review |
 |---|---|---|---|---|---|
-| PRIV-001 | Active and closed Case data retention | Pending Analysis | Define retention based on product need, legal obligations and storage limitation rather than an arbitrary universal duration | Pending | Required |
-| PRIV-002 | Closed-case deletion vs anonymization vs continued retention | Pending Analysis | Support explicit lifecycle behavior rather than universal soft deletion | Pending | Required |
-| PRIV-003 | Employee / Case Subject data retention | Pending Analysis | Align retention with active case/company need and applicable legal requirements | Pending | Required |
-| PRIV-004 | Uploaded and generated document retention | Pending Analysis | Keep document lifecycle configurable and tied to approved policy | Pending | Required |
-| PRIV-005 | Audit-event retention | Pending Analysis | Preserve sufficient audit history while minimizing unnecessary sensitive content | Pending | Review Required |
+| PRIV-001 | Active and closed Case data retention | Legal Review Required | Define retention based on product need, legal obligations and storage limitation rather than an arbitrary universal duration | Pending | Required |
+| PRIV-002 | Closed-case deletion vs anonymization vs continued retention | Legal Review Required | Support explicit lifecycle behavior rather than universal soft deletion | Pending | Required |
+| PRIV-003 | Employee / Case Subject data retention | Legal Review Required | Align retention with active case/company need and applicable legal requirements | Pending | Required |
+| PRIV-004 | Uploaded and generated document retention | Legal Review Required | Keep document lifecycle configurable and tied to approved policy | Pending | Required |
+| PRIV-005 | Audit-event retention | Legal Review Required | Preserve sufficient audit history while minimizing unnecessary sensitive content | Pending | Review Required |
 | PRIV-006 | Application-log retention | Pending Analysis | Use minimized operational logs and shorter retention than business records unless operational need requires otherwise | Pending | Review Required |
 | PRIV-007 | Database-backup retention | Pending Analysis | Balance recoverability with storage limitation and approved operational need | Pending | Review Required |
-| PRIV-008 | Account / Company deletion behavior | Pending Analysis | Define controlled deletion/anonymization workflow rather than immediate unrestricted cascade deletion | Pending | Required |
+| PRIV-008 | Account / Company deletion behavior | Legal Review Required | Define controlled deletion/anonymization workflow rather than immediate unrestricted cascade deletion | Pending | Required |
 | PRIV-009 | Production AI provider and model | Pending Analysis | Select only after capability, privacy, residency and cost comparison | Pending | Required |
 | PRIV-010 | AI input/output retention | Pending Analysis | Prefer provider configuration minimizing or disabling provider retention where commercially/technically feasible | Pending | Required |
 | PRIV-011 | AI provider training/data-use policy | Pending Analysis | Production customer data should not be used for general provider model training without explicit approved basis | Pending | Required |
@@ -250,10 +250,1065 @@ Audit of the register as it stood on `main` at `5551675` (after M1-07).
 | PRIV-013 | Production data residency model | Pending Analysis | Keep primary HeroOS application/database/document infrastructure in AWS UAE; separately review every external processor | Pending | Required |
 | PRIV-014 | Production subprocessor/vendor approval process | Pending Analysis | Maintain service inventory and review material data-processing changes before activation | Pending | Required |
 | PRIV-015 | Transactional email content and retention | Pending Analysis | Minimize HR-sensitive content in email; prefer secure in-product access for sensitive case details | Pending | Review Required |
-| PRIV-016 | Legal hold requirements | Pending Analysis | Define whether and when a legal hold suspends deletion of Cases, documents/objects, logs and backups before any automated deletion is implemented | Pending | Required |
+| PRIV-016 | Legal hold requirements | Legal Review Required | Define whether and when a legal hold suspends deletion of Cases, documents/objects, logs and backups before any automated deletion is implemented | Pending | Required |
 | PRIV-017 | Recovery point objective (RPO) and recovery time objective (RTO) | Pending Analysis | Approve explicit RPO/RTO targets before M3 configures RDS backups/PITR and restore drills; engineering will present the cost of each option | Pending | Review Required |
-| PRIV-018 | Deletion requests vs. existing backups, and treatment of restored backups | Pending Analysis | Decide whether deleted data may persist in backups until they expire, how such backups are protected meanwhile, and how deletions are re-applied after any restore | Pending | Required |
-| PRIV-019 | Private object versioning and deleted-object recoverability | Pending Analysis | Decide whether S3 versioning / a recovery window applies to private objects, consistent with PRIV-004 and PRIV-018 | Pending | Review Required |
+| PRIV-018 | Deletion requests vs. existing backups, and treatment of restored backups | Legal Review Required | Decide whether deleted data may persist in backups until they expire, how such backups are protected meanwhile, and how deletions are re-applied after any restore | Pending | Required |
+| PRIV-019 | Private object versioning and deleted-object recoverability | Ready for JJ Review | Decide whether S3 versioning / a recovery window applies to private objects, consistent with PRIV-004 and PRIV-018 | Pending | Review Required |
+| PRIV-020 | Deletion mechanics and interim deletion behavior | Ready for JJ Review | No user-facing deletion in M2 until the retention decisions are approved; no universal soft delete | Pending | Review Required |
+
+---
+
+## Decision Packets
+
+Each packet uses the same fields. Analysis sections are engineering analysis,
+not legal advice. "EU/GDPR-standard considerations" are privacy
+considerations, not legal determinations. Values not yet known are `—` or
+`Pending`.
+
+### PRIV-001 — Active and closed Case data retention
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (Case retention and expiry) |
+| Implementation status | Not started |
+| Related decisions | PRIV-002, PRIV-003, PRIV-004, PRIV-005, PRIV-016, PRIV-018, PRIV-020 |
+| First recorded | M1-01 |
+
+**Question.** How long are active and closed Case records kept, and which event
+starts the retention period?
+
+**Technical facts.** The M1 `cases` table holds `company_id`, an optional
+`subject_id`, `case_type`, `title` and timestamps. There is no closure state,
+closure timestamp or retention metadata, and no automated deletion. Workflow
+instances, facts, decisions and documents attached to Cases are M2.
+
+**Options.**
+
+- A. A defined retention period per Case category, counted from Case closure,
+  then deletion or anonymization (PRIV-002).
+- B. Retention configurable per Company within approved bounds.
+- C. Retain until the customer deletes the Case or offboards (PRIV-008).
+- D. Indefinite retention.
+
+**Privacy implications.** Cases hold HR-sensitive narratives and facts about
+identifiable employees. Longer retention increases breach exposure and the
+volume of data subject to access and deletion requests. Shorter retention
+reduces the history available for investigations, disputes and customer
+reference.
+
+**EU/GDPR-standard considerations.** Storage-limitation and purpose-limitation
+considerations: retention should be justified by purpose and documented.
+Applicable periods are not established in engineering documentation;
+legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability.
+
+**Cost / operational implications.** Relational storage cost for Case data is
+small. The material cost is engineering: lifecycle states, scheduled expiry,
+anonymization, legal-hold exceptions (PRIV-016) and verification. Option B adds
+per-Company configuration and support effort. Option D has the lowest
+engineering cost and the highest privacy exposure.
+
+**Engineering recommendation.** Original (M1-01): *Define retention based on
+product need, legal obligations and storage limitation rather than an
+arbitrary universal duration.* M1-08: count retention from an explicit Case
+closure event that M2 records, so any approved policy can be applied without a
+data migration. Choose between A and B after legal input. Avoid D.
+
+**Legal/privacy question.** Which retention periods or criteria apply to HR
+advisory case records for UAE Federal / MOHRE and DIFC customers, and are there
+minimum periods (for example for employment disputes) or maximum periods?
+
+**Information required before decision.** The legal/privacy answer above. JJ
+product input on whether customers may configure retention (Option B).
+
+**Implementation traceability.** M2 Case lifecycle (closure event and
+timestamps): not started. Case retention/expiry job: blocked pending decision.
+
+**Re-review trigger.** Legal input received; new jurisdiction added; new Case
+categories.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-002 — Closed-case deletion vs anonymization vs continued retention
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (end-of-retention handling for Cases) |
+| Implementation status | Not started |
+| Related decisions | PRIV-001, PRIV-005, PRIV-016, PRIV-018, PRIV-020 |
+| First recorded | M1-01 |
+
+**Question.** When a Case reaches the end of its retention period (PRIV-001), is
+it hard-deleted, anonymized or kept in a restricted archive?
+
+**Technical facts.** M1 has a Company-scoped `delete_case` repository function
+that hard-deletes a Case row. It is used by tests. No route exposes it. M2 adds
+workflow instances, facts, decisions, documents and audit events that reference
+Cases. See PRIV-020 for the mechanism and interim behavior.
+
+**Options.**
+
+- A. Hard delete the Case, its dependent records and its objects.
+- B. Anonymize: remove or replace identifying fields and free text, keep
+  structural data (Case type, dates, outcomes).
+- C. Restricted archive: keep the Case, hidden from normal use, with limited
+  access.
+- D. Soft delete: flag the Case as deleted and hide it; the data stays.
+
+**Privacy implications.** A removes the data (subject to backups, PRIV-018). B
+depends on the anonymization actually being effective; HR free text and
+narratives are hard to anonymize reliably. C and D keep the full personal data.
+D also makes data look deleted to users while it is still stored.
+
+**EU/GDPR-standard considerations.** Storage-limitation consideration. Whether
+a given anonymization approach is sufficient for data to stop being personal
+data is a legal/privacy question that engineering cannot confirm.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability.
+
+**Cost / operational implications.** A needs a defined cascade across M2
+entities and S3 objects. B has the highest engineering cost: field-level rules
+per entity, free-text handling and verification. C and D are cheap to build but
+carry ongoing storage, access-control and exposure cost, and D adds a deleted
+filter to every query.
+
+**Engineering recommendation.** Original (M1-01): *Support explicit lifecycle
+behavior rather than universal soft deletion.* M1-08: design M2 entities so
+both A and B remain possible (explicit lifecycle states, a known map of
+dependent records and objects). Do not adopt D as a universal mechanism
+(PRIV-020). Choose after legal input.
+
+**Legal/privacy question.** After the retention period, is deletion,
+anonymization or restricted retention appropriate for closed HR cases, and what
+anonymization standard, if any, would be acceptable?
+
+**Information required before decision.** The legal/privacy answer above;
+PRIV-001.
+
+**Implementation traceability.** M2 Case lifecycle and dependent-record map:
+not started. End-of-retention job: blocked pending decision.
+
+**Re-review trigger.** Legal input received; PRIV-001 decided.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-003 — Employee / Case Subject data retention
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (Case Subject retention and deletion) |
+| Implementation status | Not started |
+| Related decisions | PRIV-001, PRIV-002, PRIV-008, PRIV-016, PRIV-020 |
+| First recorded | M1-01 |
+
+**Question.** How long is data about an employee / Case Subject kept, including
+after their Cases close or they leave the customer company, what happens to it
+afterwards, and how are individual deletion requests handled?
+
+**Technical facts.** `case_subjects` holds `company_id`, `subject_type`,
+`display_name`, an optional `reference` and timestamps. Deleting a subject sets
+`cases.subject_id` to NULL through the composite foreign key
+(`ON DELETE SET NULL (subject_id)`), so the Case row survives without the link.
+This is referential integrity, not an approved deletion policy. A
+Company-scoped `delete_case_subject` repository function exists. No route
+exposes it. Case free text may still identify the person after the subject row
+is deleted.
+
+**Options.**
+
+- A. Keep subject data while any related Case is retained, then delete or
+  anonymize it with the last Case.
+- B. An independent retention period from the subject's last activity.
+- C. Customer-initiated deletion at any time, subject to legal hold (PRIV-016).
+- D. A combination of A and C.
+
+**Privacy implications.** Case Subjects are identifiable employees of customer
+companies, who are not HeroOS users. Deleting the subject row alone does not
+remove identifying content from Cases or documents.
+
+**EU/GDPR-standard considerations.** Storage-limitation consideration, and
+handling of requests from individuals to access or delete their data. Who
+receives and decides such requests (HeroOS or the customer company) depends on
+HeroOS's legal role, which is not established in engineering documentation
+(see PRIV-014). Legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability.
+
+**Cost / operational implications.** A is the simplest consistent model. C
+needs UI, audit, propagation to Case content and documents, and legal-hold
+checks.
+
+**Engineering recommendation.** Original (M1-01): *Align retention with active
+case/company need and applicable legal requirements.* M1-08: A as the default
+model, with C added only if legal review supports it, so subject data does not
+outlive the Cases that justify it. How subject deletion propagates into Case
+content is decided with PRIV-002 and PRIV-020.
+
+**Legal/privacy question.** What retention applies to employee data held in HR
+advisory cases, what changes when the employee leaves, and who handles deletion
+requests from customer companies' employees?
+
+**Information required before decision.** The legal/privacy answer above;
+HeroOS role classification (PRIV-014).
+
+**Implementation traceability.** M2 subject lifecycle: not started. Subject
+deletion/anonymization: blocked pending decision.
+
+**Re-review trigger.** Legal input received; PRIV-001 or PRIV-002 decided.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-004 — Uploaded and generated document retention
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (document deletion, S3 lifecycle expiry) |
+| Implementation status | Technical foundation complete; Blocked pending decision |
+| Related decisions | PRIV-001, PRIV-016, PRIV-018, PRIV-019 |
+| First recorded | M1-01 |
+
+**Question.** How long are uploaded and generated documents (private objects)
+kept, and are they deleted with their Case or on their own schedule?
+
+**Technical facts.** M1-07 storage primitive: write-once objects under
+`companies/<company uuid>/<object uuid>`, Company-authorized access, and
+immediate hard delete. No document metadata exists yet (M2 Document domain).
+Production S3 is not active, and versioning and lifecycle rules are not
+configured (PRIV-019). See Appendix A.
+
+**Options.**
+
+- A. Documents follow their Case's retention (PRIV-001).
+- B. Retention periods per document type.
+- C. Customer-managed deletion, subject to legal hold.
+- D. For generated documents, store only the inputs and regenerate on demand.
+
+**Privacy implications.** Documents may contain the most sensitive content in
+HeroOS (ADR-005). Documents and their Case expiring separately can leave
+orphaned documents or Cases that refer to missing documents.
+
+**EU/GDPR-standard considerations.** Storage-limitation consideration. Periods
+not established in engineering documentation; legal/privacy confirmation
+required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability, including any document-type-specific obligations.
+
+**Cost / operational implications.** S3 storage cost grows with volume and
+retention length. Lifecycle rules are cheap to run. Per-type rules (B) add
+engineering and support effort. Versioning (PRIV-019) adds storage for
+non-current versions. D reduces stored documents but needs reproducible
+generation.
+
+**Engineering recommendation.** Original (M1-01): *Keep document lifecycle
+configurable and tied to approved policy.* M1-08: A as the baseline. M2
+document metadata should carry Company, Case, document type and timestamps so
+any approved rule can be applied. No S3 lifecycle expiry until approved.
+
+**Legal/privacy question.** Are there retention obligations specific to
+particular employment document types for UAE Federal / MOHRE or DIFC
+customers?
+
+**Information required before decision.** The legal/privacy answer above;
+PRIV-001.
+
+**Implementation traceability.** M1-07 private object storage: technical
+foundation complete. M2 Document metadata: not started. M3 S3 lifecycle rules:
+blocked pending decision.
+
+**Re-review trigger.** Legal input received; PRIV-001 decided; new document
+types.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized with M1-07 evidence; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-005 — Audit-event retention
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Review Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (audit-event purge) |
+| Implementation status | Not started |
+| Related decisions | PRIV-002, PRIV-008, PRIV-016, PRIV-020 |
+| First recorded | M1-01 |
+
+**Question.** How long are audit events kept, may they outlive the Case or User
+they describe, and what content may they contain?
+
+**Technical facts.** Audit events are planned M2 tenant-private entities
+(ADR-004, [Tenant Isolation §9](../architecture/tenant-isolation.md)). None
+exist in M1. Application logs (PRIV-006) are not audit events.
+
+**Options.**
+
+- A. Same retention as the related Case.
+- B. Longer than the Case, with minimized content (actor, action, target IDs,
+  time) once the Case is deleted or anonymized.
+- C. A fixed period independent of the Case.
+
+**Privacy implications.** Audit events identify the acting Users and reference
+Case Subjects. Keeping them after Case deletion preserves accountability but
+keeps personal data. Minimized content reduces exposure.
+
+**EU/GDPR-standard considerations.** Data-minimization and storage-limitation
+considerations. Periods not established in engineering documentation;
+legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability.
+
+**Cost / operational implications.** Storage is small. Engineering cost is in
+minimization and in keeping audit records independent of Case deletion.
+
+**Engineering recommendation.** Original (M1-01): *Preserve sufficient audit
+history while minimizing unnecessary sensitive content.* M1-08: M2 audit events
+record actor, action, target identifiers and time, not HR narrative content, so
+any approved retention can be applied without exposing Case content. Audit
+events should not be removed implicitly by database cascades (PRIV-020).
+
+**Legal/privacy question.** Are there minimum or maximum periods for audit
+records of HR advisory actions, and may minimized audit records outlive deleted
+Case data?
+
+**Information required before decision.** The legal/privacy answer above.
+
+**Implementation traceability.** M2 audit events: not started. Audit purge:
+blocked pending decision.
+
+**Re-review trigger.** Legal input received; M2 audit-event design review.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-006 — Application-log retention
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Review Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M3 production activation (CloudWatch log-group retention) |
+| Implementation status | Technical foundation complete; Blocked pending decision |
+| Related decisions | PRIV-008, PRIV-013, PRIV-014 |
+| First recorded | M1-01 |
+
+**Question.** How long are application logs kept in CloudWatch (and any
+archive)?
+
+**Technical facts.** See Appendix A and
+[Observability](../architecture/observability.md). Logs hold opaque,
+pseudonymous User and Company identifiers and no HR content. The M3 gate
+([Production Security Gates §6](../architecture/production-security-gates.md))
+requires an explicitly configured retention, never the "never expire" default.
+No log group exists.
+
+**Options.**
+
+- A. A short operational window.
+- B. A longer window that supports security-incident investigation.
+- C. Tiered: short in CloudWatch, longer in an access-controlled archive.
+
+No value is proposed in M1-08.
+
+**Privacy implications.** Lower sensitivity than business records. Longer
+retention keeps more pseudonymous activity history per User and Company.
+
+**EU/GDPR-standard considerations.** Data-minimization and storage-limitation
+considerations. Not established in engineering documentation; legal/privacy
+confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE/DIFC
+applicability.
+
+**Cost / operational implications.** CloudWatch Logs charges for ingestion and
+storage, so retention length drives cost. C adds an archive pipeline and its
+access control.
+
+**Engineering recommendation.** Original (M1-01): *Use minimized operational
+logs and shorter retention than business records unless operational need
+requires otherwise.* M1-08: A or B, with an explicit value per log group
+proposed at M3 planning together with a cost estimate. Keep logs free of HR
+content (enforced by M1-07 tests).
+
+**Legal/privacy question.** Do minimum or maximum periods apply to operational
+logs that contain pseudonymous user identifiers?
+
+**Information required before decision.** Candidate retention values with
+CloudWatch cost estimates (engineering, M3 planning). Incident-investigation
+needs (Technical Lead and JJ).
+
+**Implementation traceability.** M1-07 privacy-safe logging: technical
+foundation complete. M3 CloudWatch log groups and retention: blocked pending
+decision.
+
+**Re-review trigger.** A third-party log or error service is proposed; log
+content changes; security incident review.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized with M1-07 evidence; remains `Pending Analysis` | Technical Lead |
+
+### PRIV-007 — Database-backup retention
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Review Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M3 production activation (RDS automated-backup retention, snapshot policy) |
+| Implementation status | Technical foundation complete; Blocked pending decision |
+| Related decisions | PRIV-013, PRIV-016, PRIV-017, PRIV-018 |
+| First recorded | M1-01 |
+
+**Question.** How long are production database backups kept, and which backup
+types are used?
+
+**Technical facts.** See Appendix A and
+[Backup and Recovery §7](../architecture/backup-and-recovery.md). The logical
+backup/restore procedure is verified on disposable databases locally and in CI.
+No production backup exists. At M3: RDS automated backups with PITR, encrypted
+with KMS. Production logical dumps, if used, only in an encrypted,
+access-controlled store with an approved retention. Cross-region copies only if
+approved (PRIV-013).
+
+**Options.**
+
+- A. RDS automated backups/PITR only, with a retention window to approve.
+- B. A plus manual snapshots kept for a defined period.
+- C. A plus periodic logical dumps in an encrypted store.
+
+**Privacy implications.** Backups are full copies of production HR data,
+including data deleted since they were taken. A longer window keeps deleted data
+recoverable for longer (PRIV-018).
+
+**EU/GDPR-standard considerations.** Storage-limitation consideration for data
+kept only in backups. Not established in engineering documentation;
+legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE/DIFC
+applicability, and PRIV-013 for any backup copy outside `me-central-1`.
+
+**Cost / operational implications.** Backup storage grows with database size
+and window length. Manual snapshots persist until someone deletes them, which
+is ongoing cost and exposure.
+
+**Engineering recommendation.** Original (M1-01): *Balance recoverability with
+storage limitation and approved operational need.* M1-08: A as the baseline,
+sized together with PRIV-017 and PRIV-018. B or C only for a stated recovery
+need. No manual snapshot without a named owner and expiry.
+
+**Legal/privacy question.** Does keeping deleted personal data in backups until
+they expire need specific justification or disclosure to customers?
+
+**Information required before decision.** PRIV-017 targets. Database size
+projection and cost estimate (engineering, M3 planning).
+
+**Implementation traceability.** M1-07 logical backup/restore: technical
+foundation complete (`make backup-restore-check`). M3 RDS backup configuration:
+blocked pending decision.
+
+**Re-review trigger.** PRIV-017 decided; database growth; restore-drill
+findings.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized with M1-07 evidence; remains `Pending Analysis` | Technical Lead |
+
+### PRIV-008 — Account / Company deletion behavior
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (Company offboarding, User account deletion) |
+| Implementation status | Not started |
+| Related decisions | PRIV-003, PRIV-004, PRIV-005, PRIV-006, PRIV-016, PRIV-018, PRIV-020 |
+| First recorded | M1-01 |
+
+**Scope.** "Account" is read as both the customer Company and an individual
+User account. JJ is asked to confirm this scope.
+
+**Question.** What happens to a Company's data when the customer leaves, and
+what happens when an individual User account is removed?
+
+**Technical facts.** No Company or User deletion workflow exists. Database
+foreign keys cascade from `companies` to memberships, Company Blueprints, Case
+Subjects and Cases, and from `users` to memberships. The `users` table holds
+only an opaque `identity_subject` and timestamps; identity data such as email
+lives in the identity provider (Cognito at M3). Objects under
+`companies/<company uuid>/`, log entries and backups are not touched by a
+database cascade. See Appendix A.
+
+**Options (Company).**
+
+- A. Immediate hard delete: database cascade plus object deletion.
+- B. Staged offboarding: suspend access, export window, then delete or
+  anonymize after a defined period, then confirm completion.
+- C. Restricted archive for a defined period, then deletion.
+
+**Options (User).** Remove the Membership only (the User row stays for audit
+attribution); delete the User and the identity-provider account; or anonymize
+the User.
+
+**Privacy implications.** Company deletion removes all employee and Case data
+of that customer, which is irreversible and interacts with legal hold
+(PRIV-016) and backups (PRIV-018). User deletion interacts with audit
+attribution (PRIV-005).
+
+**EU/GDPR-standard considerations.** Storage-limitation consideration and
+handling of deletion requests. The obligations depend on customer contract
+terms and HeroOS's legal role, neither of which is documented in the
+repository. Legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability.
+
+**Cost / operational implications.** B has the highest engineering cost
+(offboarding states, export, scheduled deletion across database, S3 and
+identity provider, verification). A is cheapest but irreversible and exposed to
+mistakes.
+
+**Engineering recommendation.** Original (M1-01): *Define controlled
+deletion/anonymization workflow rather than immediate unrestricted cascade
+deletion.* M1-08: B for Companies. For Users, remove the Membership to revoke
+access and handle erasure of the User identity separately under legal
+guidance. The database cascade is referential integrity, not the deletion
+workflow; no product path may call it until this decision is approved
+(PRIV-020).
+
+**Legal/privacy question.** What must happen to a customer's data at contract
+end (deletion, return, retention period), and how are User account erasure
+requests handled?
+
+**Information required before decision.** The legal/privacy answer above;
+customer contract terms; JJ scope confirmation.
+
+**Implementation traceability.** Company offboarding and User deletion: not
+started; blocked pending decision.
+
+**Re-review trigger.** Legal input received; customer contract template
+available.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; scope note added; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-016 — Legal hold requirements
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (every automated or user-facing deletion path) |
+| Implementation status | Not started |
+| Related decisions | PRIV-001, PRIV-002, PRIV-003, PRIV-004, PRIV-005, PRIV-006, PRIV-007, PRIV-008, PRIV-018, PRIV-019 |
+| First recorded | M1-07 |
+
+**Question.** Does HeroOS support legal holds; who may place and release one;
+what it covers (Company, Case, Case Subject, document); and what it suspends
+(Case and document deletion, object expiry, log expiry, backup expiry)?
+
+**Technical facts.** No automated deletion exists, so nothing currently needs
+suspending. S3 object lock is one possible storage mechanism (Appendix A).
+
+**Options.**
+
+- A. No legal-hold feature in V1. Deletion stays manual and case by case.
+- B. An application-level hold on Company or Case, checked by every deletion
+  path and audited.
+- C. B plus storage-level object lock for held objects.
+
+**Privacy implications.** A hold keeps data beyond its normal retention, so it
+must be scoped, recorded and released. C can make objects undeletable, by
+HeroOS too, until the lock ends.
+
+**EU/GDPR-standard considerations.** A hold must be justified and limited to
+what it needs to preserve. Not established in engineering documentation;
+legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability.
+
+**Cost / operational implications.** B is moderate (a flag, checks in every
+deletion path, audit). C adds object-lock configuration and the risk of
+irreversible locks. A is cheapest but gives any later automated deletion no
+safeguard.
+
+**Engineering recommendation.** Original (M1-07): *Define whether and when a
+legal hold suspends deletion of Cases, documents/objects, logs and backups
+before any automated deletion is implemented.* M1-08: decide before any
+automated deletion is built. Engineering leans to B. C only if legal review
+identifies a need for storage-enforced immutability. Engineering will confirm
+at M3 whether any chosen storage mechanism has to be configured when the
+bucket is created.
+
+**Legal/privacy question.** When must HeroOS or its customers preserve HR data
+(litigation, investigations, regulator requests) for UAE Federal / MOHRE and
+DIFC matters, and who may instruct a hold?
+
+**Information required before decision.** The legal/privacy answer above.
+
+**Implementation traceability.** Legal-hold flag and checks: not started;
+required before the first deletion feature.
+
+**Re-review trigger.** Legal input received; first automated deletion feature
+proposed.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-08 | Recorded in M1-07, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-017 — Recovery point objective (RPO) and recovery time objective (RTO)
+
+| Field | Value |
+| --- | --- |
+| Status | Pending Analysis |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Review Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M3 production activation (RDS backup/PITR configuration, restore-drill acceptance criteria) |
+| Implementation status | Technical foundation complete; Blocked pending decision |
+| Related decisions | PRIV-007, PRIV-013, PRIV-018, PRIV-019 |
+| First recorded | M1-07 |
+
+**Question.** How much data loss (RPO) and how much downtime (RTO) is
+acceptable for production, and who owns the recovery policy?
+
+**Technical facts.** The logical backup/restore procedure and post-restore
+security validation are verified on disposable databases locally and in CI. No
+production backup exists. M3 plans RDS automated backups with PITR and
+scheduled restore drills ([Backup and Recovery §7](../architecture/backup-and-recovery.md)).
+Object recovery depends on PRIV-019. No restore duration has been measured in a
+production-like environment.
+
+**Options.**
+
+- A. RDS automated backups/PITR in `me-central-1` only.
+- B. A plus cross-region backup copies (better recovery from a regional failure;
+  data leaves `me-central-1`, PRIV-013).
+- C. A plus a Multi-AZ standby (shorter recovery from infrastructure failure;
+  does not protect against logical corruption or bad deletes).
+- D. Additional standby or replica infrastructure for tighter targets.
+
+No RPO or RTO value is proposed in M1-08.
+
+**Privacy implications.** B and D may copy production HR data outside
+`me-central-1`. Longer PITR windows also lengthen how long deleted data remains
+recoverable (PRIV-018).
+
+**EU/GDPR-standard considerations.** Availability and resilience of personal
+data are privacy and security considerations. No specific target is established
+in engineering documentation.
+
+**UAE considerations.** Legal/privacy review required for UAE/DIFC
+applicability and for any cross-region copy (PRIV-013).
+
+**Cost / operational implications.** Each step from A to D increases monthly
+cost and operational complexity. Costed options will be prepared at M3
+planning.
+
+**Engineering recommendation.** Original (M1-07): *Approve explicit RPO/RTO
+targets before M3 configures RDS backups/PITR and restore drills; engineering
+will present the cost of each option.* M1-08: JJ states the business tolerance
+for data loss and downtime. Engineering then presents costed options. Targets
+are accepted only after a restore drill meets them. Recovery policy owner: JJ.
+Recovery execution owner: Technical Lead.
+
+**Legal/privacy question.** Do customer contracts or regulations impose
+availability or recovery commitments?
+
+**Information required before decision.** JJ business tolerance; cost
+estimates (engineering, M3 planning); measured restore duration from the first
+M3 restore drill.
+
+**Implementation traceability.** M1-07 backup/restore verification: technical
+foundation complete. M3 RDS backups/PITR and restore drills: blocked pending
+decision.
+
+**Re-review trigger.** First M3 restore drill; customer contract commitments;
+material growth in data volume.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-08 | Recorded in M1-07, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; remains `Pending Analysis` | Technical Lead |
+
+### PRIV-018 — Deletion requests vs. existing backups, and treatment of restored backups
+
+| Field | Value |
+| --- | --- |
+| Status | Legal Review Required |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks deletion implementation (deletion ledger, restore reconciliation) |
+| Implementation status | Technical foundation complete; Blocked pending decision |
+| Related decisions | PRIV-004, PRIV-007, PRIV-008, PRIV-016, PRIV-017, PRIV-019, PRIV-020 |
+| First recorded | M1-07 |
+
+**Question.**
+
+1. May deleted data remain in backups until those backups expire, and how are
+   they protected meanwhile?
+2. After a restore, how are deletions made since the backup re-applied, and who
+   signs off before the restored database is put into service?
+3. May production backups be restored outside production (for example into
+   Staging)?
+
+**Technical facts.** The recovery procedure stops at "re-apply deletions per
+PRIV-018". Until this decision exists, a restored backup must not be put into
+service without engineering and JJ sign-off
+([Backup and Recovery §4](../architecture/backup-and-recovery.md)). No deletion
+feature exists yet, so there is nothing to re-apply today. Production logical
+dumps are never stored on developer machines (an existing engineering control).
+Engineering does not consider editing individual records inside automated
+backups practical.
+
+**Options.**
+
+- Q1: A. Backups expire on their normal schedule, encrypted and
+  access-restricted meanwhile. B. Shorten backup retention to bound how long
+  deleted data persists (PRIV-007).
+- Q2: A. A deletion ledger that records identifiers (not content) of deleted
+  records and objects and is re-applied after every restore. B. Manual
+  reconciliation per restore.
+- Q3: A. Production data restored only into production-protected
+  environments. B. Restored copies anonymized before use outside production.
+  C. Allowed with Staging access controls.
+
+**Privacy implications.** Q1-A means "deleted" data persists in backups for the
+backup window. Q2-A stores identifiers of deleted records, which are
+pseudonymous data with their own retention. Q3-B and Q3-C copy production HR
+data into weaker environments.
+
+**EU/GDPR-standard considerations.** Whether retaining deleted data in backups
+until expiry is acceptable, and how it is described to customers, is not
+established in engineering documentation; legal/privacy confirmation required.
+
+**UAE considerations.** Legal/privacy review required for UAE Federal / MOHRE
+and DIFC applicability.
+
+**Cost / operational implications.** Q2-A is moderate engineering work and must
+exist before the first deletion feature. Q2-B is error-prone. Q3-B needs a
+reliable anonymization pipeline.
+
+**Engineering recommendation.** Original (M1-07): *Decide whether deleted data
+may persist in backups until they expire, how such backups are protected
+meanwhile, and how deletions are re-applied after any restore.* M1-08: Q1-A
+with retention bounded by PRIV-007; Q2-A, built together with the first
+deletion feature; sign-off by the Technical Lead and JJ before a restored
+database goes into service; Q3-A.
+
+**Legal/privacy question.** Is persistence of deleted data in encrypted backups
+until expiry acceptable, how must it be described to customers, and is a
+deletion ledger of identifiers acceptable?
+
+**Information required before decision.** The legal/privacy answer above;
+PRIV-007.
+
+**Implementation traceability.** M1-07 restore procedure, post-restore
+validation and sign-off gate: technical foundation complete. Deletion ledger and
+restore reconciliation: blocked pending decision.
+
+**Re-review trigger.** Legal input received; first deletion feature designed;
+PRIV-007 decided.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-08 | Recorded in M1-07, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; restored-data question (Q3) made explicit; status to `Legal Review Required` | Technical Lead |
+
+### PRIV-019 — Private object versioning and deleted-object recoverability
+
+| Field | Value |
+| --- | --- |
+| Status | Ready for JJ Review |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Review Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M3 production activation (S3 versioning and lifecycle configuration) |
+| Implementation status | Technical foundation complete; Blocked pending decision |
+| Related decisions | PRIV-004, PRIV-016, PRIV-017, PRIV-018 |
+| First recorded | M1-07 |
+
+**Question.** Should production private objects be recoverable for a window
+after deletion (S3 versioning with expiry of non-current versions), or should
+deletion be final?
+
+**Technical facts.** Objects are write-once, so versioning would not protect
+against overwrites (there are none); its benefit is recovering deleted objects.
+Database backups do not include objects. If the database is restored to an
+earlier point, its document references can point to objects deleted since, and
+without versioning those objects are gone. See Appendix A.
+
+**Options.**
+
+- A. No versioning: deletion is immediate and irreversible.
+- B. Versioning with a lifecycle rule that expires non-current versions after an
+  approved window.
+- C. Object lock for objects under legal hold (PRIV-016), alone or with B.
+
+**Privacy implications.** B means deleted documents persist for the window,
+which must be consistent with PRIV-018. A gives deletion finality. C prevents
+deletion while active.
+
+**EU/GDPR-standard considerations.** The recovery window is data kept after
+deletion and should be justified and bounded. Not established in engineering
+documentation; legal/privacy confirmation required for the window.
+
+**UAE considerations.** Legal/privacy review required for UAE/DIFC
+applicability.
+
+**Cost / operational implications.** B stores non-current versions until they
+expire, so the window length drives the extra cost; lifecycle rules are
+required to bound it. A costs nothing extra. C adds lock-management effort and
+irreversibility risk.
+
+**Engineering recommendation.** M1-07: *Decide whether S3 versioning / a
+recovery window applies to private objects, consistent with PRIV-004 and
+PRIV-018.* M1-08: B, because accidental or malicious deletion of HR documents
+cannot otherwise be recovered and a database restore could otherwise reference
+missing documents. The window length is set with PRIV-004/PRIV-018 legal input
+and kept consistent with the PITR window (PRIV-007). C only if PRIV-016
+requires it.
+
+**Legal/privacy question.** Is a bounded recovery window for deleted documents
+acceptable, and how must it be described to customers?
+
+**Information required before decision.** JJ direction (A, B or C) can be given
+now. The window length needs PRIV-004/PRIV-018 legal input and an M3 cost
+estimate.
+
+**Implementation traceability.** M1-07 write-once storage and hard delete:
+technical foundation complete. M3 S3 versioning and lifecycle: blocked pending
+decision.
+
+**Re-review trigger.** PRIV-004, PRIV-016 or PRIV-018 decided.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-08 | Recorded in M1-07, `Pending Analysis` | Technical Lead |
+| — | 2026-10-08 | Packet revision (M1-08): normalized; recommendation added; status to `Ready for JJ Review` | Technical Lead |
+
+### PRIV-020 — Deletion mechanics and interim deletion behavior
+
+| Field | Value |
+| --- | --- |
+| Status | Ready for JJ Review |
+| Decision owner | JJ |
+| Technical owner | Technical Lead (Aries) |
+| Legal/privacy review | Review Required |
+| JJ decision | Pending |
+| Decision evidence | — |
+| Legal/privacy evidence | — |
+| Decision date | — |
+| Decision version | — |
+| Implementation impact | Blocks M2 feature (user-facing deletion of Cases, Case Subjects, documents or Companies) |
+| Implementation status | Technical foundation complete |
+| Related decisions | PRIV-001, PRIV-002, PRIV-003, PRIV-004, PRIV-005, PRIV-008, PRIV-016, PRIV-018 |
+| First recorded | M1-08 |
+
+**Why a new ID.** PRIV-001 to PRIV-004 and PRIV-008 decide what happens to each
+data category. None decides the cross-cutting mechanism (soft delete, hard
+delete or anonymization) or what M2 may expose before those decisions are
+approved. M1 already contains hard-delete functions and cascading foreign keys,
+so the interim behavior must be explicit rather than implied by code.
+
+**Question.**
+
+1. Until PRIV-001 to PRIV-004, PRIV-008 and PRIV-016 are approved, may M2
+   expose user-facing deletion of Cases, Case Subjects, documents or Companies?
+2. Which deletion mechanism is the HeroOS default?
+
+**Technical facts.** Company-scoped, RLS-protected hard-delete repository
+functions exist (`delete_case`, `delete_case_subject`,
+`delete_company_blueprint`). They are used by tests. No route exposes them.
+Foreign keys cascade from `companies` and `users`, and deleting a Case Subject
+sets `cases.subject_id` to NULL. Object deletion is an immediate hard delete. No
+soft-delete columns exist.
+
+**Options (interim, Q1).**
+
+- A. No user-facing deletion in M2. Cases are closed, not deleted; mistakes are
+  corrected by editing. Exceptional deletion (for example a wrongly entered
+  employee) only through an operator-run, audited procedure.
+- B. User-facing hard delete in M2, with an audit event.
+- C. User-facing soft delete in M2 (hidden, still stored).
+
+**Options (mechanism, Q2).** Hard delete; soft delete; anonymization; or a
+choice per entity driven by PRIV-002, PRIV-003 and PRIV-008.
+
+**Privacy implications.** B is irreversible before legal hold and backup rules
+exist. C shows data as deleted while it is still stored. A keeps data until
+policy exists, which is a temporary de facto retention that ends when the
+retention decisions are approved.
+
+**EU/GDPR-standard considerations.** Storage-limitation consideration and
+handling of individual deletion requests during the interim. Not established in
+engineering documentation; legal/privacy review required.
+
+**UAE considerations.** Legal/privacy review required for UAE/DIFC
+applicability.
+
+**Cost / operational implications.** A is cheapest and keeps every later option
+open. B is moderate and risky without PRIV-016. C adds a deleted filter to every
+query, interacts with RLS policies and unique constraints, and is costly to
+remove later.
+
+**Engineering recommendation.** Q1: A. Q2: no universal soft delete (consistent
+with the PRIV-002 recommendation); explicit lifecycle states (for example
+active and closed) plus hard delete or anonymization per category once
+approved. M2 schemas should not implicitly cascade-delete audit events
+(PRIV-005) or a future deletion ledger (PRIV-018).
+
+**Legal/privacy question.** Is pausing user-facing deletion until the retention
+decisions are approved acceptable, and how are individual deletion requests
+handled in the interim?
+
+**Information required before decision.** None for JJ direction.
+
+**Implementation traceability.** M1-04/M1-06 delete primitives: technical
+foundation complete. M2 Case/Subject/document user-facing deletion: must
+follow the approved interim rule.
+
+**Re-review trigger.** PRIV-001, PRIV-002, PRIV-003, PRIV-004, PRIV-008 or
+PRIV-016 decided.
+
+**History.**
+
+| Version | Date | Change | Authority |
+| --- | --- | --- | --- |
+| — | 2026-10-08 | Recorded in M1-08, `Ready for JJ Review` | Technical Lead |
 
 ---
 
@@ -425,3 +1480,4 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-07 | M1-01 | Register created with PRIV-001 to PRIV-015, all `Pending Analysis` |
 | 2026-10-08 | M1-07 | PRIV-016 to PRIV-019 added, all `Pending Analysis`. M1-07 technical inputs recorded (Appendix A) |
 | 2026-10-08 | M1-08 | Ownership, lifecycle, vocabularies, evidence rules and versioning defined (§1 to §5). Audit findings recorded (§6). M1-07 technical inputs moved to Appendix A unchanged |
+| 2026-10-08 | M1-08 | Retention, deletion, legal-hold and backup/recovery packets completed (PRIV-001 to PRIV-008, PRIV-016 to PRIV-019). PRIV-020 added (deletion mechanics and interim behavior; no existing ID covered it). Status moves recorded in each packet history |
