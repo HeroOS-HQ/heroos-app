@@ -106,7 +106,8 @@ make dev-token SUBJECT=<identity-subject>
 
 `HEROOS_ENV` is required and has no default; the API will not start without it.
 Docker Compose sets it for the `api` service. To run the API directly, load the
-root `.env`: `cd apps/api && uv run --env-file ../../.env uvicorn app.main:app`.
+root `.env`: `cd apps/api && uv run --env-file ../../.env uvicorn app.main:app --no-access-log`
+(see [Observability](docs/architecture/observability.md) for why the raw access log is off).
 Alembic needs only `MIGRATION_DATABASE_URL`.
 
 The development provider is refused outside `HEROOS_ENV=development`. See

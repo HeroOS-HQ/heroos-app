@@ -10,6 +10,7 @@ AuthProviderName = Literal["development", "cognito"]
 # "s3" is the M3 production contract; no adapter exists yet, so selecting it
 # stops startup instead of falling back to anything else.
 StorageProviderName = Literal["local", "s3"]
+LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 
 # HS256 keys shorter than the 256-bit digest weaken the development signature.
 DEV_AUTH_SECRET_MIN_LENGTH = 32
@@ -21,6 +22,10 @@ class Settings(DatabaseSettings):
     # Required, no default: a missing HEROOS_ENV must stop startup rather than
     # silently selecting development.
     heroos_env: Environment
+
+    # Structured application log level (docs/architecture/observability.md).
+    # DEBUG adds no sensitive content: redaction does not depend on the level.
+    heroos_log_level: LogLevel = "INFO"
 
     # Authentication. See docs/architecture/authentication.md.
     # Unset means no provider: protected routes reject every request.

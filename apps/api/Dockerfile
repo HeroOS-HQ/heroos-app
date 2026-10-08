@@ -42,4 +42,7 @@ HEALTHCHECK \
     --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)" || exit 1
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-access-log: Uvicorn's access log records the raw request target, including
+# query strings. The application's structured request_completed event (route
+# template, status, duration, request ID) is the authoritative request log.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
