@@ -4,8 +4,8 @@
 **Owner:** Technical Lead\
 **Business Decision Owner:** JJ\
 **Milestone:** M1 — Foundation & Security\
-**Issues:** M1-01 (created), M1-07 (PRIV-016 to PRIV-019 added), M1-08 (normalized)\
-**Last updated:** 2026-10-08\
+**Issues:** M1-01 (created), M1-07 (PRIV-016 to PRIV-019 added), M1-08 (normalized); roadmap alignment 2026-10-09 (cloud activation timing)\
+**Last updated:** 2026-10-09\
 **Related:** [JJ Review Packet](jj-decision-review-packet.md),
 [Third-Party Service Inventory](third-party-service-inventory.md),
 [Production Security Gates](../architecture/production-security-gates.md)
@@ -129,11 +129,20 @@ more of:
 | --- | --- |
 | `Not currently blocking` | Current engineering can continue |
 | `Blocks M2 feature` | A named M2 feature must not be built until decided |
-| `Blocks M3 production activation` | A named M3 configuration cannot be finalized |
+| `Blocks M5 production activation` | A named M5 cloud/Production configuration cannot be finalized |
 | `Blocks external data processing` | No production customer data may reach the named external processor |
 | `Blocks deletion implementation` | No automated or user-facing deletion, anonymization or purge for the named data may be built |
 
 M1-08 itself does not depend on any decision being approved.
+
+`Blocks M5 production activation` was `Blocks M3 production activation` until
+2026-10-09, when cloud activation moved from M3 to M5
+([Delivery Plan](../milestones/delivery-plan.md)). Only the milestone changed;
+the meaning is the same. `Blocks external data processing` applies whenever the
+named processing would first happen: for an external AI provider that may be M4
+(Intelligence Layer), not M5. `Blocks M2 feature` (PRIV-020) is unchanged.
+Quoted original recommendations and Appendix A are preserved verbatim and may
+still name M3 for cloud activation; read these as M5.
 
 ### Implementation status
 
@@ -254,23 +263,23 @@ in each packet under *Engineering recommendation*.
 | PRIV-003 | Employee / Case Subject data retention | Legal Review Required | Pending | Required | Blocks deletion implementation |
 | PRIV-004 | Uploaded and generated document retention | Legal Review Required | Pending | Required | Blocks deletion implementation |
 | PRIV-005 | Audit-event retention | Legal Review Required | Pending | Review Required | Blocks deletion implementation |
-| PRIV-006 | Application-log retention | Pending Analysis | Pending | Review Required | Blocks M3 production activation |
-| PRIV-007 | Database-backup retention | Pending Analysis | Pending | Review Required | Blocks M3 production activation |
+| PRIV-006 | Application-log retention | Pending Analysis | Pending | Review Required | Blocks M5 production activation |
+| PRIV-007 | Database-backup retention | Pending Analysis | Pending | Review Required | Blocks M5 production activation |
 | PRIV-008 | Account / Company deletion behavior | Legal Review Required | Pending | Required | Blocks deletion implementation |
 | PRIV-009 | Production AI provider and model | Pending Analysis | Pending | Required | Blocks external data processing |
 | PRIV-010 | AI input/output retention | Pending Analysis | Pending | Required | Blocks external data processing |
 | PRIV-011 | AI provider training/data-use policy | Ready for JJ Review | Pending | Required | Blocks external data processing |
 | PRIV-012 | AI processing location / cross-border transfer | Pending Analysis | Pending | Required | Blocks external data processing |
-| PRIV-013 | Production data residency model | Legal Review Required | Pending | Required | Blocks M3 production activation |
-| PRIV-014 | Production subprocessor/vendor approval process | Ready for JJ Review | Pending | Required | Blocks M3 production activation; Blocks external data processing |
+| PRIV-013 | Production data residency model | Legal Review Required | Pending | Required | Blocks M5 production activation |
+| PRIV-014 | Production subprocessor/vendor approval process | Ready for JJ Review | Pending | Required | Blocks M5 production activation; Blocks external data processing |
 | PRIV-015 | Transactional email content and retention | Pending Analysis | Pending | Review Required | Not currently blocking |
 | PRIV-016 | Legal hold requirements | Legal Review Required | Pending | Required | Blocks deletion implementation |
-| PRIV-017 | Recovery point objective (RPO) and recovery time objective (RTO) | Pending Analysis | Pending | Review Required | Blocks M3 production activation |
+| PRIV-017 | Recovery point objective (RPO) and recovery time objective (RTO) | Pending Analysis | Pending | Review Required | Blocks M5 production activation |
 | PRIV-018 | Deletion requests vs. existing backups, and treatment of restored backups | Legal Review Required | Pending | Required | Blocks deletion implementation |
-| PRIV-019 | Private object versioning and deleted-object recoverability | Ready for JJ Review | Pending | Review Required | Blocks M3 production activation |
+| PRIV-019 | Private object versioning and deleted-object recoverability | Ready for JJ Review | Pending | Review Required | Blocks M5 production activation |
 | PRIV-020 | Deletion mechanics and interim deletion behavior | Ready for JJ Review | Pending | Review Required | Blocks M2 feature |
 | PRIV-021 | AI input data categories and identifiability | Ready for JJ Review | Pending | Required | Blocks external data processing |
-| PRIV-022 | HeroOS data-protection role by processing activity | Pending Analysis | Pending | Required | Blocks M3 production activation |
+| PRIV-022 | HeroOS data-protection role by processing activity | Pending Analysis | Pending | Required | Blocks M5 production activation |
 
 ---
 
@@ -299,25 +308,25 @@ Rules:
 | PRIV-001 | Case lifecycle and retention | M2 Case lifecycle; later retention job | Not started | — |
 | PRIV-002 | Case end-of-retention handling | M2 Case lifecycle; later deletion/anonymization job | Not started | `delete_case` primitive exists (M1-06); not exposed |
 | PRIV-003 | Case Subject lifecycle | M2 subject lifecycle | Not started | FK `ON DELETE SET NULL (subject_id)` (M1-04) is referential integrity only |
-| PRIV-004 | Private object storage; M2 Document metadata; M3 S3 lifecycle | M1-07 storage; M2 Document domain; M3 S3 | Technical foundation complete; Blocked pending decision | [Private Object Storage](../architecture/private-object-storage.md) |
+| PRIV-004 | Private object storage; M2 Document metadata; M5 S3 lifecycle | M1-07 storage; M2 Document domain; M5 S3 | Technical foundation complete; Blocked pending decision | [Private Object Storage](../architecture/private-object-storage.md) |
 | PRIV-005 | Audit events | M2 audit events | Not started | [Tenant Isolation §9](../architecture/tenant-isolation.md) contract applies |
-| PRIV-006 | Observability; CloudWatch log groups | M1-07 logging; M3 CloudWatch | Technical foundation complete; Blocked pending decision | [Observability](../architecture/observability.md); [Production Security Gates §6](../architecture/production-security-gates.md) |
-| PRIV-007 | Backup and recovery; RDS backups | M1-07 backup tooling; M3 RDS | Technical foundation complete; Blocked pending decision | `make backup-restore-check`; [Backup and Recovery §7](../architecture/backup-and-recovery.md) |
+| PRIV-006 | Observability; CloudWatch log groups | M1-07 logging; M5 CloudWatch | Technical foundation complete; Blocked pending decision | [Observability](../architecture/observability.md); [Production Security Gates §6](../architecture/production-security-gates.md) |
+| PRIV-007 | Backup and recovery; RDS backups | M1-07 backup tooling; M5 RDS | Technical foundation complete; Blocked pending decision | `make backup-restore-check`; [Backup and Recovery §7](../architecture/backup-and-recovery.md) |
 | PRIV-008 | Company offboarding; User deletion; identity provider | Not scheduled | Not started | Schema cascades from `companies` and `users` (M1-04) are not a deletion workflow |
-| PRIV-009 | AI provider integration | M3 AI provider activation | Not started | [Service Inventory §6](third-party-service-inventory.md) gate |
-| PRIV-010 | AI provider configuration; AI request handling | M3 AI provider activation | Not started | Logs exclude HR guidance input/output (M1-07) |
-| PRIV-011 | AI provider configuration and contract | M3 AI provider activation | Not started | — |
-| PRIV-012 | AI provider region | M3 AI provider activation | Not started | — |
-| PRIV-013 | AWS region configuration; Cognito; SES; backup copies | M3 infrastructure | Not started | ADR-002 (`me-central-1`) is an architecture decision only |
-| PRIV-014 | Service inventory; vendor approval | Before any production data reaches a vendor (M3) | Technical foundation complete | [Service Inventory §8](third-party-service-inventory.md) |
+| PRIV-009 | AI provider integration | External AI provider activation (M4 if the Intelligence Layer sends identifiable or customer data to an external provider) | Not started | [Service Inventory §6](third-party-service-inventory.md) gate |
+| PRIV-010 | AI provider configuration; AI request handling | External AI provider activation (M4 if the Intelligence Layer sends identifiable or customer data to an external provider) | Not started | Logs exclude HR guidance input/output (M1-07) |
+| PRIV-011 | AI provider configuration and contract | External AI provider activation (M4 if the Intelligence Layer sends identifiable or customer data to an external provider) | Not started | — |
+| PRIV-012 | AI provider region | External AI provider activation (M4 if the Intelligence Layer sends identifiable or customer data to an external provider) | Not started | — |
+| PRIV-013 | AWS region configuration; Cognito; SES; backup copies | M5 infrastructure | Not started | ADR-002 (`me-central-1`) is an architecture decision only |
+| PRIV-014 | Service inventory; vendor approval | Before any production or customer data reaches a vendor (an external AI provider in M4, if used; AWS in M5) | Technical foundation complete | [Service Inventory §8](third-party-service-inventory.md) |
 | PRIV-015 | Transactional email | Not scheduled | Not started | — |
 | PRIV-016 | Every deletion path; S3 object lock option | Before the first deletion feature | Not started | — |
-| PRIV-017 | RDS backups/PITR; restore drills | M3 RDS | Technical foundation complete; Blocked pending decision | `make backup-restore-check` |
+| PRIV-017 | RDS backups/PITR; restore drills | M5 RDS | Technical foundation complete; Blocked pending decision | `make backup-restore-check` |
 | PRIV-018 | Restore procedure; deletion ledger | M1-07 recovery procedure; first deletion feature | Technical foundation complete; Blocked pending decision | [Backup and Recovery §4](../architecture/backup-and-recovery.md) sign-off gate |
-| PRIV-019 | S3 versioning and lifecycle | M3 S3 | Technical foundation complete; Blocked pending decision | Write-once objects (M1-07) |
+| PRIV-019 | S3 versioning and lifecycle | M5 S3 | Technical foundation complete; Blocked pending decision | Write-once objects (M1-07) |
 | PRIV-020 | Repository delete functions; FK behavior; M2 deletion features | M2 | Technical foundation complete | Company-scoped delete primitives tested in M1-06; no route exposes them |
-| PRIV-021 | AI request construction; redaction layer | First AI feature; M3 AI provider activation | Not started | [Data Flow §2.7](../architecture/data-flow.md) |
-| PRIV-022 | Customer agreements, privacy notices, DPAs, request handling | Before production customer data is accepted (M3) | Not started | No code depends on it; legal classification pending |
+| PRIV-021 | AI request construction; redaction layer | First AI feature (M4 Intelligence Layer); external AI provider activation before identifiable or customer data is sent | Not started | [Data Flow §2.7](../architecture/data-flow.md) |
+| PRIV-022 | Customer agreements, privacy notices, DPAs, request handling | Before production customer data is accepted (M5 cloud/Production activation) | Not started | No code depends on it; legal classification pending |
 
 ---
 
@@ -632,7 +641,7 @@ customers?
 PRIV-001.
 
 **Implementation traceability.** M1-07 private object storage: technical
-foundation complete. M2 Document metadata: not started. M3 S3 lifecycle rules:
+foundation complete. M2 Document metadata: not started. M5 S3 lifecycle rules:
 blocked pending decision.
 
 **Re-review trigger.** Legal input received; PRIV-001 decided; new document
@@ -644,6 +653,7 @@ types.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized with M1-07 evidence; status to `Legal Review Required` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-005 — Audit-event retention
 
@@ -728,7 +738,7 @@ blocked pending decision.
 | Legal/privacy evidence | — |
 | Decision date | — |
 | Decision version | — |
-| Implementation impact | Blocks M3 production activation (CloudWatch log-group retention) |
+| Implementation impact | Blocks M5 production activation (CloudWatch log-group retention) |
 | Implementation status | Technical foundation complete; Blocked pending decision |
 | Related decisions | PRIV-008, PRIV-013, PRIV-014 |
 | First recorded | M1-01 |
@@ -738,7 +748,7 @@ archive)?
 
 **Technical facts.** See Appendix A and
 [Observability](../architecture/observability.md). Logs hold opaque,
-pseudonymous User and Company identifiers and no HR content. The M3 gate
+pseudonymous User and Company identifiers and no HR content. The M5 gate
 ([Production Security Gates §6](../architecture/production-security-gates.md))
 requires an explicitly configured retention, never the "never expire" default.
 No log group exists.
@@ -768,18 +778,18 @@ access control.
 **Engineering recommendation.** Original (M1-01): *Use minimized operational
 logs and shorter retention than business records unless operational need
 requires otherwise.* M1-08: A or B, with an explicit value per log group
-proposed at M3 planning together with a cost estimate. Keep logs free of HR
+proposed at M5 planning together with a cost estimate. Keep logs free of HR
 content (enforced by M1-07 tests).
 
 **Legal/privacy question.** Do minimum or maximum periods apply to operational
 logs that contain pseudonymous user identifiers?
 
 **Information required before decision.** Candidate retention values with
-CloudWatch cost estimates (engineering, M3 planning). Incident-investigation
+CloudWatch cost estimates (engineering, M5 planning). Incident-investigation
 needs (Technical Lead and JJ).
 
 **Implementation traceability.** M1-07 privacy-safe logging: technical
-foundation complete. M3 CloudWatch log groups and retention: blocked pending
+foundation complete. M5 CloudWatch log groups and retention: blocked pending
 decision.
 
 **Re-review trigger.** A third-party log or error service is proposed; log
@@ -791,6 +801,7 @@ content changes; security incident review.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized with M1-07 evidence; remains `Pending Analysis` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-007 — Database-backup retention
 
@@ -805,7 +816,7 @@ content changes; security incident review.
 | Legal/privacy evidence | — |
 | Decision date | — |
 | Decision version | — |
-| Implementation impact | Blocks M3 production activation (RDS automated-backup retention, snapshot policy) |
+| Implementation impact | Blocks M5 production activation (RDS automated-backup retention, snapshot policy) |
 | Implementation status | Technical foundation complete; Blocked pending decision |
 | Related decisions | PRIV-013, PRIV-016, PRIV-017, PRIV-018 |
 | First recorded | M1-01 |
@@ -816,7 +827,7 @@ types are used?
 **Technical facts.** See Appendix A and
 [Backup and Recovery §7](../architecture/backup-and-recovery.md). The logical
 backup/restore procedure is verified on disposable databases locally and in CI.
-No production backup exists. At M3: RDS automated backups with PITR, encrypted
+No production backup exists. At M5: RDS automated backups with PITR, encrypted
 with KMS. Production logical dumps, if used, only in an encrypted,
 access-controlled store with an approved retention. Cross-region copies only if
 approved (PRIV-013).
@@ -851,10 +862,10 @@ need. No manual snapshot without a named owner and expiry.
 they expire need specific justification or disclosure to customers?
 
 **Information required before decision.** PRIV-017 targets. Database size
-projection and cost estimate (engineering, M3 planning).
+projection and cost estimate (engineering, M5 planning).
 
 **Implementation traceability.** M1-07 logical backup/restore: technical
-foundation complete (`make backup-restore-check`). M3 RDS backup configuration:
+foundation complete (`make backup-restore-check`). M5 RDS backup configuration:
 blocked pending decision.
 
 **Re-review trigger.** PRIV-017 decided; database growth; restore-drill
@@ -866,6 +877,7 @@ findings.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized with M1-07 evidence; remains `Pending Analysis` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-008 — Account / Company deletion behavior
 
@@ -895,7 +907,7 @@ what happens when an individual User account is removed?
 foreign keys cascade from `companies` to memberships, Company Blueprints, Case
 Subjects and Cases, and from `users` to memberships. The `users` table holds
 only an opaque `identity_subject` and timestamps; identity data such as email
-lives in the identity provider (Cognito at M3). Objects under
+lives in the identity provider (Cognito at M5). Objects under
 `companies/<company uuid>/`, log entries and backups are not touched by a
 database cascade. See Appendix A.
 
@@ -956,6 +968,7 @@ available.
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; scope note added; status to `Legal Review Required` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08 hardening): linked to PRIV-022; no change to status or recommendation | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-009 — Production AI provider and model
 
@@ -1019,8 +1032,10 @@ data-processing terms acceptable for HeroOS customer HR data?
 evaluation; contract and data-processing terms; processing and storage regions;
 subprocessors; cost estimate.
 
-**Implementation traceability.** M3 AI provider activation: not started; blocked
-pending decision.
+**Implementation traceability.** External AI provider activation: not started;
+blocked pending decision. Gate: before any external AI provider receives
+identifiable or customer data, which may first happen in M4 (Intelligence
+Layer).
 
 **Re-review trigger.** Provider terms or regions change; a new model is
 proposed.
@@ -1031,6 +1046,7 @@ proposed.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; remains `Pending Analysis` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): AI provider activation re-pointed from M3 to the external-AI gate, which may be M4. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-010 — AI input/output retention
 
@@ -1097,8 +1113,10 @@ content, and does it need to be disclosed to customers?
 **Information required before decision.** Selected provider's retention terms
 and configuration options (PRIV-009).
 
-**Implementation traceability.** M3 AI provider activation: not started; blocked
-pending decision.
+**Implementation traceability.** External AI provider activation: not started;
+blocked pending decision. Gate: before any external AI provider receives
+identifiable or customer data, which may first happen in M4 (Intelligence
+Layer).
 
 **Re-review trigger.** PRIV-009 decided; provider terms change.
 
@@ -1108,6 +1126,7 @@ pending decision.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; scope separated from application retention; remains `Pending Analysis` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): AI provider activation re-pointed from M3 to the external-AI gate, which may be M4. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-011 — AI provider training/data-use policy
 
@@ -1165,8 +1184,10 @@ policy? (Asked when PRIV-009 is decided.)
 
 **Information required before decision.** None for direction A.
 
-**Implementation traceability.** Provider selection criteria (PRIV-009) and M3
-AI provider configuration: not started.
+**Implementation traceability.** Provider selection criteria (PRIV-009) and
+external AI provider configuration: not started. Gate: before any external AI
+provider receives identifiable or customer data, which may first happen in M4
+(Intelligence Layer).
 
 **Re-review trigger.** PRIV-009 decided; provider terms change.
 
@@ -1176,6 +1197,7 @@ AI provider configuration: not started.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Ready for JJ Review` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): AI provider activation re-pointed from M3 to the external-AI gate, which may be M4. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-012 — AI processing location / cross-border transfer
 
@@ -1234,8 +1256,10 @@ permitted for UAE Federal and DIFC customers, and with which safeguards?
 **Information required before decision.** Candidate providers' processing and
 storage regions and subprocessors (PRIV-009).
 
-**Implementation traceability.** M3 AI provider activation: not started; blocked
-pending decision.
+**Implementation traceability.** External AI provider activation: not started;
+blocked pending decision. Gate: before any external AI provider receives
+identifiable or customer data, which may first happen in M4 (Intelligence
+Layer).
 
 **Re-review trigger.** PRIV-009 decided; provider region changes.
 
@@ -1245,6 +1269,7 @@ pending decision.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; remains `Pending Analysis` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): AI provider activation re-pointed from M3 to the external-AI gate, which may be M4. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-013 — Production data residency model
 
@@ -1259,7 +1284,7 @@ pending decision.
 | Legal/privacy evidence | — |
 | Decision date | — |
 | Decision version | — |
-| Implementation impact | Blocks M3 production activation (regions for Cognito, SES, backups, monitoring; any cross-region copy) |
+| Implementation impact | Blocks M5 production activation (regions for Cognito, SES, backups, monitoring; any cross-region copy) |
 | Implementation status | Not started |
 | Related decisions | PRIV-007, PRIV-012, PRIV-014, PRIV-015, PRIV-017 |
 | First recorded | M1-01 |
@@ -1305,10 +1330,10 @@ customer HR data may be stored or processed, and does remote administrative or
 support access from outside the UAE count as a transfer?
 
 **Information required before decision.** The legal/privacy answer above;
-regional availability of Cognito, SES and monitoring features (engineering, M3
+regional availability of Cognito, SES and monitoring features (engineering, M5
 planning).
 
-**Implementation traceability.** M3 region configuration and cross-region
+**Implementation traceability.** M5 region configuration and cross-region
 copies: not started; blocked pending decision.
 
 **Re-review trigger.** Legal input received; a new external service or region
@@ -1320,6 +1345,7 @@ proposed; a non-UAE customer.
 | --- | --- | --- | --- |
 | — | 2026-10-07 | Recorded in M1-01, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-014 — Production subprocessor/vendor approval process
 
@@ -1334,7 +1360,7 @@ proposed; a non-UAE customer.
 | Legal/privacy evidence | — |
 | Decision date | — |
 | Decision version | — |
-| Implementation impact | Blocks M3 production activation (vendor approval before production data); Blocks external data processing (any vendor not yet approved) |
+| Implementation impact | Blocks M5 production activation (vendor approval before production data); Blocks external data processing (any vendor not yet approved, including an external AI provider in M4) |
 | Implementation status | Technical foundation complete |
 | Related decisions | PRIV-006, PRIV-009, PRIV-013, PRIV-015, PRIV-022 |
 | First recorded | M1-01 |
@@ -1402,6 +1428,7 @@ input received.
 | — | 2026-10-08 | Packet revision (M1-08): normalized; engineering-tool data rule and legal-role question made explicit; status to `Ready for JJ Review` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08 hardening): HeroOS role question moved to PRIV-022; vendor classification stays here; no change to status or recommendation | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08 hardening): Claude Code (engineering AI-assisted development tool, newly inventoried) added to Q2; no change to status or recommendation | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-015 — Transactional email content and retention
 
@@ -1517,7 +1544,7 @@ legal hold suspends deletion of Cases, documents/objects, logs and backups
 before any automated deletion is implemented.* M1-08: decide before any
 automated deletion is built. Engineering leans to B. C only if legal review
 identifies a need for storage-enforced immutability. Engineering will confirm
-at M3 whether any chosen storage mechanism has to be configured when the
+at M5 whether any chosen storage mechanism has to be configured when the
 bucket is created.
 
 **Legal/privacy question.** When must HeroOS or its customers preserve HR data
@@ -1538,6 +1565,7 @@ proposed.
 | --- | --- | --- | --- |
 | — | 2026-10-08 | Recorded in M1-07, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; status to `Legal Review Required` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-017 — Recovery point objective (RPO) and recovery time objective (RTO)
 
@@ -1552,7 +1580,7 @@ proposed.
 | Legal/privacy evidence | — |
 | Decision date | — |
 | Decision version | — |
-| Implementation impact | Blocks M3 production activation (RDS backup/PITR configuration, restore-drill acceptance criteria) |
+| Implementation impact | Blocks M5 production activation (RDS backup/PITR configuration, restore-drill acceptance criteria) |
 | Implementation status | Technical foundation complete; Blocked pending decision |
 | Related decisions | PRIV-007, PRIV-013, PRIV-018, PRIV-019 |
 | First recorded | M1-07 |
@@ -1562,7 +1590,7 @@ acceptable for production, and who owns the recovery policy?
 
 **Technical facts.** The logical backup/restore procedure and post-restore
 security validation are verified on disposable databases locally and in CI. No
-production backup exists. M3 plans RDS automated backups with PITR and
+production backup exists. M5 plans RDS automated backups with PITR and
 scheduled restore drills ([Backup and Recovery §7](../architecture/backup-and-recovery.md)).
 Object recovery depends on PRIV-019. No restore duration has been measured in a
 production-like environment.
@@ -1590,7 +1618,7 @@ in engineering documentation.
 applicability and for any cross-region copy (PRIV-013).
 
 **Cost / operational implications.** Each step from A to D increases monthly
-cost and operational complexity. Costed options will be prepared at M3
+cost and operational complexity. Costed options will be prepared at M5
 planning.
 
 **Engineering recommendation.** Original (M1-07): *Approve explicit RPO/RTO
@@ -1604,14 +1632,14 @@ Recovery execution owner: Technical Lead.
 availability or recovery commitments?
 
 **Information required before decision.** JJ business tolerance; cost
-estimates (engineering, M3 planning); measured restore duration from the first
-M3 restore drill.
+estimates (engineering, M5 planning); measured restore duration from the first
+M5 restore drill.
 
 **Implementation traceability.** M1-07 backup/restore verification: technical
-foundation complete. M3 RDS backups/PITR and restore drills: blocked pending
+foundation complete. M5 RDS backups/PITR and restore drills: blocked pending
 decision.
 
-**Re-review trigger.** First M3 restore drill; customer contract commitments;
+**Re-review trigger.** First M5 restore drill; customer contract commitments;
 material growth in data volume.
 
 **History.**
@@ -1620,6 +1648,7 @@ material growth in data volume.
 | --- | --- | --- | --- |
 | — | 2026-10-08 | Recorded in M1-07, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; remains `Pending Analysis` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-018 — Deletion requests vs. existing backups, and treatment of restored backups
 
@@ -1726,7 +1755,7 @@ PRIV-007 decided.
 | Legal/privacy evidence | — |
 | Decision date | — |
 | Decision version | — |
-| Implementation impact | Blocks M3 production activation (S3 versioning and lifecycle configuration) |
+| Implementation impact | Blocks M5 production activation (S3 versioning and lifecycle configuration) |
 | Implementation status | Technical foundation complete; Blocked pending decision |
 | Related decisions | PRIV-004, PRIV-016, PRIV-017, PRIV-018 |
 | First recorded | M1-07 |
@@ -1776,11 +1805,11 @@ requires it.
 acceptable, and how must it be described to customers?
 
 **Information required before decision.** JJ direction (A, B or C) can be given
-now. The window length needs PRIV-004/PRIV-018 legal input and an M3 cost
+now. The window length needs PRIV-004/PRIV-018 legal input and an M5 cost
 estimate.
 
 **Implementation traceability.** M1-07 write-once storage and hard delete:
-technical foundation complete. M3 S3 versioning and lifecycle: blocked pending
+technical foundation complete. M5 S3 versioning and lifecycle: blocked pending
 decision.
 
 **Re-review trigger.** PRIV-004, PRIV-016 or PRIV-018 decided.
@@ -1791,6 +1820,7 @@ decision.
 | --- | --- | --- | --- |
 | — | 2026-10-08 | Recorded in M1-07, `Pending Analysis` | Technical Lead |
 | — | 2026-10-08 | Packet revision (M1-08): normalized; recommendation added; status to `Ready for JJ Review` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-020 — Deletion mechanics and interim deletion behavior
 
@@ -1953,7 +1983,9 @@ which conditions?
 for C.
 
 **Implementation traceability.** AI request construction and redaction layer:
-not started.
+not started. Gate: before any external AI provider receives identifiable or
+customer data, which may first happen in M4 (Intelligence Layer). If M4 uses
+only local models or synthetic/test data, this may remain pending.
 
 **Re-review trigger.** PRIV-009 decided; first AI feature designed.
 
@@ -1962,6 +1994,7 @@ not started.
 | Version | Date | Change | Authority |
 | --- | --- | --- | --- |
 | — | 2026-10-08 | Recorded in M1-08, `Ready for JJ Review` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): AI provider activation re-pointed from M3 to the external-AI gate, which may be M4. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ### PRIV-022 — HeroOS data-protection role by processing activity
 
@@ -1976,7 +2009,7 @@ not started.
 | Legal/privacy evidence | — |
 | Decision date | — |
 | Decision version | — |
-| Implementation impact | Blocks M3 production activation (production privacy posture: customer agreements, privacy notices, data-processing agreements and data-subject request handling; not technical build work) |
+| Implementation impact | Blocks M5 production activation (M5 cloud/Production activation for the production privacy posture: customer agreements, privacy notices, data-processing agreements and data-subject request handling; not technical build work. Does not block local M2–M4 product development using non-production or otherwise appropriately controlled development data) |
 | Implementation status | Not started |
 | Related decisions | PRIV-001, PRIV-003, PRIV-008, PRIV-009, PRIV-011, PRIV-014, PRIV-021 |
 | First recorded | M1-08 |
@@ -2011,7 +2044,7 @@ completed by engineering and JJ before legal review):
 | Activity | Data | Notes |
 | --- | --- | --- |
 | HR advisory Case processing | Employee/Case Subject data and Case content entered by customers | Core product |
-| Customer User accounts and Membership | Customer staff identity and access data | Identity provider at M3 |
+| Customer User accounts and Membership | Customer staff identity and access data | Identity provider at M5 |
 | Approved HR knowledge and Playbooks | HeroOS content; normally no customer personal data | Confirm no customer data flows in |
 | Operational logging and security monitoring | Pseudonymous identifiers (M1-07) | |
 | Backups and recovery | Full copies of production data | PRIV-007, PRIV-018 |
@@ -2086,7 +2119,9 @@ assigned legal/privacy reviewer (register §1).
 
 **Implementation traceability.** Customer agreements, privacy notices, DPAs and
 request handling: not started. No code depends on the outcome today; the
-production privacy posture does.
+production privacy posture does. Gate: M5 cloud/Production activation. Does not
+block local M2–M4 product development using non-production or otherwise
+appropriately controlled development data.
 
 **Re-review trigger.** Business model change; new processing activity; HeroOS
 uses customer data for a new purpose; new jurisdiction; legal input received.
@@ -2096,6 +2131,7 @@ uses customer data for a new purpose; new jurisdiction; legal input received.
 | Version | Date | Change | Authority |
 | --- | --- | --- | --- |
 | — | 2026-10-08 | Recorded in M1-08 (pre-merge hardening), `Pending Analysis` | Technical Lead |
+| — | 2026-10-09 | Packet revision (roadmap alignment): cloud-activation milestone references updated from M3 to M5. Status, JJ decision and outcome unchanged | Technical Lead |
 
 ---
 
@@ -2186,7 +2222,8 @@ for the change. The mechanics are in §5.
 
 ## Appendix A — M1-07 Technical Inputs (No Policy Decided)
 
-*Preserved as recorded in M1-07. Decision packets refer to these notes.*
+*Preserved as recorded in M1-07. Decision packets refer to these notes. "M3" here
+refers to cloud activation, which moved to M5 on 2026-10-09.*
 
 M1-07 (secure storage, secrets, logging and backup foundation) implemented
 technical capabilities only. It **did not** choose any retention period,
@@ -2274,3 +2311,4 @@ field it contained is kept in the new format. The original text is in commit
 | 2026-10-08 | M1-08 | `make privacy-decision-check` added (register/JJ packet consistency and evidence rules), run in CI |
 | 2026-10-08 | M1-08 | Pre-merge hardening: PRIV-022 added (HeroOS data-protection role by processing activity; previously only referenced from PRIV-003, PRIV-008 and PRIV-014). Role references repointed with packet history rows |
 | 2026-10-08 | M1-08 | Pre-merge hardening: service inventory records Claude Code (engineering AI tool) and flags the unrecorded development VPS provider; PRIV-014 Q2 extended to Claude Code |
+| 2026-10-09 | Roadmap alignment (post-M1) | Cloud activation moved from M3 to M5 ([Delivery Plan](../milestones/delivery-plan.md)). Impact value `Blocks M3 production activation` renamed `Blocks M5 production activation` (same meaning). AWS/cloud timing in PRIV-004, PRIV-006, PRIV-007, PRIV-008, PRIV-013, PRIV-014, PRIV-016, PRIV-017, PRIV-019 and PRIV-022 updated to M5. AI provider activation (PRIV-009 to PRIV-012, PRIV-021) re-pointed to the external-AI gate, which may be M4. PRIV-020 unchanged (M2). No status, JJ decision, legal review value or outcome changed |

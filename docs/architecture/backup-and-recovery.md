@@ -1,6 +1,6 @@
 # HeroOS Database Backup and Recovery
 
-**Status:** Logical backup/restore procedure implemented (M1-07), proven on disposable PostgreSQL 16 databases locally and in CI. RDS backups/PITR deferred to M3\
+**Status:** Logical backup/restore procedure implemented (M1-07), proven on disposable PostgreSQL 16 databases locally and in CI. RDS backups/PITR deferred to M5 (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-07 — Establish secure storage, secrets, logging & backup foundation\
@@ -23,15 +23,15 @@ A database dump is **not** a complete disaster-recovery solution:
 - A logical dump is a point-in-time copy. It does not provide point-in-time
   recovery (PITR) between dumps.
 - Object storage (private objects) is not in the database. Its recovery is the
-  S3 versioning/replication decision for M3 (PRIV-019).
+  S3 versioning/replication decision for M5 (PRIV-019).
 
-Production backups, PITR and their retention are M3 responsibilities (§7).
+Production backups, PITR and their retention are M5 responsibilities (§7).
 
 ## 2. Requirements
 
 | Requirement | Value |
 | --- | --- |
-| PostgreSQL server | 16 (Compose `postgres:16-alpine` locally and in CI; RDS for PostgreSQL 16 at M3) |
+| PostgreSQL server | 16 (Compose `postgres:16-alpine` locally and in CI; RDS for PostgreSQL 16 at M5) |
 | Client tools | `pg_dump` / `pg_restore` with a major version ≥ the server. `--pg-tools compose` uses the 16.x client inside the Compose `db` service |
 | Backup/restore role | the **migration/admin role** (`MIGRATION_DATABASE_URL`). It owns the schema, so `pg_dump` reads every row (owners are not subject to non-forced RLS) |
 | Never | the API runtime role (`DATABASE_URL`). It is subject to RLS and would produce an empty or partial dump. The tool refuses it |
@@ -169,7 +169,7 @@ Mutation checks (M1-07). Each of these made the check fail: a `0644` archive,
 removing workdir cleanup, accepting the runtime role, restoring with
 `--no-privileges`, and disabling RLS on one restored table.
 
-## 7. Production (M3): not active
+## 7. Production (M5): not active
 
 - Amazon RDS for PostgreSQL 16 with **automated backups** and **PITR**. The
   backup retention window is not decided (PRIV-007). RPO and RTO are not decided
@@ -184,6 +184,6 @@ removing workdir cleanup, accepting the runtime role, restoring with
 - Logical dumps in production, if used at all, are stored only in an encrypted,
   access-controlled location with an approved retention period. Never on
   developer machines.
-- Backup failure visibility: RDS event notifications and alarms (chosen at M3).
+- Backup failure visibility: RDS event notifications and alarms (chosen at M5).
 - Deletion requests versus existing backups, and treatment of restored backups:
   PRIV-018.

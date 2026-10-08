@@ -14,7 +14,8 @@ docs/architecture/authentication.md). Validation:
   access tokens legitimately carry ``aud``
 - non-empty ``sub``, the stable identity mapped to ``users.identity_subject``
 
-No Cognito resource exists yet; live activation is M3 work.
+No Cognito resource exists yet; live activation is outside this code (see
+docs/architecture/authentication.md).
 """
 
 import jwt

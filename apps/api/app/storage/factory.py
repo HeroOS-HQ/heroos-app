@@ -20,8 +20,6 @@ def build_private_object_storage(settings: Settings) -> PrivateObjectStorage | N
                 settings.heroos_local_storage_root, environment=settings.heroos_env
             )
         case "s3":
-            # The production contract is documented; the adapter is M3 work.
+            # The production contract is documented; no adapter is implemented.
             # Refuse explicitly rather than pretend to store anything.
-            raise StorageConfigurationError(
-                "HEROOS_STORAGE_PROVIDER=s3 is not available yet (activated in M3)"
-            )
+            raise StorageConfigurationError("HEROOS_STORAGE_PROVIDER=s3 is not currently enabled")

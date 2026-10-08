@@ -1,7 +1,7 @@
 """Development-only private object storage on the local filesystem.
 
 Not a production provider. It exists so private-object handling can be built
-and tested locally without AWS; staging and production must use the M3 S3
+and tested locally without AWS; staging and production must use the S3
 provider (docs/architecture/private-object-storage.md).
 
 Layout under the configured root (never web-served, never inside the
