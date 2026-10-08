@@ -24,7 +24,7 @@ build:
 
 check: lint format-check typecheck test build
 
-.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check
+.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check backup-restore-check
 
 # Root .env (if present) supplies DATABASE_URL / MIGRATION_DATABASE_URL overrides.
 API_ENV_FILE = $(if $(wildcard .env),--env-file ../../.env,)
@@ -61,6 +61,10 @@ migration-check:
 # Real-PostgreSQL cross-tenant security suite on a disposable database.
 tenant-isolation-check:
 	./scripts/verify-tenant-isolation.sh
+
+# Logical backup -> restore -> verify on disposable databases (never `heroos`).
+backup-restore-check:
+	./scripts/verify-backup-restore.sh
 
 .PHONY: dev-token
 

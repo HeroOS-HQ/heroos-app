@@ -26,6 +26,7 @@ from app.auth.service import authorize_company, resolve_user
 from app.core.config import settings
 from app.db.models import User
 from app.db.session import get_db
+from app.observability.context import record_authorized_company
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +83,12 @@ def get_authenticated_company_context(
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthenticatedCompanyContext:
     try:
-        return authorize_company(db, user, company_id)
+        context = authorize_company(db, user, company_id)
     except AuthorizationError as exc:
         logger.info("Authorization denied: %s (company_id=%s)", exc.reason, company_id)
         raise _forbidden() from None
+    record_authorized_company(context)
+    return context
 
 
 CompanyContext = Annotated[AuthenticatedCompanyContext, Depends(get_authenticated_company_context)]

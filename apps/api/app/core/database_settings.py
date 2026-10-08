@@ -1,4 +1,13 @@
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Local Docker Compose development roles. Not credentials: deployed environments
+# must configure DATABASE_URL explicitly and the API refuses these defaults
+# outside development (app.core.config.Settings).
+DEVELOPMENT_DATABASE_URL = "postgresql+psycopg://heroos_app:heroos_app_local@localhost:5433/heroos"
+DEVELOPMENT_MIGRATION_DATABASE_URL = (
+    "postgresql+psycopg://heroos:heroos_local@localhost:5433/heroos"
+)
 
 
 class DatabaseSettings(BaseSettings):
@@ -15,11 +24,14 @@ class DatabaseSettings(BaseSettings):
     - ``MIGRATION_DATABASE_URL``: the migration/admin role that owns the schema.
       Used by Alembic only, never by the API.
 
-    The defaults are the local Docker Compose development roles.
+    The defaults are the local Docker Compose development roles. Both URLs carry
+    a password, so they are ``SecretStr``: they never appear in ``repr``, logs,
+    ``model_dump`` output or validation errors. Call ``get_secret_value()`` only
+    where a driver needs the URL.
     """
 
-    database_url: str = "postgresql+psycopg://heroos_app:heroos_app_local@localhost:5433/heroos"
-    migration_database_url: str = "postgresql+psycopg://heroos:heroos_local@localhost:5433/heroos"
+    database_url: SecretStr = SecretStr(DEVELOPMENT_DATABASE_URL)
+    migration_database_url: SecretStr = SecretStr(DEVELOPMENT_MIGRATION_DATABASE_URL)
 
     model_config = SettingsConfigDict(
         env_file=".env",

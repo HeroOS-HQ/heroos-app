@@ -233,6 +233,7 @@ and the requested Company ID only (see [Authentication §7](authentication.md)).
 | `make check` | none (SQLite stand-ins) | Unit and quality gates: context validation, bootstrap-script refusals, M1-05 auth. The PostgreSQL suite is skipped |
 | `make migration-check` | disposable `heroos_migration_test` | base → head → base → head; RLS tables, policies and runtime role exist; downgrade removes them |
 | `make tenant-isolation-check` | disposable `heroos_tenant_isolation_test` | 131 real-PostgreSQL security tests as the runtime role |
+| `make backup-restore-check` (M1-07) | disposable `heroos_backup_source_test` / `heroos_backup_restore_test` | a logical backup restores with identical data, RLS, policies, grants and runtime-role isolation ([Backup and Recovery](backup-and-recovery.md)) |
 
 `make tenant-isolation-check` (`apps/api/tests/tenant_isolation/`) creates the
 database, migrates it as admin, bootstraps the runtime role, seeds Company A and
@@ -283,8 +284,9 @@ Global, non-tenant tables (like `users`) need that explicit justification.
 
 ## 10. Out of scope
 
-- Private documents and object storage (S3) are secured separately in **M1-07**.
-  RLS protects relational rows only.
+- Private documents and object storage are secured separately in **M1-07**
+  ([Private Object Storage](private-object-storage.md)). RLS protects relational
+  rows only. A future document-metadata table must follow section 9.
 - Workflow entities and workflow authorization are **M2**. They adopt section 9
   without redesign.
 - Roles and fine-grained permissions inside a Company are not part of V1 M1.

@@ -22,6 +22,10 @@ COGNITO = {
     "heroos_cognito_issuer": "https://cognito-idp.test.invalid/test-user-pool",
     "heroos_cognito_app_client_id": "test-app-client-id",
 }
+# Deployed environments must configure DATABASE_URL explicitly (no local default).
+DEPLOYED_DATABASE_URL = (
+    "postgresql+psycopg://heroos_app:deployed-test-password@db.test.invalid/heroos"
+)
 
 
 def make_settings(**values: Any) -> Settings:
@@ -94,7 +98,7 @@ def test_deployed_environments_require_an_auth_provider(environment: str) -> Non
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
 def test_deployed_environments_accept_cognito(environment: str) -> None:
-    settings = make_settings(heroos_env=environment, **COGNITO)
+    settings = make_settings(heroos_env=environment, database_url=DEPLOYED_DATABASE_URL, **COGNITO)
 
     assert isinstance(build_authentication_provider(settings), CognitoAccessTokenProvider)
 

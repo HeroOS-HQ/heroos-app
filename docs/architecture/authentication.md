@@ -218,8 +218,10 @@ migration jobs need no `HEROOS_ENV` or Cognito configuration. See
 - Verification exceptions are re-raised `from None`, so PyJWT messages and
   tracebacks do not travel with the HTTP error.
 - Response bodies are fixed strings and never echo the credential.
-- The application has no request-header logging middleware. Uvicorn access logs
-  record the request line only, not headers.
+- The application has no request-header logging middleware. Since M1-07 the
+  Uvicorn access log (which recorded the raw request line, including the query
+  string) is disabled. The structured `request_completed` event logs only the
+  route template ([Observability](observability.md)).
 - `test_bearer_tokens_not_logged_or_echoed` captures all log output at DEBUG across
   valid, invalid and denied requests and asserts no token or signature segment
   appears in logs or responses.
