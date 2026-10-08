@@ -46,3 +46,10 @@ crash.*.log
 # roots inside the repository; this is a second guard against committing objects.
 .heroos-storage/
 private-objects/
+
+# Database backup artifacts (contain database data). The tooling refuses to
+# write inside the repository; this is a second guard.
+*.dump
+*.pgdump
+*.backup
+backups/
