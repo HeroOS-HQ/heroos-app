@@ -88,5 +88,10 @@ Locally, set `HEROOS_AUTH_PROVIDER=development` and `HEROOS_DEV_AUTH_SECRET`
 make dev-token SUBJECT=<identity-subject>
 ```
 
+`HEROOS_ENV` is required and has no default; the API will not start without it.
+Docker Compose sets it for the `api` service. To run the API directly, load the
+root `.env`: `cd apps/api && uv run --env-file ../../.env uvicorn app.main:app`.
+Alembic needs only `DATABASE_URL`.
+
 The development provider is refused outside `HEROOS_ENV=development`. See
 [docs/architecture/authentication.md](docs/architecture/authentication.md).

@@ -96,7 +96,10 @@ Recorded 2026-10-08 while implementing the foundation. Details:
 2. **Token type.** The HeroOS API accepts Cognito **access tokens**. It
    validates RS256 signature via the User Pool JWKS, `iss`, `exp`, `iat`,
    `token_use == "access"`, `client_id` equal to the configured App Client, and
-   a non-empty `sub`. Tokens carrying `aud` (ID tokens) are rejected.
+   a non-empty `sub`. `token_use` alone separates access tokens from ID
+   tokens. `aud` is validated only when a resource audience
+   (`HEROOS_COGNITO_RESOURCE_AUDIENCE`) is configured, because resource-bound
+   access tokens legitimately carry `aud`.
 3. **Company authorization.** Access to a Company requires a `memberships` row
    for the resolved User and the requested Company. A client-supplied Company ID
    only identifies the requested resource.

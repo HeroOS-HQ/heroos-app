@@ -102,8 +102,14 @@ Validation performed on every request:
 | `iat` | Required |
 | `token_use` | Must equal `access` |
 | `client_id` | Must equal `HEROOS_COGNITO_APP_CLIENT_ID` |
-| `aud` | Must be absent. Cognito access tokens have no `aud`; a token carrying one (e.g. an ID token) is rejected |
+| `aud` | Only checked when `HEROOS_COGNITO_RESOURCE_AUDIENCE` is set: `aud` must then be present and equal (or, for a list, contain) that value. When unset, `aud` is ignored |
 | `sub` | Required, non-empty, at most 255 characters; becomes `VerifiedIdentity.subject` |
+
+`token_use` is the only access-vs-ID-token discriminator. The presence of `aud` is
+not, because Cognito access tokens can legitimately carry `aud` when resource
+binding is used. An ID token (`token_use=id`) is always rejected, whether or not
+it carries `aud` or `client_id`. A matching resource audience never relaxes any
+other check.
 
 Algorithm confusion (e.g. HS256 signed with the RSA public key) and `alg=none` are
 rejected because only RS256 is accepted.
@@ -131,6 +137,11 @@ Header-based identity shortcuts such as `X-User-ID`, `X-Dev-User` or `X-Company-
 do not exist and are ignored.
 
 ## 5. Development Authentication Safety Boundary
+
+`HEROOS_ENV` is required and has no default. If it is missing, or is not one of
+`development`, `staging` or `production` (exact, lowercase), settings validation
+fails and the API does not start. A missing value never falls back to
+development.
 
 The development provider cannot run outside `HEROOS_ENV=development`. This is
 enforced in three independent places:
@@ -168,16 +179,24 @@ in the requested Company. The helper never creates Users or Memberships.
 
 | Variable | Environments | Notes |
 | --- | --- | --- |
-| `HEROOS_ENV` | all | `development` (default), `staging` or `production` |
+| `HEROOS_ENV` | all | **Required, no default.** `development`, `staging` or `production`. Local development gets it from `.env` (copied from `.env.example`) or Docker Compose |
 | `HEROOS_AUTH_PROVIDER` | all | `development` or `cognito`. Required and must be `cognito` in staging/production. Unset in development rejects every protected request |
 | `HEROOS_DEV_AUTH_SECRET` | development only | Startup fails if set in staging/production |
 | `HEROOS_COGNITO_ISSUER` | when `cognito` | `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>`, https, no trailing `/` |
 | `HEROOS_COGNITO_APP_CLIENT_ID` | when `cognito` | App Client ID of the HeroOS web client |
 | `HEROOS_COGNITO_JWKS_URI` | optional | Defaults to `<issuer>/.well-known/jwks.json`; must be https |
+| `HEROOS_COGNITO_RESOURCE_AUDIENCE` | optional | Resource-server identifier. When set, access tokens must carry a matching `aud`. Must not be blank |
 
 Secrets use `SecretStr`, and settings validation errors hide input values, so
 neither repr nor startup errors print the development secret or `DATABASE_URL`.
 Cognito access-token verification needs no client secret.
+
+Database configuration is separate. `DatabaseSettings`
+(`app/core/database_settings.py`) holds only `DATABASE_URL`, and the API
+`Settings` extends it with environment and authentication. Alembic
+(`migrations/env.py`) loads `DatabaseSettings` and never imports the API settings
+module, so migration jobs need `DATABASE_URL` only, with no `HEROOS_ENV` or
+Cognito configuration.
 
 ## 7. Credential Logging
 
