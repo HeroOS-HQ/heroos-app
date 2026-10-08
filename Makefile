@@ -23,3 +23,17 @@ build:
 	pnpm --filter @heroos/web build
 
 check: lint format-check typecheck test build
+
+.PHONY: local-up local-down local-logs local-ps
+
+local-up:
+	docker compose up --build -d
+
+local-down:
+	docker compose down
+
+local-logs:
+	docker compose logs -f
+
+local-ps:
+	docker compose ps

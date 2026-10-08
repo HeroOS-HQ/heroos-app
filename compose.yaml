@@ -1,0 +1,35 @@
+name: heroos-local
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    image: heroos-api:local
+    init: true
+    ports:
+      - "8001:8000"
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: heroos-web:local
+    init: true
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3002:3000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 3s
+      start_period: 10s
+      retries: 3

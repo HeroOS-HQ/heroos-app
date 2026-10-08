@@ -81,3 +81,24 @@ jobs:
 
       - name: Test
         run: uv run pytest
+  containers:
+    name: Containers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Web container
+        run: |
+          docker build \
+            -f apps/web/Dockerfile \
+            -t heroos-web:ci \
+            .
+
+      - name: Build API container
+        run: |
+          docker build \
+            -f apps/api/Dockerfile \
+            -t heroos-api:ci \
+            .
