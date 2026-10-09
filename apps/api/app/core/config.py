@@ -2,8 +2,10 @@ from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import SecretStr, model_validator
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
-from app.core.database_settings import DEVELOPMENT_DATABASE_URL, DatabaseSettings
+from app.core.database_settings import DatabaseSettings
 
 Environment = Literal["development", "staging", "production"]
 AuthProviderName = Literal["development", "cognito"]
@@ -11,6 +13,10 @@ AuthProviderName = Literal["development", "cognito"]
 # stops startup instead of falling back to anything else.
 StorageProviderName = Literal["local", "s3"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+
+# Loopback hosts of the local Docker Compose database. Deployed environments
+# refuse them for DATABASE_URL.
+LOCAL_DATABASE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # HS256 keys shorter than the 256-bit digest weaken the development signature.
 DEV_AUTH_SECRET_MIN_LENGTH = 32
@@ -110,17 +116,26 @@ class Settings(DatabaseSettings):
 
     @model_validator(mode="after")
     def _validate_database(self) -> Self:
-        if self.heroos_env == "development":
-            return self
-        # Deployed environments never fall back to the local development role,
-        # and the API never receives the migration/admin credential.
-        if (
-            "database_url" not in self.model_fields_set
-            or self.database_url.get_secret_value() == DEVELOPMENT_DATABASE_URL
-        ):
+        # No environment has a built-in database credential to fall back to
+        # (docs/operations/database-credentials.md).
+        if self.database_url is None:
             raise ValueError(
                 f"DATABASE_URL must be explicitly configured when HEROOS_ENV={self.heroos_env}; "
-                "the local development default is refused"
+                "there is no default (local development: `make env-init`)"
+            )
+        if self.heroos_env == "development":
+            return self
+        # Deployed environments never use a local development database, and the
+        # API never receives the migration/admin credential.
+        try:
+            host = make_url(self.database_url.get_secret_value()).host
+        except ArgumentError:
+            # `from None`: SQLAlchemy's message quotes the raw URL.
+            raise ValueError("DATABASE_URL is not a valid database URL") from None
+        if host in LOCAL_DATABASE_HOSTS:
+            raise ValueError(
+                f"DATABASE_URL must not name a local development database host when "
+                f"HEROOS_ENV={self.heroos_env}"
             )
         if "migration_database_url" in self.model_fields_set:
             raise ValueError(

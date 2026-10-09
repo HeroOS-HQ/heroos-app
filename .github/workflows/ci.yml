@@ -108,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
 
     # Security gate: real PostgreSQL 16 (the same Compose `db` service used
-    # locally), CI-only local credentials, no AWS and no secrets.
+    # locally), per-run generated credentials, no AWS and no stored secrets.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -122,6 +122,17 @@ jobs:
       - name: Sync dependencies
         working-directory: apps/api
         run: uv sync --frozen
+
+      - name: Generate throwaway database credentials
+        # Fresh random passwords for this run only, in an untracked .env (0600).
+        # Nothing is committed or stored as a repository secret; values are
+        # masked in case any later step would print them.
+        run: |
+          make env-init
+          for key in HEROOS_DB_ADMIN_PASSWORD HEROOS_DB_APP_PASSWORD HEROOS_DEV_AUTH_SECRET; do
+            echo "::add-mask::$(grep -E "^${key}=" .env | cut -d= -f2-)"
+          done
+          make env-check
 
       - name: Start PostgreSQL 16
         run: docker compose up -d --wait db
@@ -142,7 +153,7 @@ jobs:
 
     # Recovery gate: logical backup -> restore -> verify on disposable
     # databases in the Compose PostgreSQL 16 service, using its matching
-    # pg_dump/pg_restore. CI-only local credentials, no AWS and no secrets.
+    # pg_dump/pg_restore. Per-run generated credentials, no AWS and no stored secrets.
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -156,6 +167,17 @@ jobs:
       - name: Sync dependencies
         working-directory: apps/api
         run: uv sync --frozen
+
+      - name: Generate throwaway database credentials
+        # Fresh random passwords for this run only, in an untracked .env (0600).
+        # Nothing is committed or stored as a repository secret; values are
+        # masked in case any later step would print them.
+        run: |
+          make env-init
+          for key in HEROOS_DB_ADMIN_PASSWORD HEROOS_DB_APP_PASSWORD HEROOS_DEV_AUTH_SECRET; do
+            echo "::add-mask::$(grep -E "^${key}=" .env | cut -d= -f2-)"
+          done
+          make env-check
 
       - name: Start PostgreSQL 16
         run: docker compose up -d --wait db

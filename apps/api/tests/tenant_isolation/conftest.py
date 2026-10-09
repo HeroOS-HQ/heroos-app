@@ -4,11 +4,14 @@ RLS cannot be proven on SQLite. This suite:
 
 1. creates a disposable ``*_tenant_isolation_test`` database (never ``heroos``),
 2. applies every Alembic migration as the migration/admin role,
-3. bootstraps the RLS-restricted runtime login role,
+3. bootstraps a disposable RLS-restricted runtime login role
+   (``heroos_app_t_<hex>`` with a random password). Never the shared
+   ``heroos_app``: roles are cluster-wide, so managing it here would change the
+   live API credential,
 4. seeds two tenants as admin, and
 5. exercises tenant-private data as the runtime role.
 
-The database is dropped afterwards, also on failure.
+The database and the disposable role are dropped afterwards, also on failure.
 
 Configured by environment variables (``scripts/verify-tenant-isolation.sh`` sets
 them). Without them the suite is skipped, so ``make check`` needs no database;
@@ -17,6 +20,7 @@ with ``TENANT_TEST_REQUIRED=1`` missing configuration fails instead.
 
 import os
 import re
+import secrets
 import subprocess
 import sys
 import uuid
@@ -43,6 +47,7 @@ RUNTIME_PASSWORD_ENV = "TENANT_TEST_RUNTIME_PASSWORD"
 REQUIRED_ENV = "TENANT_TEST_REQUIRED"
 
 SAFE_DATABASE_NAME = re.compile(r"[a-z0-9_]+_tenant_isolation_test")
+DISPOSABLE_RUNTIME_ROLE = re.compile(r"heroos_app_t_[0-9a-f]{8}")
 
 # Tenant-owned tables and the column naming the owning Company.
 TENANT_TABLES = {
@@ -74,8 +79,15 @@ def tenant_database() -> Iterator[TenantDatabase]:
     if not SAFE_DATABASE_NAME.fullmatch(name):
         pytest.fail(f"refusing to use database {name!r}: must match *_tenant_isolation_test")
 
-    runtime_role = os.environ.get(RUNTIME_ROLE_ENV, "heroos_app")
-    runtime_password = os.environ.get(RUNTIME_PASSWORD_ENV, "heroos_app_local")
+    # The script passes the identity it will also clean up; direct pytest runs
+    # generate one. Either way it must be a disposable role.
+    runtime_role = os.environ.get(RUNTIME_ROLE_ENV) or f"heroos_app_t_{secrets.token_hex(4)}"
+    runtime_password = os.environ.get(RUNTIME_PASSWORD_ENV) or secrets.token_hex(32)
+    if not DISPOSABLE_RUNTIME_ROLE.fullmatch(runtime_role):
+        pytest.fail(
+            f"refusing runtime role {runtime_role!r}: the suite only manages disposable "
+            "heroos_app_t_<8 hex> roles, never the shared heroos_app"
+        )
 
     admin = make_url(admin_url)
     test_admin_url = admin.set(database=name).render_as_string(hide_password=False)
@@ -109,6 +121,7 @@ def tenant_database() -> Iterator[TenantDatabase]:
     finally:
         with maintenance.connect() as conn:
             conn.execute(text(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
+            conn.execute(text(f'DROP ROLE IF EXISTS "{runtime_role}"'))
         maintenance.dispose()
 
 

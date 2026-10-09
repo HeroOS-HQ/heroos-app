@@ -24,6 +24,8 @@ RUNTIME_ROLE_ENV = "RECOVERY_TEST_RUNTIME_ROLE"
 RUNTIME_PASSWORD_ENV = "RECOVERY_TEST_RUNTIME_PASSWORD"
 REQUIRED_ENV = "RECOVERY_TEST_REQUIRED"
 
+DISPOSABLE_RUNTIME_ROLE = re.compile(r"heroos_app_t_[0-9a-f]{8}")
+
 SAFE_NAMES = {
     SOURCE_URL_ENV: re.compile(r"[a-z0-9_]+_backup_source_test"),
     RESTORED_URL_ENV: re.compile(r"[a-z0-9_]+_backup_restore_test"),
@@ -55,11 +57,17 @@ def recovery() -> RecoveryDatabases:
         urls[env] = url
 
     restored = make_url(urls[RESTORED_URL_ENV])
-    runtime_role = os.environ.get(RUNTIME_ROLE_ENV, "heroos_app")
-    runtime_url = restored.set(
-        username=runtime_role,
-        password=os.environ.get(RUNTIME_PASSWORD_ENV, "heroos_app_local"),
-    ).render_as_string(hide_password=False)
+    # The script's disposable runtime login role; no default credential.
+    runtime_role = os.environ.get(RUNTIME_ROLE_ENV, "")
+    runtime_password = os.environ.get(RUNTIME_PASSWORD_ENV, "")
+    if not DISPOSABLE_RUNTIME_ROLE.fullmatch(runtime_role) or not runtime_password:
+        pytest.fail(
+            f"{RUNTIME_ROLE_ENV} must name a disposable heroos_app_t_<8 hex> role and "
+            f"{RUNTIME_PASSWORD_ENV} must be set; run `make backup-restore-check`"
+        )
+    runtime_url = restored.set(username=runtime_role, password=runtime_password).render_as_string(
+        hide_password=False
+    )
     return RecoveryDatabases(
         source_admin_url=urls[SOURCE_URL_ENV],
         restored_admin_url=urls[RESTORED_URL_ENV],

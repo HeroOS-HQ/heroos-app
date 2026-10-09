@@ -4,14 +4,16 @@
 # base, head again. Alembic runs as the migration/admin role.
 #
 # Uses only the local Docker Compose `db` service. Never touches the normal
-# development database. Local development credentials only.
+# development database. Credentials from the environment or the root .env (`make env-init`).
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 DB_USER="${POSTGRES_USER:-heroos}"
-DB_PASSWORD="${POSTGRES_PASSWORD:-heroos_local}"
+# shellcheck source=lib/credentials.sh
+source "${REPO_ROOT}/scripts/lib/credentials.sh"
+require_admin_password
 DB_HOST="${MIGRATION_TEST_DB_HOST:-localhost}"
 DB_PORT="${MIGRATION_TEST_DB_PORT:-5433}"
 TEST_DB="${MIGRATION_TEST_DB:-heroos_migration_test}"
