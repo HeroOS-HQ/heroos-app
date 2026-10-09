@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -15,11 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import Settings
-from app.core.database_settings import (
-    DEVELOPMENT_DATABASE_URL,
-    DEVELOPMENT_MIGRATION_DATABASE_URL,
-    DatabaseSettings,
-)
+from app.core.database_settings import DatabaseConfigurationError, DatabaseSettings
 
 API_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = API_ROOT.parents[1]
@@ -58,7 +55,7 @@ def test_database_urls_never_rendered() -> None:
     ):
         assert PASSWORD_CANARY not in rendered
     # Still available where a driver needs it.
-    assert settings.database_url.get_secret_value() == RUNTIME_URL
+    assert settings.require_database_url() == RUNTIME_URL
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
@@ -68,9 +65,26 @@ def test_deployed_environment_requires_explicit_database_url(environment: str) -
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
-def test_deployed_environment_refuses_development_database_url(environment: str) -> None:
-    with pytest.raises(ValidationError, match="local development default is refused"):
-        make_settings(heroos_env=environment, database_url=DEVELOPMENT_DATABASE_URL, **COGNITO)
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_deployed_environment_refuses_local_development_database(
+    environment: str, host: str
+) -> None:
+    url = f"postgresql+psycopg://heroos_app:{PASSWORD_CANARY}@{host}:5433/heroos"
+    with pytest.raises(ValidationError, match="must not name a local development database") as e:
+        make_settings(heroos_env=environment, database_url=url, **COGNITO)
+
+    assert PASSWORD_CANARY not in str(e.value)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_deployed_environment_rejects_unparseable_database_url_without_echo(
+    environment: str,
+) -> None:
+    with pytest.raises(ValidationError, match="not a valid database URL") as e:
+        make_settings(heroos_env=environment, database_url=f"::{PASSWORD_CANARY}::", **COGNITO)
+
+    rendered = "".join(traceback.format_exception(e.value))
+    assert PASSWORD_CANARY not in rendered
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])
@@ -97,20 +111,52 @@ def test_deployed_environment_reads_database_url_from_environment(
     assert settings.database_url.get_secret_value() == RUNTIME_URL
 
 
-def test_development_keeps_local_defaults() -> None:
-    settings = make_settings()
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_development_has_no_database_default(value: str | None) -> None:
+    # A built-in default would be a committed credential.
+    values = {} if value is None else {"database_url": value}
+    with pytest.raises(ValidationError, match="DATABASE_URL must be explicitly configured"):
+        make_settings(**values)
 
-    assert settings.database_url.get_secret_value() == DEVELOPMENT_DATABASE_URL
-    assert settings.migration_database_url.get_secret_value() == (
-        DEVELOPMENT_MIGRATION_DATABASE_URL
-    )
+
+def test_database_settings_have_no_defaults() -> None:
+    settings = DatabaseSettings(_env_file=None)  # type: ignore[call-arg]
+
+    assert settings.database_url is None
+    assert settings.migration_database_url is None
+    for require, name in (
+        (settings.require_database_url, "DATABASE_URL"),
+        (settings.require_migration_database_url, "MIGRATION_DATABASE_URL"),
+    ):
+        with pytest.raises(DatabaseConfigurationError, match=f"{name} is not set"):
+            require()
 
 
 def test_migration_tooling_needs_no_api_configuration() -> None:
     # Alembic and the backup tooling load DatabaseSettings only.
     settings = DatabaseSettings(_env_file=None, migration_database_url=MIGRATION_URL)  # type: ignore[call-arg]
 
-    assert settings.migration_database_url.get_secret_value() == MIGRATION_URL
+    assert settings.require_migration_database_url() == MIGRATION_URL
+
+
+def test_migrations_without_migration_database_url_fail_without_fallback() -> None:
+    clean = {
+        name: value
+        for name, value in os.environ.items()
+        if not name.startswith("HEROOS_") and name not in {"DATABASE_URL", "MIGRATION_DATABASE_URL"}
+    }
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "current"],
+        cwd=API_ROOT,
+        env=clean,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "MIGRATION_DATABASE_URL is not set" in result.stderr
 
 
 def test_startup_with_development_database_fallback_fails_without_echoing_secrets() -> None:
@@ -168,16 +214,21 @@ def test_api_image_copies_only_dependency_manifests_and_application_code() -> No
     assert sources == {"apps/api/pyproject.toml", "apps/api/uv.lock", "apps/api/app"}
 
 
-def test_env_example_contains_only_local_development_values() -> None:
+def test_env_example_contains_no_credentials() -> None:
     values = dict(
         line.split("=", 1)
         for line in (REPO_ROOT / ".env.example").read_text().splitlines()
         if line and not line.startswith("#") and "=" in line
     )
 
-    for name in ("DATABASE_URL", "MIGRATION_DATABASE_URL"):
-        assert "@localhost:" in values[name], name
-        assert re.search(r":[a-z_]+_local@", values[name]), name
+    # Generated by `make env-init`; an empty value stops Compose and the API.
+    for name in (
+        "HEROOS_DB_ADMIN_PASSWORD",
+        "HEROOS_DB_APP_PASSWORD",
+        "DATABASE_URL",
+        "MIGRATION_DATABASE_URL",
+        "HEROOS_DEV_AUTH_SECRET",
+    ):
+        assert values[name] == "", name
     assert values["HEROOS_ENV"] == "development"
-    assert "local-development-only" in values["HEROOS_DEV_AUTH_SECRET"]
     assert not [name for name in values if name.startswith("AWS_")]

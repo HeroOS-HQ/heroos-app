@@ -12,6 +12,15 @@ runtime login role and its password) and ensures that role:
 - is a member of ``heroos_app_runtime``, which holds the table privileges granted
   by migrations.
 
+The password must follow the managed-password policy (64 lowercase hex
+characters, ``make env-init``), so the retired committed development defaults
+are refused. It is sent only as a client-side SCRAM-SHA-256 verifier, never as
+plaintext SQL (``scripts.scram``).
+
+Roles are cluster-wide. Setting the shared ``heroos_app`` password from a
+disposable ``*_test`` database is refused: verification suites create their own
+disposable login role instead, so they can never reset the live runtime role.
+
 Idempotent; safe on new and existing local databases. Local development and CI
 only: it refuses any non-local database host. Deployed environments provision
 their runtime login role through deployment configuration. Not shipped in the
@@ -25,9 +34,12 @@ import psycopg
 from psycopg import sql
 from sqlalchemy.engine import URL, make_url
 
-from app.core.database_settings import DatabaseSettings
+from app.core.database_settings import DatabaseConfigurationError, DatabaseSettings
+from scripts.scram import PasswordPolicyError, check_password, redact_verifiers, scram_verifier
 
 RUNTIME_GROUP_ROLE = "heroos_app_runtime"
+# The live API login role. Verification suites never manage it.
+SHARED_RUNTIME_LOGIN = "heroos_app"
 LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "db"})
 _ROLE_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 
@@ -58,6 +70,15 @@ def bootstrap_runtime_role(admin_url: str, runtime_url: str) -> None:
         )
     if not password:
         raise BootstrapError("DATABASE_URL must include the runtime role password")
+    if login == SHARED_RUNTIME_LOGIN and (runtime.database or "").endswith("_test"):
+        raise BootstrapError(
+            f"refusing to manage the shared {SHARED_RUNTIME_LOGIN} role from a disposable test "
+            "database; verification suites must use a disposable login role"
+        )
+    try:
+        check_password(password, "the DATABASE_URL password")
+    except PasswordPolicyError as exc:
+        raise BootstrapError(str(exc)) from None
 
     login_role = sql.Identifier(login)
     group_role = sql.Identifier(RUNTIME_GROUP_ROLE)
@@ -77,11 +98,11 @@ def bootstrap_runtime_role(admin_url: str, runtime_url: str) -> None:
         exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (login,)).fetchone()
         verb = sql.SQL("ALTER ROLE" if exists else "CREATE ROLE")
         conn.execute(
-            sql.SQL("{verb} {role} LOGIN {attributes} PASSWORD {password}").format(
+            sql.SQL("{verb} {role} LOGIN {attributes} PASSWORD {verifier}").format(
                 verb=verb,
                 role=login_role,
                 attributes=attributes,
-                password=sql.Literal(password),
+                verifier=sql.Literal(scram_verifier(password)),
             )
         )
         conn.execute(sql.SQL("GRANT {group} TO {role}").format(group=group_role, role=login_role))
@@ -104,15 +125,14 @@ def bootstrap_runtime_role(admin_url: str, runtime_url: str) -> None:
 def main() -> int:
     settings = DatabaseSettings()
     try:
-        bootstrap_runtime_role(
-            settings.migration_database_url.get_secret_value(),
-            settings.database_url.get_secret_value(),
-        )
-    except (BootstrapError, psycopg.Error) as exc:
-        # psycopg errors never include the connection password.
-        print(f"error: {exc}", file=sys.stderr)
+        runtime_url = settings.require_database_url()
+        bootstrap_runtime_role(settings.require_migration_database_url(), runtime_url)
+    except (BootstrapError, DatabaseConfigurationError, psycopg.Error) as exc:
+        # psycopg errors never include the connection password; a failing
+        # statement could quote the verifier, which is redacted as well.
+        print(f"error: {redact_verifiers(str(exc))}", file=sys.stderr)
         return 1
-    print(f"Runtime role {make_url(settings.database_url.get_secret_value()).username} is ready.")
+    print(f"Runtime role {make_url(runtime_url).username} is ready.")
     return 0
 
 

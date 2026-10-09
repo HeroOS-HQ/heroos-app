@@ -4,13 +4,21 @@ Evidence comes from the PostgreSQL catalog and from attempting privileged
 operations as the runtime role, not from trusting the role-creation statements.
 """
 
+import secrets
+
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, text
-from sqlalchemy.exc import DBAPIError
+from sqlalchemy import Engine, create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import DBAPIError, OperationalError
+from sqlalchemy.pool import NullPool
 
 from app.db.runtime_role import UnsafeDatabaseRoleError, check_runtime_role
-from tests.tenant_isolation.conftest import TENANT_TABLES, TenantDatabase
+from tests.tenant_isolation.conftest import (
+    DISPOSABLE_RUNTIME_ROLE,
+    TENANT_TABLES,
+    TenantDatabase,
+)
 
 RUNTIME_GROUP_ROLE = "heroos_app_runtime"
 
@@ -28,6 +36,35 @@ def test_runtime_engine_connects_as_runtime_role(
 ) -> None:
     with runtime_engine.connect() as conn:
         assert conn.scalar(text("SELECT current_user")) == tenant_database.runtime_role
+
+
+def test_suite_never_manages_the_shared_runtime_role(tenant_database: TenantDatabase) -> None:
+    # Roles are cluster-wide: bootstrapping `heroos_app` here would reset the
+    # live API credential (docs/operations/database-credentials.md).
+    assert tenant_database.runtime_role != "heroos_app"
+    assert DISPOSABLE_RUNTIME_ROLE.fullmatch(tenant_database.runtime_role)
+
+
+def test_runtime_password_stored_as_client_side_scram_verifier(
+    admin_engine: Engine, tenant_database: TenantDatabase
+) -> None:
+    with admin_engine.connect() as conn:
+        is_scram = conn.scalar(
+            text("SELECT rolpassword LIKE 'SCRAM-SHA-256$%' FROM pg_authid WHERE rolname = :name"),
+            {"name": tenant_database.runtime_role},
+        )
+
+    assert is_scram is True
+
+
+def test_runtime_role_rejects_a_wrong_password(tenant_database: TenantDatabase) -> None:
+    wrong = make_url(tenant_database.runtime_url).set(password=secrets.token_hex(32))
+    engine = create_engine(wrong, poolclass=NullPool)
+    try:
+        with pytest.raises(OperationalError), engine.connect():
+            pass
+    finally:
+        engine.dispose()
 
 
 @pytest.mark.parametrize("role", ["login", "group"])

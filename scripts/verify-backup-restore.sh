@@ -2,7 +2,8 @@
 # Verify the HeroOS logical backup/restore procedure end to end, on disposable
 # databases only (docs/architecture/backup-and-recovery.md):
 #
-#   create disposable source DB -> migrate (admin role) -> bootstrap runtime role
+#   create disposable source DB -> migrate (admin role) -> bootstrap a disposable
+#   runtime login role (heroos_app_t_<hex>, never the live heroos_app)
 #   -> seed synthetic data -> pg_dump (custom format, 0600, private dir)
 #   -> create empty disposable restore DB -> pg_restore (admin role)
 #   -> shared schema/RLS/role assertions -> Alembic head + drift check
@@ -11,7 +12,8 @@
 #
 # Uses only the local Docker Compose `db` service (CI starts the same service)
 # and its PostgreSQL 16 client tools. Never touches the normal development
-# database. Local development credentials only; no AWS, no production data.
+# database or the live heroos_app role (checked before/after). Credentials from
+# the environment or the root .env (`make env-init`); no AWS, no production data.
 set -euo pipefail
 # Everything this script creates (workdir, archive) is private.
 umask 077
@@ -20,14 +22,17 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
 DB_USER="${POSTGRES_USER:-heroos}"
-DB_PASSWORD="${POSTGRES_PASSWORD:-heroos_local}"
+# shellcheck source=lib/credentials.sh
+source "${REPO_ROOT}/scripts/lib/credentials.sh"
+require_admin_password
 DB_HOST="${BACKUP_TEST_DB_HOST:-localhost}"
 DB_PORT="${BACKUP_TEST_DB_PORT:-5433}"
 SOURCE_DB="${BACKUP_TEST_SOURCE_DB:-heroos_backup_source_test}"
 RESTORE_DB="${BACKUP_TEST_RESTORE_DB:-heroos_backup_restore_test}"
 PG_TOOLS="${BACKUP_TEST_PG_TOOLS:-compose}"
-RUNTIME_LOGIN=heroos_app
-RUNTIME_PASSWORD=heroos_app_local
+# Disposable runtime login role for this run only (never the shared heroos_app:
+# roles are cluster-wide). Dropped on exit.
+new_disposable_runtime_role
 
 # Safety guards: only ever operate on clearly disposable databases.
 if [[ ! "${SOURCE_DB}" =~ ^[a-z0-9_]+_backup_source_test$ ]]; then
@@ -84,8 +89,10 @@ WORKDIR=""
 
 cleanup() {
   local status=$?
-  log "Cleaning up disposable databases and backup artifacts"
+  log "Cleaning up disposable databases, runtime role and backup artifacts"
   drop_disposable_dbs || { echo "WARNING: failed to drop disposable databases" >&2; status=1; }
+  drop_disposable_runtime_role "${RUNTIME_LOGIN}" || { echo "WARNING: failed to drop ${RUNTIME_LOGIN}" >&2; status=1; }
+  assert_live_runtime_role_unchanged || status=1
   if [[ -n "${WORKDIR}" ]]; then
     rm -rf -- "${WORKDIR}"
     if [[ -e "${WORKDIR}" ]]; then
@@ -120,6 +127,7 @@ for _ in $(seq 1 30); do
 done
 docker compose exec -T db pg_isready -U "${DB_USER}" -d postgres
 
+record_live_runtime_role
 trap cleanup EXIT
 drop_disposable_dbs
 

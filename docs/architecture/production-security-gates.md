@@ -21,7 +21,7 @@ recommendation.
 | --- | --- | --- |
 | Object storage | provider contract, Company-namespaced server-generated keys, write-once, containment, private local provider, fail-closed config, `s3` refused until implemented | S3 adapter, private bucket, Block Public Access, encryption, IAM, pre-signed access |
 | Database | RLS, non-bypass runtime role, startup guard, logical backup/restore with post-restore security validation | RDS, encryption at rest, TLS enforcement, automated backups, PITR, restore drills |
-| Secrets | `SecretStr` config, no secret rendering, deployed environments refuse development fallbacks and the migration credential, no committed credentials | AWS Secrets Manager, IAM-scoped retrieval, rotation |
+| Secrets | `SecretStr` config, no secret rendering, no built-in database credentials in any environment (generated, untracked `.env` locally; [Database Credentials](../operations/database-credentials.md)), deployed environments refuse local database hosts and the migration credential, no committed credentials (CI scans for them) | AWS Secrets Manager, IAM-scoped retrieval, rotation |
 | Ingress | none | ACM certificate, ALB HTTPS, HTTP → HTTPS redirect |
 | Logging | structured JSON stdout, request correlation, sanitized errors, no access log, leakage tests | CloudWatch ingestion, retention, metric filters |
 | Monitoring | 5xx and unhandled errors are distinguishable events | alarms, dashboards, backup-failure notifications |

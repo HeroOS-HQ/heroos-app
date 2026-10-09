@@ -50,7 +50,7 @@ import psycopg
 from pydantic import SecretStr
 from sqlalchemy.engine import make_url
 
-from app.core.database_settings import DatabaseSettings
+from app.core.database_settings import DatabaseConfigurationError, DatabaseSettings
 from scripts.bootstrap_runtime_role import RUNTIME_GROUP_ROLE
 
 PgToolsMode = Literal["local", "compose"]
@@ -333,6 +333,7 @@ def _configured_databases(settings: DatabaseSettings) -> frozenset[str]:
     names = {
         make_url(url.get_secret_value()).database
         for url in (settings.database_url, settings.migration_database_url)
+        if url is not None
     }
     return frozenset(name for name in names if name)
 
@@ -353,8 +354,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     tools = PgTools(mode=arguments.pg_tools)
     try:
         connection = AdminConnection.from_urls(
-            settings.migration_database_url.get_secret_value(),
-            settings.database_url.get_secret_value(),
+            settings.require_migration_database_url(),
+            settings.database_url.get_secret_value() if settings.database_url else None,
         )
         if arguments.command == "backup":
             path = backup(connection, tools, arguments.database, arguments.output)
@@ -368,7 +369,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 configured=_configured_databases(settings),
             )
             print(f"Restored archive into {arguments.database}.")
-    except RecoveryError as exc:
+    except (RecoveryError, DatabaseConfigurationError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     return 0

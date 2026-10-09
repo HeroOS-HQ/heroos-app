@@ -26,10 +26,12 @@ check: lint format-check typecheck test build
 
 .PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check backup-restore-check
 
-# Root .env (if present) supplies DATABASE_URL / MIGRATION_DATABASE_URL overrides.
+# Root .env (if present) supplies DATABASE_URL / MIGRATION_DATABASE_URL. There
+# are no built-in database credentials: without .env (or exported variables)
+# database targets stop with an error. Create it once with `make env-init`.
 API_ENV_FILE = $(if $(wildcard .env),--env-file ../../.env,)
 
-local-up:
+local-up: env-check
 	docker compose up -d --wait db
 	$(MAKE) db-setup
 	docker compose up --build -d
@@ -82,3 +84,30 @@ privacy-decision-check:
 dev-token:
 	@test -n "$(SUBJECT)" || { echo "usage: make dev-token SUBJECT=<identity-subject>" >&2; exit 2; }
 	@cd apps/api && uv run $(API_ENV_FILE) python -m scripts.create_dev_token "$(SUBJECT)"
+
+.PHONY: env-init env-check env-rotate db-apply-credentials
+
+# Database credentials (docs/operations/database-credentials.md). The root .env
+# is the only place they live; no target prints a password or a database URL.
+
+# Create .env from .env.example with generated passwords. Never overwrites.
+env-init:
+	@cd apps/api && uv run python -m scripts.db_credentials init
+
+# Validate .env (0600, ignored, untracked, generated passwords, URLs agree).
+env-check:
+	@cd apps/api && uv run python -m scripts.db_credentials check
+
+# Back up .env to BACKUP_DIR (0700, outside the repo) and generate new database
+# passwords in .env. Does not touch the database. ROTATE_DEV_AUTH_SECRET=yes
+# also replaces HEROOS_DEV_AUTH_SECRET.
+env-rotate:
+	@test -n "$(BACKUP_DIR)" || { echo "usage: make env-rotate BACKUP_DIR=<private dir outside the repo>" >&2; exit 2; }
+	@cd apps/api && uv run python -m scripts.db_credentials rotate --backup-dir "$(abspath $(BACKUP_DIR))" \
+		$(if $(filter yes,$(ROTATE_DEV_AUTH_SECRET)),--dev-auth-secret,)
+
+# APPROVAL GATE: sets the heroos and heroos_app role passwords to the values in
+# .env (SCRAM verifiers via the Compose db service), then verifies both logins.
+db-apply-credentials:
+	@test "$(CONFIRM)" = "yes" || { echo "db-apply-credentials changes role passwords; re-run with CONFIRM=yes after approval" >&2; exit 2; }
+	@cd apps/api && uv run python -m scripts.db_credentials apply --confirm

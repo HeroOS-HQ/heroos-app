@@ -225,8 +225,13 @@ Implemented in M1-07; see [Private Object Storage](private-object-storage.md).
 
 - Secrets (`HEROOS_DEV_AUTH_SECRET`, `DATABASE_URL`, `MIGRATION_DATABASE_URL`)
   are `SecretStr`. They never appear in `repr`, logs or validation errors.
-- Staging and production fail closed: no development auth, no development
-  database default, no migration credential in the API, no local object storage.
+- Staging and production fail closed: no development auth, no local database
+  host, no migration credential in the API, no local object storage.
+- No environment has a built-in database credential. Local and preview
+  credentials are generated into the untracked root `.env` (`make env-init`),
+  passwords reach PostgreSQL only as SCRAM-SHA-256 verifiers, and verification
+  suites never manage the shared runtime role
+  ([Database Credentials](../operations/database-credentials.md)).
 - Production secrets come from AWS Secrets Manager (M5). Nothing real is
   committed. `.env` is excluded from Git and Docker builds.
 

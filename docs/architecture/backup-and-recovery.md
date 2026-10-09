@@ -17,7 +17,11 @@ A database dump is **not** a complete disaster-recovery solution:
 - **Cluster-wide roles are not in the dump.** `heroos_app_runtime` (NOLOGIN
   privilege role), the API login role (`heroos_app` locally) and the
   migration/admin role exist at cluster level. The dump contains only the
-  `GRANT`s that reference them.
+  `GRANT`s that reference them. A roles-only companion backup must be taken
+  with `pg_dumpall --roles-only --no-role-passwords`: role passwords are never
+  backed up, and a restore never brings an old (possibly compromised) credential
+  back. Restored roles get the current credentials
+  ([Database Credentials](../operations/database-credentials.md)).
 - Cluster settings (`postgresql.conf`, `pg_hba.conf`), extensions installed
   outside the database, and other databases are not included.
 - A logical dump is a point-in-time copy. It does not provide point-in-time
@@ -109,6 +113,12 @@ recovery of a live database is not an automated mode.
    3. the API login role (`heroos_app` locally; secret-managed in deployed
       environments) as a member of `heroos_app_runtime`, with the same negative
       attributes.
+
+   Passwords come from the **current** credential source (locally the root
+   `.env`, set as SCRAM verifiers by `make db-runtime-role` /
+   `make db-apply-credentials`), never from a backup. A roles file made with
+   `--no-role-passwords` contains no passwords to restore; never replay role
+   password hashes from any other source.
 3. **Restore** with `scripts.db_recovery restore` as the migration/admin role.
 4. **Validate** before any traffic (§5).
 5. **Cut over** by pointing `DATABASE_URL` / `MIGRATION_DATABASE_URL` at the

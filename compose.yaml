@@ -12,7 +12,8 @@ services:
     environment:
       HEROOS_ENV: development
       # RLS-restricted runtime role (`make db-setup`), never the admin/owner role.
-      DATABASE_URL: postgresql+psycopg://heroos_app:heroos_app_local@db:5432/heroos
+      # Password only from the untracked root .env (`make env-init`); no default.
+      DATABASE_URL: postgresql+psycopg://heroos_app:${HEROOS_DB_APP_PASSWORD:?HEROOS_DB_APP_PASSWORD is not set - run make env-init}@db:5432/heroos
     depends_on:
       db:
         condition: service_healthy
@@ -46,7 +47,9 @@ services:
     environment:
       POSTGRES_DB: heroos
       POSTGRES_USER: heroos
-      POSTGRES_PASSWORD: heroos_local
+      # Only initialises an empty volume; rotate an existing cluster with
+      # `make db-apply-credentials` (docs/operations/database-credentials.md).
+      POSTGRES_PASSWORD: ${HEROOS_DB_ADMIN_PASSWORD:?HEROOS_DB_ADMIN_PASSWORD is not set - run make env-init}
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
