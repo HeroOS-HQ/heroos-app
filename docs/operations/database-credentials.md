@@ -86,137 +86,178 @@ CI generates fresh credentials per run (`make env-init`), masks them with
 
 A `.env` from before this change has no `HEROOS_DB_*` keys and holds the retired
 committed passwords. `env-check` fails on it and Compose refuses to start.
-Rotate in place (the data and volume are kept) with §4 steps 4–6.
+Rotate in place (the data and volume are kept) with §4 Gates 4–7.
 
 ## 4. Phase B: rotating the VPS preview credentials
 
 The preview runs in the deployment directory `~/Pictures/heroos-app` with the
-retired committed credentials (§6). Each **gate** needs explicit approval before
-it runs. The steps are ordered so the running containers keep serving until
-step 6, and the database is only changed in step 5.
+retired committed credentials (§6). Every gate needs explicit approval before it
+runs, and each one stops at the first failure.
 
-> Until step 4 has run, the deployment directory's `.env` has no
-> `HEROOS_DB_*` keys. After the new code is checked out there (step 3), every
-> `docker compose` command (including `ps`, `logs` and `exec`) refuses to run
-> until step 4. The running containers are not affected.
+**Why this order.** `.env` is rotated while the *old* code is still deployed:
+the old `compose.yaml` ignores the new keys and running containers never re-read
+`.env`, so nothing changes for the running preview. When the new
+`compose.yaml` arrives (Gate 5), `.env` already has the keys it requires, so
+`docker compose` stays usable throughout. The only service impact is Gate 6.
 
-**1. Pre-flight (read-only).** On the current code:
+| Period | Running preview | `docker compose` in the deployment directory | Host DB tooling (`make migrate`, `db-runtime-role`, `db_recovery`) |
+|---|---|---|---|
+| Gates 0–3 | normal | normal | normal |
+| Gate 4 → Gate 6 | normal | `ps`, `logs`, `exec` fine | **do not use**: `.env` already holds passwords the database does not accept yet |
+| Gate 5 → Gate 6 | normal | **do not** `up`, `restart`, `make local-up`, `make db-setup`: they would start the API with the new password before the database has it | do not use |
+| Gate 6: from the password change until the new API is healthy | API cannot open *new* database connections (open ones keep working); API down ~5–15 s while recreated; web and database stay up | fine | fine |
+
+Never, at any gate: `docker compose down -v`, `docker volume rm`, migrations,
+`make db-setup`, restoring into `heroos`, or reinstating retired credentials.
+
+Shell variables used below:
 
 ```bash
-cd ~/Pictures/heroos-app
-docker compose ps
-docker compose exec -T db psql -X -U heroos -d heroos -qtA -c \
-  "SELECT version_num FROM alembic_version"
-docker compose exec -T db psql -X -U heroos -d heroos -qtA -c \
-  "SELECT rolname, rolsuper, rolbypassrls, rolcreaterole, rolcanlogin FROM pg_roles WHERE rolname LIKE 'heroos%' ORDER BY 1"
-docker compose exec -T db psql -X -U heroos -d heroos -qtA -c \
-  "SELECT relname, pg_get_userbyid(relowner), relrowsecurity FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' ORDER BY 1"
-for t in companies users memberships company_blueprints case_subjects cases; do
-  docker compose exec -T db psql -X -U heroos -d heroos -qtA -c "SELECT '$t', count(*) FROM $t"
-done
+B="$HOME/heroos-backups/<run-name>"        # private, 0700, outside the repository
+LIVE="$HOME/Pictures/heroos-app"            # deployment directory
+NEW="<separate checkout of the merged commit>"   # e.g. a git worktree; provides the new tooling for Gate 4
 ```
 
-Save the output for comparison in step 7. It contains no secrets.
+**Gate 0. Pre-flight (read-only).** Clean deployment checkout on the expected
+commit, PR and CI green, `install -d -m 700 "$B"`, and a read-only snapshot of
+the database saved as `"$B/baseline-before.txt"`: alembic revision, role
+attributes and memberships, table owners and RLS flags, row counts, constraint
+definitions, policies, grants, schema and function ACLs (definitions as
+`md5()`, never passwords). Record container image IDs and start times, the
+Docker volume list and the HTTP status of the API, web and HTTPS preview.
 
-**2. Backup: GATE G1** (writes a data dump outside the repository). On the
-current code:
+**Gate 1. Backup** (reads the database; writes only inside `$B`). Old code:
 
 ```bash
-B="$HOME/heroos-backups/$(date -u +%Y%m%dT%H%M%SZ)-pre-rotation"
-install -d -m 700 "$B"
-(cd apps/api && uv run --env-file ../../.env python -m scripts.db_recovery \
+cd "$LIVE"
+(cd apps/api && uv run --no-sync --env-file ../../.env python -m scripts.db_recovery \
   --pg-tools compose backup --database heroos --output "$B/heroos.dump")
-docker compose exec -T db pg_restore --list < "$B/heroos.dump" | grep -c 'TABLE DATA'
 (umask 077; docker compose exec -T db pg_dumpall -U heroos --roles-only --no-role-passwords > "$B/roles.sql")
-grep -ciE 'password|scram' "$B/roles.sql"    # must print 0
+grep -ciE 'password|scram|md5' "$B/roles.sql"        # must print 0
+(cd "$B" && sha256sum heroos.dump roles.sql > SHA256SUMS)
 ```
 
-The roles file deliberately has **no passwords** (`--no-role-passwords`), so no
-restore can bring a compromised credential back. Do not take a roles backup
-without that flag. Optional, and a separate approval: prove the dump restores
-into a disposable database (`scripts.db_recovery restore --database
-heroos_prerotation_restore_test`, then drop it). The tool refuses `heroos`.
+The roles file deliberately has **no passwords**, so no restore can bring a
+compromised credential back. Never take a roles backup without
+`--no-role-passwords`.
 
-**3. Deploy the code: GATE G2** (merge the PR, then update the deployment
-directory). Running containers are unaffected.
+**Gate 2. Verify the backup in a throwaway cluster** (no live change). Before
+any live change, restore the archive into a separate Compose project
+(`-p <name>`, its own compose file and `.env` from `db_credentials init --port
+<free port>`), with the data directory on `tmpfs` and no volume:
+
+1. `sha256sum --strict -c SHA256SUMS`;
+2. guard: the resolved Compose project, port and storage are the throwaway ones,
+   and the live `db` container ID is unchanged; export `COMPOSE_FILE` /
+   `COMPOSE_PROJECT_NAME` for `db_recovery`, which calls `docker compose exec`;
+3. `pg_restore --list`: one `TABLE DATA` entry per table and one `POLICY` per
+   tenant table;
+4. `bootstrap_runtime_role` (roles get *current* credentials, never backed-up
+   ones), `CREATE DATABASE <restore db>`, `db_recovery restore`;
+5. `scripts/lib/schema-assertions.sh` `assert_schema <restore db>`;
+6. the Gate 0 snapshot of the restored copy equals the live baseline, compared
+   **order-insensitively** (object IDs, and so catalog order, differ between
+   clusters);
+7. on the restored copy: revision is the single code head, `alembic check`
+   reports no drift, the runtime role passes `check_runtime_role` and is denied
+   `alembic_version`, `TRUNCATE`, `CREATE`, disabling RLS, dropping policies,
+   `SET ROLE`, replacing `heroos_current_company_id()` and `row_security = off`;
+   with probe rows, no tenant context sees nothing, tenant A sees only A,
+   cannot update B and cannot insert another company;
+8. always tear the throwaway project down (an exit trap) and confirm no
+   containers, networks or volumes remain and the live snapshot is unchanged.
+
+Do not continue with a backup that has not passed Gate 2.
+
+**Gate 3. Merge** (GitHub only). Squash-merge after CI is green, wait for the
+`main` CI run, then confirm `git diff --quiet <tested PR head> origin/main`.
+
+**Gate 4. New credentials in the live `.env`, including `HEROOS_DEV_AUTH_SECRET`**
+(old code still deployed; no service impact). Run the new tool from `$NEW`:
 
 ```bash
-git fetch origin && git checkout main && git pull --ff-only
+cd "$NEW/apps/api"
+uv run python -m scripts.db_credentials --env-file "$LIVE/.env" rotate --backup-dir "$B" --dev-auth-secret
+uv run python -m scripts.db_credentials --env-file "$LIVE/.env" check     # every line OK
 ```
 
-**4. Generate new credentials: GATE G3** (modifies the live `.env`; the
-database is untouched).
+Confirm by key name only that the five managed keys changed and no other key
+did (compare against `"$B"/env.pre-rotation.*` with `hmac.compare_digest`,
+printing names). The dev auth secret is not passed to any container, and the
+preview API has no auth provider configured, so rotating it affects nothing
+running.
+
+**Gate 5. Deploy the code and pre-build the API image** (no restarts):
 
 ```bash
-make env-rotate BACKUP_DIR="$B"            # add ROTATE_DEV_AUTH_SECRET=yes to also rotate it
-make env-check                              # every line must be OK (git SKIP is fine)
-```
-
-**5. Apply to the database: GATE G4** (two `ALTER ROLE … PASSWORD` statements;
-nothing else changes).
-
-```bash
-make db-apply-credentials CONFIRM=yes
-```
-
-From here until step 6, the running API keeps its existing pooled connections,
-but any new connection it opens fails, because its container still has the old
-password. Run step 6 immediately.
-
-**6. Recreate only the API container: GATE G5** (short API interruption).
-
-```bash
-docker compose up -d --no-deps --force-recreate api
-```
-
-`--no-deps` leaves `db` and `web` alone. `POSTGRES_PASSWORD` changed in `.env`,
-so a later plain `docker compose up -d` will also recreate the `db` *container*.
-That is a short database restart; the named volume and its data are kept, and
-`POSTGRES_PASSWORD` is ignored for an initialised volume. Optionally do it now
-in the same window (GATE G6): `docker compose up -d --no-deps db`. Never use
-`down -v` or remove `heroos-local_heroos_postgres_data`.
-
-**7. Verify (read-only).**
-
-```bash
+cd "$LIVE"
+test -z "$(git status --porcelain)" && git pull --ff-only origin main
+git diff --quiet <tested PR head> HEAD && echo "deployed tree == tested PR head"
+(cd apps/api && uv sync --frozen)
+docker compose config --quiet                 # never without --quiet: it prints secrets
 make env-check
-docker compose ps                                     # api healthy
-curl -fsS http://127.0.0.1:8001/health                 # {"status":"ok"}
-docker compose exec -T db psql -X -U heroos -d heroos -qtA -c \
-  "SELECT usename, client_addr, count(*) FROM pg_stat_activity WHERE datname = 'heroos' AND client_addr IS NOT NULL GROUP BY 1, 2"
-                                                       # only heroos_app from the api container
-# Repeat the step 1 queries: roles, ownership, RLS, alembic head, row counts unchanged.
-# Credential values in container logs (patterns via a pipe, never argv): must print 0
-docker compose logs --no-color api db | grep -c -F -f <(grep -E '^HEROOS_DB_(ADMIN|APP)_PASSWORD=' .env | cut -d= -f2-)
+docker tag heroos-api:local heroos-api:pre-rotation   # image rollback point
+docker compose build api                       # running containers are untouched
 ```
 
-Old passwords must be refused. Check with the saved `env.pre-rotation.*` file
-without printing it, for example with a short psycopg login attempt for each
-URL in that file, which must fail with "password authentication failed". Then
-check the preview end to end through Caddy.
+**Gate 6. Apply the passwords and recreate the API** (the only service impact;
+run as one line so the API is recreated immediately):
 
-Optional, a separate approval (GATE G7): `make migration-check`,
-`make tenant-isolation-check` and `make backup-restore-check` against the
-preview cluster. They use only disposable `*_test` databases and disposable
-`heroos_app_t_*` roles, and fail if `heroos_app` changes.
+```bash
+cd "$LIVE"
+make db-apply-credentials CONFIRM=yes && docker compose up -d --no-deps --force-recreate --wait --wait-timeout 120 api
+```
 
-**8. Clean up.** Once verified, delete `"$B"/env.pre-rotation.*`
-(`shred -u`). It holds the retired, publicly known credentials and must never be
-restored; the tooling would refuse it anyway. Keep `heroos.dump` and
-`roles.sql` (0600, in a 0700 directory) only as long as the retention decision
-allows (PRIV-018), then delete them.
+`db-apply-credentials` validates `.env`, changes **only** the two passwords in
+one transaction, proves role attributes and memberships unchanged and logs in
+as both roles. `--no-deps` leaves `db` and `web` running.
 
-## 5. Rollback
+**Gate 7. Verify (read-only).** `make env-check`; all containers healthy;
+API `/health` 200, web 200, HTTPS preview 401 without credentials and working
+through a browser login; the API container environment has only
+`HEROOS_ENV` and `DATABASE_URL`; `pg_stat_activity` shows only `heroos_app`
+from the API container; the database snapshot equals the Gate 0 baseline
+(order-insensitive); `db` and `web` start times unchanged; previous passwords
+are refused and current ones accepted (a login attempt per URL printing only
+role and outcome); the runtime role passes `check_runtime_role` and cannot read
+`alembic_version` or disable row security; container logs contain no current
+or previous credential value (count only).
 
-| Situation | Action |
-|---|---|
-| Stopped before step 5 (database untouched) | Nothing to undo in the database or the containers. To return to the previous state completely: `cp -p "$B"/env.pre-rotation.* .env` and check out the previous commit. |
-| Step 5 or 6 failed, or the API does not come back | **Roll forward; do not restore the old credentials.** `make env-check`, then re-run `make db-apply-credentials CONFIRM=yes` (idempotent: it re-syncs both roles to `.env`), then step 6. `docker compose logs api` contains no secrets. |
-| Rotated credentials suspected wrong or leaked | Rotate again: §4 steps 4–7 with a new `BACKUP_DIR`. |
-| A previous *generated* `.env` must be reinstated | `cp -p <backup> .env`, `make db-apply-credentials CONFIRM=yes`, step 6. Works only for generated values; the retired defaults are refused. |
-| Locked out / break-glass | `docker compose exec db psql -U heroos -d heroos` (socket trust inside the container, no password). This is an explicit manual action, not an automatic fallback. |
-| Code must be rolled back after rotation | Avoid it. The pre-change `compose.yaml` hardcodes the retired password: the API would fail to start, and an old-code `make db-setup` without `.env` would put the compromised password back. Fix forward. Reverting the code is a deliberate decision to re-expose credentials and needs its own approval. |
-| Data loss or corruption (not expected: rotation changes no data) | Restore `heroos.dump` into a **new** database (`scripts.db_recovery restore --database heroos_restored_<date>`; the tool refuses `heroos`), validate it ([Backup and Recovery §5](../architecture/backup-and-recovery.md)), and cut over only with approval. Roles get the current credentials, never ones from a backup. |
+**Gate 8 (optional, separate approval). Recreate the `db` container.** The
+`db` service definition changed (`POSTGRES_PASSWORD` now comes from `.env`), so
+the next plain `docker compose up -d` recreates it. Do it deliberately, e.g.
+together with other planned container changes: confirm the resolved volume is
+`heroos_postgres_data -> /var/lib/postgresql/data`, run
+`docker compose up -d --no-deps --wait db` (database restart of a few seconds;
+the volume is reused and `POSTGRES_PASSWORD` is ignored for an initialised
+data directory), then repeat the Gate 7 snapshot comparison.
+
+**Gate 9 (optional, separate approval).** `make migration-check`,
+`make tenant-isolation-check`, `make backup-restore-check` against the preview
+cluster. They create and drop only `*_test` databases and `heroos_app_t_*`
+roles and fail if `heroos_app` changes.
+
+**Gate 10. Clean up** after a stable period: `shred -u "$B"/env.pre-rotation.*`
+(retired credentials; never restore them, the tooling refuses them anyway),
+`docker image rm heroos-api:pre-rotation`. Keep `heroos.dump`, `roles.sql` and
+`SHA256SUMS` only as long as the retention decision allows (PRIV-018).
+
+## 5. Rollback and fix-forward
+
+| Gate | Failure | State | Action |
+|---|---|---|---|
+| 0–2 | any | nothing changed | stop; fix; re-run. Never continue with an unverified backup |
+| 3 | `main` CI fails or trees differ | GitHub only | do not deploy; fix forward or revert on GitHub |
+| 4 | rotate or check fails | old code, database untouched | `cp -p "$B"/env.pre-rotation.* "$LIVE/.env"` restores the exact previous state (the database still uses those passwords, so this is an abort, not a credential rollback) |
+| 5 | pull, sync or build fails | containers untouched | `git -C "$LIVE" checkout --detach <previous commit>`, `docker tag heroos-api:pre-rotation heroos-api:local`, then the Gate 4 action |
+| 6 | `apply` fails before commit | database unchanged; API not recreated (`&&`) | fix and retry, or the Gate 5 + Gate 4 actions |
+| 6 | committed, login verification fails | database has new passwords; API cannot open new connections | `make env-check`, re-run `make db-apply-credentials CONFIRM=yes` (idempotent), then the recreate command |
+| 6 | new API unhealthy: authentication | — | `docker compose logs --no-color --tail 100 api` (no secrets), re-run apply, recreate |
+| 6 | new API unhealthy: application/image | — | `docker tag heroos-api:pre-rotation heroos-api:local && docker compose up -d --no-deps --force-recreate --wait api` (old image, new credentials: no credential rollback) |
+| any | locked out | — | break-glass: `docker compose exec db psql -U heroos -d heroos` (socket trust inside the container; deliberate manual step) |
+| after 6 | rotated credentials suspected wrong or leaked | — | rotate again: Gates 4, 6, 7 with a new `$B` |
+| after 6 | code rollback requested | — | avoid: the pre-change `compose.yaml` hardcodes the retired password, and old-code `make db-setup` without `.env` would reinstate it. Fix forward; reverting is a deliberate decision to re-expose credentials and needs its own approval |
+| any | data loss or corruption (not expected) | — | restore `heroos.dump` into a **new** database (`db_recovery restore --database heroos_restored_<date>`; it refuses `heroos`), validate ([Backup and Recovery §5](../architecture/backup-and-recovery.md)), cut over only with approval |
 
 ## 6. History of the retired development credentials
 
