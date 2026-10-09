@@ -139,6 +139,11 @@ Alembic needs only `MIGRATION_DATABASE_URL`.
 The development provider is refused outside `HEROOS_ENV=development`. See
 [docs/architecture/authentication.md](docs/architecture/authentication.md).
 
+The web app signs users in with Cognito (Authorization Code + PKCE) and keeps
+the access token server-side in a sealed `HttpOnly` cookie; its settings are in
+`apps/web/.env.example`. Deployment of the temporary demo is described in
+[docs/operations/demo-authentication-deployment.md](docs/operations/demo-authentication-deployment.md).
+
 ## Private Storage, Logging and Production Gates
 
 - Private objects: `HEROOS_STORAGE_PROVIDER=local` with an absolute
