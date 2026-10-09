@@ -93,7 +93,14 @@ docker compose up -d --wait          # recreates only services whose image or de
 `docker compose config` without `--quiet` (it prints credentials), or editing
 `.env` by hand (use `make env-rotate`).
 
-## 5. Exposure check
+## 5. Rotate credentials
+
+Use [Database Credentials §4](database-credentials.md): back up and verify the
+backup (Gates 0–2), `make env-rotate BACKUP_DIR=<private dir>`, then
+`make db-apply-credentials CONFIRM=yes && docker compose up -d --no-deps --force-recreate --wait api`,
+then verify (Gate 7). `.env` changes alone never affect running containers.
+
+## 6. Exposure check
 
 ```bash
 ss -ltnH | awk '{print $4}' | grep -E ':(3002|8001|5433)$'          # each must be 127.0.0.1:<port>

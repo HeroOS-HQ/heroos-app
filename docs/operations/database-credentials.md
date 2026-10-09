@@ -1,6 +1,6 @@
 # HeroOS Database Credentials: Local and Preview Environments
 
-**Status:** Phase A implemented (tooling, fail-closed configuration, tests). Rotation of the VPS preview credentials (Phase B) awaits approval\
+**Status:** Phase A implemented (tooling, fail-closed configuration, tests). Phase B completed on the VPS preview on 2026-10-09: credentials rotated, retired credentials rejected and cleaned up ([completion report](reports/2026-10-09-preview-credential-rotation.md))\
 **Owner:** Technical Lead\
 **Scope:** Local development, CI and the temporary VPS preview (Docker Compose). Deployed AWS environments use Secrets Manager (M5)\
 **Related:** [Tenant Isolation](../architecture/tenant-isolation.md), [Backup and Recovery](../architecture/backup-and-recovery.md),
@@ -89,6 +89,11 @@ committed passwords. `env-check` fails on it and Compose refuses to start.
 Rotate in place (the data and volume are kept) with §4 Gates 4–7.
 
 ## 4. Phase B: rotating the VPS preview credentials
+
+> **Completed 2026-10-09** (Gates 0–10; [report](reports/2026-10-09-preview-credential-rotation.md)).
+> Keep this procedure for future rotations: run Gates 0–2 and 4–7 again with a
+> new `$B`. Gate 3 applies only when a code change ships with the rotation, and
+> Gate 8 only when the `db` service definition changed.
 
 The preview runs in the deployment directory `~/Pictures/heroos-app` with the
 retired committed credentials (§6). Every gate needs explicit approval before it
