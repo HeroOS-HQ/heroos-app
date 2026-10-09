@@ -106,6 +106,8 @@ make backup-restore-check
 
 `make check` runs source quality gates only and does not need a database.
 See [Backup and Recovery](docs/architecture/backup-and-recovery.md).
+The temporary VPS preview's startup, health checks and reboot recovery are in
+[Preview Operations](docs/operations/preview-operations.md).
 
 Existing local `.env` files created from an older `.env.example` hold the
 retired committed development passwords and lack `HEROOS_DB_ADMIN_PASSWORD` /

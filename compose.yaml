@@ -7,6 +7,9 @@ services:
       dockerfile: apps/api/Dockerfile
     image: heroos-api:local
     init: true
+    # Come back after a host reboot or crash; `docker compose stop` still wins
+    # (docs/operations/preview-operations.md).
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8001:8000"
     environment:
@@ -24,6 +27,7 @@ services:
       dockerfile: apps/web/Dockerfile
     image: heroos-web:local
     init: true
+    restart: unless-stopped
     depends_on:
       api:
         condition: service_healthy
@@ -44,6 +48,7 @@ services:
 
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: heroos
       POSTGRES_USER: heroos
