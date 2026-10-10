@@ -16,9 +16,9 @@ link here instead of repeating it.
 | Milestone | Scope | Environment |
 | --- | --- | --- |
 | M1 | Foundation & Security | **Done** (local + CI) |
-| M2 | Workflow Platform | Local + CI |
-| M3 | Workflow Proof | Local + CI |
-| M4 | Intelligence Layer | Local + CI |
+| M2 | Workflow Platform | Local + CI; temporary demo hosting (§6) |
+| M3 | Workflow Proof | Local + CI; temporary demo hosting (§6) |
+| M4 | Intelligence Layer | Local + CI; temporary demo hosting (§6) |
 | M5 | Cloud Activation, Staging Hardening & Production Release | AWS begins here |
 
 HeroOS is **local-first, cloud-ready, cloud-late, but not cloud-last**. The
@@ -96,3 +96,26 @@ that record and carries a post-closeout amendment).
 **Non-effect.** This changes delivery timing only. M1 architecture, security
 controls, tests and acceptance evidence remain valid, and M1 remains complete.
 No architecture, security requirement or privacy decision outcome changes.
+
+## 6. Decision record: no AWS before M4; temporary demo hosting
+
+**Date:** 2026-10-10
+
+**Decision.** No AWS service, Amazon Cognito included, is used until M4 is
+complete. For demonstrations during M2–M4, HeroOS may run on temporary hosting:
+
+| Layer | Service | Notes |
+| --- | --- | --- |
+| Web | Vercel | Next.js; server-side session; no `NEXT_PUBLIC_*` configuration |
+| API | Render | `HEROOS_ENV=staging`: deployed-environment database guards on |
+| Database | Supabase PostgreSQL | Alembic schema, RLS, restricted runtime role; Data API disabled |
+| Sign-in | A standards-based OpenID Provider | Provider-neutral `oidc` provider ([ADR-003 addendum](../decisions/ADR-003-authentication.md)) |
+
+**Constraints.** Synthetic data only; no production or customer data. Merging
+to `main` does not deploy anything; each deployment step needs explicit approval.
+The existing development VPS is unaffected.
+
+**Non-effect.** M5 is unchanged: AWS (`me-central-1`) with Cognito, RDS, S3 and
+the other managed services. The demo hosting and its identity provider are
+temporary and are not carried into Staging or Production.
+

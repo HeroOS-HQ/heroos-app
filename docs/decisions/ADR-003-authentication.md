@@ -113,3 +113,36 @@ Recorded 2026-10-08 while implementing the foundation. Details:
 6. **Activation.** Creating the User Pool, the App Client and real Staging
    authentication is deferred to M5 (originally M3; cloud activation timing
    updated 2026-10-09, see [Delivery Plan](../milestones/delivery-plan.md)).
+
+---
+
+## Addendum (2026-10-10): pre-M5 demo authentication
+
+**Context.** AWS, including Amazon Cognito, must not be used until M4 is
+complete ([Delivery Plan §6](../milestones/delivery-plan.md)). The temporary
+M2–M4 demo runs on Vercel (web), Render (API) and Supabase (PostgreSQL) with
+synthetic data only, and still needs real per-user sign-in.
+
+**Decision.**
+
+1. **Cognito remains the V1 identity provider** and the only provider allowed
+   in `production`. Its implementation and tests are kept unchanged for M5.
+2. Until M5, the demo authenticates with a **standards-based OpenID Provider**
+   through a provider-neutral `oidc` provider, allowed in `development` and
+   `staging` only. The API validates RFC 9068 JWT access tokens (signature via
+   discovered JWKS, exact issuer, API audience, expiry, asymmetric algorithm
+   allow-list, `typ: at+jwt`, `client_id`) and never accepts ID tokens.
+3. The web app keeps the same server-side session, Authorization Code + PKCE,
+   CSRF protections and tenant authorization; only the endpoints (OIDC
+   discovery) and the sign-out style differ by provider.
+4. Identity mapping is unchanged: the provider's `sub` is `users.identity_subject`.
+   Only one provider is configured at a time; moving to Cognito at M5 re-maps
+   the (synthetic) Users.
+5. Rejected for the demo: Supabase Auth (no hosted login for email/password, so
+   HeroOS would handle credentials and its per-IP limits would see the web
+   server's IPs), development tokens or shared passwords on public
+   infrastructure, and any custom password storage.
+
+**Consequences.** One additional vendor holds synthetic demo identities only
+([Service Inventory](../privacy/third-party-service-inventory.md)); the specific
+provider is chosen separately. No production or customer data may be used with it.
