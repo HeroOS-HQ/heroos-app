@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-import { cognitoOriginFrom, contentSecurityPolicy } from "@/lib/csp";
+import { contentSecurityPolicy, identityProviderOriginFrom } from "@/lib/csp";
 
 /**
  * Per-request CSP nonce. Next.js reads the nonce from the request's
@@ -11,7 +11,7 @@ export function proxy(request: NextRequest) {
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const policy = contentSecurityPolicy({
     nonce,
-    cognitoOrigin: cognitoOriginFrom(process.env.HEROOS_COGNITO_DOMAIN),
+    identityProviderOrigin: identityProviderOriginFrom(process.env),
     development: process.env.NODE_ENV === "development",
   });
 

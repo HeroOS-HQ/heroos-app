@@ -15,6 +15,7 @@ const AUTH_MESSAGES: Record<string, string> = {
   failed: "Sign-in could not be completed. Please try again.",
   cancelled: "Sign-in was cancelled.",
   expired: "The sign-in attempt expired. Please try again.",
+  unavailable: "Sign-in is temporarily unavailable. Please try again later.",
 };
 
 const FAILURE_MESSAGES: Record<ApiFailure, string> = {

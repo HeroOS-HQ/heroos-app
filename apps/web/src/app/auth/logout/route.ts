@@ -8,5 +8,5 @@ export async function POST(request: Request): Promise<Response> {
   await connection();
   const result = readAuthConfig();
   if (!result.ok) return notConfigured();
-  return logout(request, result.config);
+  return logout(request, result.config, { fetch, now: Date.now });
 }

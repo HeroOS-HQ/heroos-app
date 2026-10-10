@@ -2,7 +2,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { cognitoOriginFrom, contentSecurityPolicy } from "@/lib/csp";
+import { contentSecurityPolicy, identityProviderOriginFrom } from "@/lib/csp";
 import { COGNITO_ORIGIN } from "@/test/fixtures";
 
 import { proxy } from "./proxy";
@@ -17,7 +17,7 @@ const directives = (policy: string) =>
 
 describe("contentSecurityPolicy", () => {
   it("allows scripts and styles only with the nonce in production", () => {
-    const csp = directives(contentSecurityPolicy({ nonce: "abc", cognitoOrigin: COGNITO_ORIGIN, development: false }));
+    const csp = directives(contentSecurityPolicy({ nonce: "abc", identityProviderOrigin: COGNITO_ORIGIN, development: false }));
     expect(csp["script-src"]).toEqual(["'self'", "'nonce-abc'", "'strict-dynamic'"]);
     expect(csp["style-src"]).toEqual(["'self'", "'nonce-abc'"]);
     expect(csp["frame-ancestors"]).toEqual(["'none'"]);
@@ -30,7 +30,7 @@ describe("contentSecurityPolicy", () => {
   });
 
   it("adds unsafe-eval only in development and omits Cognito when unconfigured", () => {
-    const csp = directives(contentSecurityPolicy({ nonce: "abc", cognitoOrigin: null, development: true }));
+    const csp = directives(contentSecurityPolicy({ nonce: "abc", identityProviderOrigin: null, development: true }));
     expect(csp["script-src"]).toContain("'unsafe-eval'");
     expect(csp["form-action"]).toEqual(["'self'"]);
     expect(csp).not.toHaveProperty("upgrade-insecure-requests");
@@ -39,7 +39,7 @@ describe("contentSecurityPolicy", () => {
   it.each([undefined, "", "http://x.example", "https://x.example/path", "https://*.example.com", "not a url"])(
     "ignores an invalid Cognito domain %s",
     (value) => {
-      expect(cognitoOriginFrom(value)).toBeNull();
+      expect(identityProviderOriginFrom({ HEROOS_WEB_AUTH_PROVIDER: "cognito", HEROOS_COGNITO_DOMAIN: value })).toBeNull();
     },
   );
 });
@@ -48,6 +48,7 @@ describe("proxy", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   it("sets a fresh nonce CSP on the response and the forwarded request", () => {
+    vi.stubEnv("HEROOS_WEB_AUTH_PROVIDER", "cognito");
     vi.stubEnv("HEROOS_COGNITO_DOMAIN", COGNITO_ORIGIN);
     const first = proxy(new NextRequest("https://heroos-demo.example.com/"));
     const second = proxy(new NextRequest("https://heroos-demo.example.com/"));
