@@ -81,21 +81,25 @@ function parseTransaction(value: unknown): LoginTransaction | null {
 /** GET /auth/callback: validate state, exchange the code server-side, set the session. */
 export async function completeLogin(request: Request, config: AuthConfig, deps: Deps): Promise<Response> {
   const url = new URL(request.url);
-  // The login transaction is single-use: cleared on every outcome.
+  // The login transaction is single-use, but only a callback whose state matches
+  // it may consume it: otherwise a forged callback link (error or not) could
+  // cancel the user's in-progress sign-in. An absent, tampered or expired
+  // transaction is unusable anyway and is always cleared.
   const cookies = [expireCookie(LOGIN_COOKIE)];
   const transaction = parseTransaction(
     unseal(readCookie(request.headers.get("cookie"), LOGIN_COOKIE), config.sessionSecret, "login"),
   );
+  if (!transaction) return outcome(config, "failed", cookies);
+  if (transaction.exp <= seconds(deps)) return outcome(config, "expired", cookies);
+  const state = url.searchParams.get("state");
+  if (!state || !sameState(transaction.state, state)) return outcome(config, "failed", []);
 
   if (url.searchParams.has("error")) {
     const cancelled = url.searchParams.get("error") === "access_denied";
     return outcome(config, cancelled ? "cancelled" : "failed", cookies);
   }
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  if (!transaction || !code || !state) return outcome(config, "failed", cookies);
-  if (transaction.exp <= seconds(deps)) return outcome(config, "expired", cookies);
-  if (!sameState(transaction.state, state)) return outcome(config, "failed", cookies);
+  if (!code) return outcome(config, "failed", cookies);
 
   let accessToken: string;
   let expiresIn: number;

@@ -185,6 +185,68 @@ describe("completeLogin", () => {
     );
     expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=${expected}`);
     expect(await response.text()).toBe("");
+    // A state-validated error consumes the login transaction.
+    expect(setCookies(response).find((c) => c.startsWith(`${LOGIN_COOKIE}=`))).toContain("Max-Age=0");
+  });
+
+  describe("forged callbacks cannot cancel an in-progress login", () => {
+    const forgedStates: [string, (state: string) => Record<string, string>][] = [
+      ["missing state", () => ({})],
+      ["empty state", () => ({ state: "" })],
+      ["invalid state", () => ({ state: "not a state value \u0000" })],
+      ["mismatched state", (s) => ({ state: s.slice(0, -1) + (s.endsWith("A") ? "B" : "A") })],
+      ["another login's state", () => ({ state: beginLogin().state })],
+    ];
+
+    it.each(forgedStates)(
+      "an OAuth error callback with %s leaves the login cookie intact",
+      async (_, stateParams) => {
+        const { state, loginCookie } = beginLogin();
+        for (const error of ["access_denied", "server_error"]) {
+          const forged = await completeLogin(
+            callback({ error, ...stateParams(state) }, loginCookie),
+            CONFIG,
+            deps(),
+          );
+          expect(forged.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=failed`);
+          expect(setCookies(forged)).toEqual([]);
+        }
+
+        // The genuine callback still completes with the untouched cookie.
+        const genuine = await completeLogin(callback({ code: "c", state }, loginCookie), CONFIG, deps());
+        expect(genuine.headers.get("location")).toBe(`${WEB_ORIGIN}/`);
+        expect(cookieValue(genuine, SESSION_COOKIE)).toBeDefined();
+      },
+    );
+
+    it.each(forgedStates)(
+      "a code callback with %s leaves the login cookie intact",
+      async (_, stateParams) => {
+        const { state, loginCookie } = beginLogin();
+        const d = deps();
+        const forged = await completeLogin(callback({ code: "forged", ...stateParams(state) }, loginCookie), CONFIG, d);
+        expect(forged.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=failed`);
+        expect(setCookies(forged)).toEqual([]);
+        expect(d.fetchMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("an error callback without any login transaction sets no session and reports failure", async () => {
+      const response = await completeLogin(callback({ error: "access_denied", state: "x" }), CONFIG, deps());
+      expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=failed`);
+      expect(cookieValue(response, SESSION_COOKIE)).toBeUndefined();
+    });
+
+    it("an expired transaction is cleared even when the callback carries an error", async () => {
+      const { state, loginCookie } = beginLogin(NOW);
+      const response = await completeLogin(
+        callback({ error: "access_denied", state }, loginCookie),
+        CONFIG,
+        deps(tokenResponse(), NOW + (LOGIN_TTL_SECONDS + 1) * 1000),
+      );
+      expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=expired`);
+      expect(setCookies(response).find((c) => c.startsWith(`${LOGIN_COOKIE}=`))).toContain("Max-Age=0");
+    });
   });
 
   it.each([
