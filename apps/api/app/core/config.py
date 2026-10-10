@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import SecretStr, model_validator
 from sqlalchemy.engine import make_url
@@ -20,6 +21,51 @@ LOCAL_DATABASE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
 # HS256 keys shorter than the 256-bit digest weaken the development signature.
 DEV_AUTH_SECRET_MIN_LENGTH = 32
+
+# Hosts allowed as plain-http CORS origins, in development only.
+LOCAL_ORIGIN_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]"})
+
+
+def parse_cors_origins(raw: str | None, environment: Environment) -> tuple[str, ...]:
+    """Validate a comma-separated CORS origin allow-list (docs/architecture/authentication.md).
+
+    Each entry must be an exact browser origin (``scheme://host[:port]``, lowercase,
+    no path, query, fragment or credentials). No wildcards. ``https`` only, except
+    ``http://localhost``-style origins in development.
+    """
+    origins: list[str] = []
+    for entry in (raw or "").split(","):
+        origin = entry.strip()
+        if not origin:
+            continue
+        if "*" in origin:
+            raise ValueError("HEROOS_CORS_ALLOWED_ORIGINS must not contain wildcards")
+        parts = urlsplit(origin)
+        if (
+            origin != origin.lower()
+            or not parts.hostname
+            or parts.username is not None
+            or parts.password is not None
+            or parts.path
+            or parts.query
+            or parts.fragment
+            or origin != f"{parts.scheme}://{parts.netloc}"
+        ):
+            raise ValueError(
+                "HEROOS_CORS_ALLOWED_ORIGINS entries must be lowercase scheme://host[:port] "
+                "origins without path, query, fragment or credentials"
+            )
+        local = parts.netloc.rsplit(":", 1)[0] in LOCAL_ORIGIN_HOSTS
+        if parts.scheme == "https" or (
+            parts.scheme == "http" and local and environment == "development"
+        ):
+            origins.append(origin)
+            continue
+        raise ValueError(
+            "HEROOS_CORS_ALLOWED_ORIGINS entries must use https "
+            "(plain http only for localhost in development)"
+        )
+    return tuple(dict.fromkeys(origins))
 
 
 class Settings(DatabaseSettings):
@@ -49,6 +95,20 @@ class Settings(DatabaseSettings):
     # to local disk.
     heroos_storage_provider: StorageProviderName | None = None
     heroos_local_storage_root: Path | None = None
+
+    # Browser origins allowed to call the API cross-origin (comma-separated).
+    # Unset means no CORS headers at all. The demo web app calls the API from its
+    # server (docs/operations/demo-authentication-deployment.md), so it needs none.
+    heroos_cors_allowed_origins: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_cors(self) -> Self:
+        parse_cors_origins(self.heroos_cors_allowed_origins, self.heroos_env)
+        return self
+
+    @property
+    def cors_allowed_origins(self) -> tuple[str, ...]:
+        return parse_cors_origins(self.heroos_cors_allowed_origins, self.heroos_env)
 
     @model_validator(mode="after")
     def _validate_storage(self) -> Self:

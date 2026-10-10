@@ -3,8 +3,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api import companies
 from app.auth.dependencies import get_authentication_provider
-from app.core.config import settings
+from app.core.config import Settings, settings
+from app.core.http_security import install_http_security
 from app.db.runtime_role import verify_runtime_role
 from app.db.session import engine
 from app.observability import configure_logging, install_observability
@@ -32,14 +34,29 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(
-    title="HeroOS API",
-    version="0.1.0",
-    lifespan=lifespan,
-)
-install_observability(app)
-
-
-@app.get("/health", tags=["system"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+def create_app(config: Settings) -> FastAPI:
+    # Interactive API docs and the OpenAPI schema are development aids; deployed
+    # environments do not publish them.
+    development = config.heroos_env == "development"
+    application = FastAPI(
+        title="HeroOS API",
+        version="0.1.0",
+        lifespan=lifespan,
+        docs_url="/docs" if development else None,
+        redoc_url="/redoc" if development else None,
+        openapi_url="/openapi.json" if development else None,
+    )
+    # Order matters: request correlation (observability) stays outermost.
+    install_http_security(application, config)
+    install_observability(application)
+
+    application.add_api_route("/health", health, methods=["GET"], tags=["system"])
+    application.include_router(companies.router)
+    return application
+
+
+app = create_app(settings)

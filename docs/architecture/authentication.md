@@ -1,6 +1,6 @@
 # HeroOS Authentication and Company Authorization
 
-**Status:** Implemented foundation (M1-05); live Cognito activation deferred to M5 (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
+**Status:** Implemented foundation (M1-05); browser sign-in and first Company endpoints for the temporary demo (B4, section 10); Staging/Production Cognito activation deferred to M5 (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-05 — Establish authentication & membership authorization foundation\
@@ -255,15 +255,104 @@ transaction-local PostgreSQL tenant context and Row-Level Security. M1-05
 authorizes entry into a Company. M1-06 scopes every query inside it. See
 [Tenant Isolation](tenant-isolation.md).
 
-**M5 — live Cognito activation** includes:
+**B4 — temporary demo (Vercel + Render + Supabase)** implements the browser side
+ahead of M5: frontend login, callback and logout against Cognito managed login,
+the server-side browser session (section 10), the first Company endpoints and
+the CORS and security-header controls. It uses a separate, disposable demo User
+Pool in `eu-west-1` with `HEROOS_ENV=staging`, synthetic data only. Deployment:
+[Demo Authentication Deployment](../operations/demo-authentication-deployment.md).
 
-- creating the Cognito User Pool and App Client (Terraform)
+**M5 — live Cognito activation** still includes:
+
+- creating the Staging and Production User Pools and App Clients (Terraform)
 - real issuer, App Client ID and JWKS configuration for Staging and Production
 - deployment configuration of the `HEROOS_COGNITO_*` variables
-- frontend login, Hosted UI/callback URLs, password reset and MFA flows
+- password reset and MFA enrolment flows beyond Cognito managed login; refresh
+  tokens and session renewal
 - real Staging authentication with end-to-end proof
 
-None of these exist yet. M1-05 has not contacted AWS or created Cognito resources.
+The demo pool is not reused for M5.
 
 **Not in scope:** roles, fine-grained permissions, membership lifecycle states,
 user provisioning and onboarding.
+
+## 10. Browser Access (B4)
+
+### 10.1 API endpoints
+
+`app/api/companies.py` ships the first protected routes. Each depends on
+`CompanyDb`, so the full chain in section 2 and tenant isolation apply:
+
+| Route | Success | Failures |
+| --- | --- | --- |
+| `GET /companies/{company_id}` | `{id, name}` | 401, 403 |
+| `GET /companies/{company_id}/cases` | cases of that Company | 401, 403 |
+| `GET /companies/{company_id}/cases/{case_id}` | one case | 401, 403, 404 |
+
+403 is identical for another Company and a non-existent one. 404 is identical
+for another Company's case ID and an ID that exists nowhere. Malformed IDs return
+422 without echoing the input. The routes are read-only and never commit.
+
+### 10.2 Browser session: backend-for-frontend
+
+The Next.js server, not the browser, is the OAuth client (`apps/web/src/lib/server/`):
+
+```text
+Browser ──GET /auth/login──▶ Next.js server ──302──▶ Cognito managed login
+        ◀──302 /auth/callback?code&state──────────────┘
+Browser ──GET /auth/callback──▶ Next.js server ──POST /oauth2/token (code + code_verifier)──▶ Cognito
+        ◀──303 / + sealed session cookie──┘
+Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Authorization: Bearer <access token>──▶ API
+```
+
+- **Authorization Code + PKCE (S256)** with a public App Client (no client
+  secret). `state` and the PKCE verifier live in a sealed, 10-minute,
+  single-use login cookie; the callback compares `state` in constant time and
+  never contacts Cognito when it does not match.
+- **Only the access token is kept**, in the session cookie. ID and refresh
+  tokens from the token response are discarded, so a session ends when the
+  access token expires (at most 60 minutes); the user signs in again.
+- **Cookies** are `__Host-` prefixed, `HttpOnly`, `Secure`, `SameSite=Lax`,
+  `Path=/`, and sealed with AES-256-GCM using a per-purpose HKDF key and the
+  purpose as additional data, so a login cookie cannot be used as a session and
+  tampering is rejected. Key: `HEROOS_WEB_SESSION_SECRET` (web server only).
+- **The browser never holds a token** and never calls the API: the web server
+  attaches the bearer token server-side. No browser JavaScript can read or
+  exfiltrate it, and the API needs no CORS for the web app.
+- **Logout** is `POST /auth/logout` only, accepted only when `Origin` (or
+  `Sec-Fetch-Site`) proves a same-origin request; it clears both cookies and
+  ends the Cognito managed-login session via `/logout`. A copied access token
+  stays valid until it expires because API verification is stateless (see the
+  M1 closeout risks).
+- **Redirects are fixed**: the callback always returns to the configured web
+  origin. Provider and API errors map to fixed messages (`?auth=failed|cancelled|expired`,
+  "session expired", "no access", "unavailable"); their text is never rendered.
+- **No prerendering of auth routes**: every auth route handler awaits
+  `connection()`, so state and verifiers are generated per request (with Cache
+  Components a GET handler that reads no request data would be built once).
+- **Company choice**: the web app shows one configured Company
+  (`HEROOS_DEMO_COMPANY_ID`). That ID is only a resource identifier: the API's
+  Membership check decides access, exactly as for any client-supplied ID.
+
+Why not tokens in the browser: HeroOS handles HR data, and a script injection
+could read tokens kept in `localStorage`/`sessionStorage`. The session design
+keeps tokens out of reach of page JavaScript.
+
+### 10.3 CORS and security headers
+
+- **CORS** (`app/core/http_security.py`): disabled unless
+  `HEROOS_CORS_ALLOWED_ORIGINS` lists exact origins. Wildcards, paths,
+  credentials, uppercase and plain `http` (except localhost in development) are
+  rejected at startup. Allowed: `GET` only, `Authorization` only, no
+  credentials. The demo leaves it unset.
+- **API headers** on every response: `X-Content-Type-Options: nosniff`,
+  `Cache-Control: no-store`, `Referrer-Policy: no-referrer`,
+  `X-Frame-Options: DENY`; outside development also a deny-all CSP and HSTS.
+  Interactive docs and `/openapi.json` are published only in development.
+- **Web headers**: a per-request nonce CSP from `apps/web/src/proxy.ts`
+  (`script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`,
+  `frame-ancestors 'none'`, `form-action 'self' <Cognito origin>`), plus static
+  `nosniff`, `no-referrer`, `DENY`, `Cross-Origin-Opener-Policy`,
+  `Permissions-Policy` and HSTS from `next.config.ts`. Nonces are incompatible
+  with a prerendered static shell, so the root layout renders per request
+  (`instant = false`).
