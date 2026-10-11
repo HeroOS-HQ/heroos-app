@@ -159,12 +159,12 @@ in settings validation and again when the provider is built.
 | --- | --- |
 | Algorithm | Header `alg` must be in `HEROOS_OIDC_ALGORITHMS` (default `RS256,ES256`; asymmetric RS/PS/ES only), checked **before** any key lookup. `none` and HMAC are never accepted |
 | Type | RFC 9068 profile (default): header `typ` must be `at+jwt` |
-| Keys | JWKS from OIDC discovery (`<issuer>/.well-known/openid-configuration`), whose `issuer` must equal the configured issuer exactly and whose `jwks_uri` must be https; or `HEROOS_OIDC_JWKS_URI`. Fetched lazily (startup never contacts the provider); failures are not cached and fail closed (401) |
+| Keys | JWKS from OIDC discovery (`<issuer>/.well-known/openid-configuration`), whose `issuer` must equal the configured issuer exactly and whose `jwks_uri` must be https **on the issuer's origin**; a provider that serves keys elsewhere needs an explicit `HEROOS_OIDC_JWKS_URI`. Discovery and keys are fetched over https with explicit certificate and host-name verification, **never following redirects**, discovery capped at 256 KiB; unknown `kid` refetches are rate-limited (PyJWT cooldown). Fetched lazily (startup never contacts the provider); failures are not cached and fail closed (401) |
 | `iss` | Equals `HEROOS_OIDC_ISSUER` verbatim (a trailing `/` is significant) |
 | `aud` | Must contain `HEROOS_OIDC_AUDIENCE`, the HeroOS API identifier |
 | `exp`, `iat`, `nbf` | `exp` and `iat` required; expired or not-yet-valid tokens rejected (no leeway) |
 | `client_id`, `jti` | Required with the RFC 9068 profile |
-| Client | When `HEROOS_OIDC_CLIENT_IDS` is set, `client_id` (else `azp`) must be one of them |
+| Client | `HEROOS_OIDC_CLIENT_IDS` is **required**. The token's client (`client_id` and/or `azp`; both must agree when present) must be a string in that list, with or without the RFC 9068 profile |
 | `sub` | Required, non-empty, at most 255 characters |
 
 **ID tokens are never accepted as access tokens**: an ID token's `aud` is the
@@ -225,8 +225,8 @@ in the requested Company. The helper never creates Users or Memberships.
 | `HEROOS_COGNITO_RESOURCE_AUDIENCE` | optional | Resource-server identifier. When set, access tokens must carry a matching `aud`. Must not be blank |
 | `HEROOS_OIDC_ISSUER` | when `oidc` | Issuer identifier, https, no query or fragment; compared verbatim |
 | `HEROOS_OIDC_AUDIENCE` | when `oidc` | HeroOS API identifier required in `aud`; must differ from every client ID |
-| `HEROOS_OIDC_CLIENT_IDS` | optional | Comma-separated client IDs allowed to obtain tokens (`client_id`/`azp`) |
-| `HEROOS_OIDC_JWKS_URI` | optional | Overrides discovery; must be https |
+| `HEROOS_OIDC_CLIENT_IDS` | when `oidc` | **Required.** Comma-separated client IDs allowed to obtain tokens (`client_id`/`azp`) |
+| `HEROOS_OIDC_JWKS_URI` | optional | Overrides discovery (needed only when keys are not on the issuer's origin); must be https |
 | `HEROOS_OIDC_ALGORITHMS` | optional | Default `RS256,ES256`; asymmetric algorithms only |
 | `HEROOS_OIDC_REQUIRE_RFC9068` | optional | Default `true` (`typ: at+jwt`, `client_id`, `jti` required) |
 
@@ -342,8 +342,9 @@ Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Author
 
 - **Provider**: `HEROOS_WEB_AUTH_PROVIDER=cognito` (fixed managed-login
   endpoints) or `oidc` (endpoints from OIDC discovery, accepted only when the
-  document's `issuer` matches exactly, endpoints are https, and `code` and PKCE
-  `S256` are supported; cached for an hour, failures not cached). For `oidc` the
+  document's `issuer` matches exactly, the authorization and token endpoints
+  are https on the issuer's origin, and `code` and PKCE `S256` are supported;
+  fetched without following redirects; cached for an hour, failures not cached). For `oidc` the
   authorize request adds `audience=<API identifier>` so the access token is a
   JWT for the HeroOS API.
 - **Authorization Code + PKCE (S256)** with a public client (no client

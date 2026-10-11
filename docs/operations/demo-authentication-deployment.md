@@ -35,13 +35,37 @@ The provider must support all of these; record the choice in the
 - Hosted login page (HeroOS never handles passwords), public clients with
   PKCE, and disabling public sign-up.
 - **JWT access tokens for an API audience** (Auth0: an API with an identifier,
-  requested with `audience=`), signed RS256 or ES256, ideally in the
-  **RFC 9068 profile** (`typ: at+jwt`, `client_id`, `jti`). Otherwise set
-  `HEROOS_OIDC_REQUIRE_RFC9068=false` and keep `HEROOS_OIDC_CLIENT_IDS` set.
+  requested with `audience=`), signed RS256 or ES256, in the **RFC 9068
+  profile** (`typ: at+jwt`, `client_id`, `jti`). Disabling
+  `HEROOS_OIDC_REQUIRE_RFC9068` is allowed only after the provider's real token
+  profile is documented and tested; the client allow-list applies either way.
 - RP-Initiated Logout (`end_session_endpoint` on the issuer's origin). Without
   it, sign-out is local only.
 - Optional TOTP MFA (confirm whether the free plan includes it).
 - Admin account protected with MFA.
+- Authorization, token and JWKS endpoints on the issuer's own origin (the web
+  app and API refuse others; keys elsewhere need `HEROOS_OIDC_JWKS_URI`).
+
+### Verified profile: Auth0 (intended provider)
+
+Checked on 2026-10-11 against Auth0's documentation ("Access Token Profiles",
+"Configure Access Token Profile") and the public metadata of
+`https://samples.auth0.com/.well-known/openid-configuration`:
+
+| Requirement | Auth0 |
+| --- | --- |
+| Issuer | `https://<tenant>.<region>.auth0.com/` (trailing slash, kept verbatim) |
+| Endpoints / keys | `/authorize`, `/oauth/token`, `/.well-known/jwks.json` on the issuer origin |
+| PKCE / response type | `S256` and `code` listed |
+| Access-token profile | API → Access Token Settings → JSON Web Token Profile = **RFC 9068** (Management API `token_dialect: rfc9068_profile`): `typ: at+jwt`, `client_id`, `jti`. The default "Auth0" profile (`typ: JWT`, `azp`, `gty`, no `client_id`/`jti`) is **rejected** by the API |
+| Signing | API signing algorithm **RS256** (HS256 is refused by the allow-list) |
+| Audience | Request `audience=<API identifier>`; `aud` also contains `<issuer>userinfo` (accepted) |
+| Logout | `end_session_endpoint` (`/oidc/logout`) present for tenants created since 14 Nov 2023 or when discovery of it is enabled; otherwise sign-out is local only |
+
+These shapes are pinned in `apps/api/tests/auth/test_oidc_hardening.py` and
+`apps/web/src/lib/server/oidc-flow.test.ts`. `HEROOS_OIDC_REQUIRE_RFC9068`
+stays `true` for Auth0. Before using any other provider, record its actual
+token header and claims and add an equivalent test first.
 
 ## 3. Provider configuration (example values)
 
@@ -86,13 +110,13 @@ health check `/health`, port 8000. Auto-deploy **off** until approved.
 | `HEROOS_AUTH_PROVIDER` | `oidc` | no |
 | `HEROOS_OIDC_ISSUER` | the discovery `issuer`, verbatim (e.g. `https://<tenant>.<region>.auth0.com/`) | no |
 | `HEROOS_OIDC_AUDIENCE` | the API identifier | no |
-| `HEROOS_OIDC_CLIENT_IDS` | the web client ID | no |
+| `HEROOS_OIDC_CLIENT_IDS` | the web client ID (**required**) | no |
 | `DATABASE_URL` | `postgresql+psycopg://heroos_app.<project-ref>:<password>@<session-pooler-host>:5432/postgres?sslmode=verify-full&sslrootcert=/etc/secrets/supabase-ca.crt` | **yes** |
 | `HEROOS_LOG_LEVEL` | `INFO` | no |
 
 Secret File: `supabase-ca.crt`. Must **not** be set: `MIGRATION_DATABASE_URL`,
 `HEROOS_DEV_AUTH_SECRET`, `HEROOS_STORAGE_PROVIDER=local`,
-`HEROOS_CORS_ALLOWED_ORIGINS`. Defaults suffice for `HEROOS_OIDC_ALGORITHMS`
+`HEROOS_CORS_ALLOWED_ORIGINS`, `NODE_TLS_REJECT_UNAUTHORIZED` (web). Defaults suffice for `HEROOS_OIDC_ALGORITHMS`
 (`RS256,ES256`) and `HEROOS_OIDC_REQUIRE_RFC9068` (`true`).
 
 ## 6. Vercel (web)

@@ -103,7 +103,7 @@ class Settings(DatabaseSettings):
     heroos_oidc_issuer: str | None = None
     # The HeroOS API identifier access tokens must carry in `aud`. Required.
     heroos_oidc_audience: str | None = None
-    # Comma-separated client IDs allowed to obtain tokens (`client_id`/`azp`).
+    # Comma-separated client IDs allowed to obtain tokens (`client_id`/`azp`). Required.
     heroos_oidc_client_ids: str | None = None
     # Optional; defaults to the `jwks_uri` from OIDC discovery.
     heroos_oidc_jwks_uri: str | None = None
@@ -209,6 +209,10 @@ class Settings(DatabaseSettings):
         audience = (self.heroos_oidc_audience or "").strip()
         if not audience:
             raise ValueError("HEROOS_OIDC_AUDIENCE is required for the oidc provider")
+        if not self.oidc_client_ids:
+            # Without an allow-list any client registered at the issuer could
+            # obtain an access token the API would accept.
+            raise ValueError("HEROOS_OIDC_CLIENT_IDS is required for the oidc provider")
         if audience in self.oidc_client_ids:
             # ID tokens carry the client ID as `aud`: an API audience equal to a
             # client ID would let an ID token pass the audience check.

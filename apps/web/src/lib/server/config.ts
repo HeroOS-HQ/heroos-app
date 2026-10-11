@@ -139,6 +139,9 @@ export function readAuthConfig(env: Env = process.env): ConfigResult {
   if (!UUID.test(demoCompanyId)) invalid.push("HEROOS_DEMO_COMPANY_ID");
   const secret = env.HEROOS_WEB_SESSION_SECRET ?? "";
   if (!SESSION_SECRET.test(secret)) invalid.push("HEROOS_WEB_SESSION_SECRET");
+  // Node disables TLS certificate verification process-wide when this is "0";
+  // discovery and the token exchange must never run that way.
+  if (env.NODE_TLS_REJECT_UNAUTHORIZED === "0") invalid.push("NODE_TLS_REJECT_UNAUTHORIZED");
 
   if (invalid.length > 0 || identity === null) return { ok: false, invalid };
   return {

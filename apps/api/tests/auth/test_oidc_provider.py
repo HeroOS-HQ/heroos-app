@@ -324,7 +324,9 @@ def test_configured_jwks_uri_skips_discovery(
         fetch=discovery,
         client_factory=lambda uri: used.append(uri) or LocalJWKClient(jwks),
     )
-    provider = OidcAccessTokenProvider(issuer=ISSUER, audience=AUDIENCE, keys=keys)
+    provider = OidcAccessTokenProvider(
+        issuer=ISSUER, audience=AUDIENCE, keys=keys, client_ids=[CLIENT_ID]
+    )
     provider.authenticate(access_token(signing_key))
     assert discovery.urls == []
     assert used == ["https://keys.test.invalid/jwks.json"]
@@ -432,6 +434,7 @@ def test_application_starts_in_staging_with_oidc_without_contacting_the_provider
         "HEROOS_AUTH_PROVIDER": "oidc",
         "HEROOS_OIDC_ISSUER": ISSUER,  # .invalid: any network attempt would fail
         "HEROOS_OIDC_AUDIENCE": AUDIENCE,
+        "HEROOS_OIDC_CLIENT_IDS": CLIENT_ID,
     }
     result = subprocess.run(
         [sys.executable, "-c", "import app.main"],

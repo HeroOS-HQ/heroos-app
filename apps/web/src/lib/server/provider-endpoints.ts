@@ -9,8 +9,9 @@ import { type AuthConfig, parseHttpsUrl, signedOutUrl } from "./config";
  *   not describe its managed-login logout endpoint).
  * - `oidc`: standard OpenID Connect Discovery 1.0 metadata from
  *   `<issuer>/.well-known/openid-configuration`, accepted only when its `issuer`
- *   equals the configured issuer exactly, the endpoints are https, and the
- *   provider supports the `code` response type and PKCE `S256`. Sign-out uses
+ *   equals the configured issuer exactly, the authorization and token endpoints
+ *   are https on the issuer's origin, and the provider supports the `code`
+ *   response type and PKCE `S256`. Fetched without following redirects. Sign-out uses
  *   RP-Initiated Logout 1.0 (`client_id` + `post_logout_redirect_uri`) only when
  *   the `end_session_endpoint` is on the issuer's origin (the CSP allows only
  *   that origin); otherwise sign-out is local only.
@@ -49,6 +50,10 @@ export function parseDiscovery(document: unknown, issuer: string, issuerOrigin: 
   const authorization = parseHttpsUrl(doc.authorization_endpoint);
   const token = parseHttpsUrl(doc.token_endpoint);
   if (authorization === null || token === null) return null;
+  // Users are sent to, and the code + PKCE verifier are posted to, the
+  // issuer's own origin only: a tampered or misconfigured document cannot
+  // divert them to another host.
+  if (authorization.origin !== issuerOrigin || token.origin !== issuerOrigin) return null;
   const responseTypes = doc.response_types_supported;
   if (!Array.isArray(responseTypes) || !responseTypes.includes("code")) return null;
   const pkce = doc.code_challenge_methods_supported;

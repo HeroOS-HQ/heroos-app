@@ -17,6 +17,7 @@ import {
 } from "@/test/fixtures";
 
 import { completeLogin, logout, parseSession, startLogin } from "./auth-flow";
+import { readAuthConfig } from "./config";
 import { LOGIN_COOKIE, SESSION_COOKIE } from "./cookies";
 import { codeChallenge } from "./pkce";
 import {
@@ -252,5 +253,40 @@ describe("CSP identity-provider origin", () => {
 
   it("allows nothing extra without a provider", () => {
     expect(identityProviderOriginFrom({})).toBeNull();
+  });
+});
+
+describe("OIDC discovery hardening", () => {
+  it.each([
+    ["authorization endpoint on another host", { authorization_endpoint: "https://login.attacker.example/authorize" }],
+    ["token endpoint on another host", { token_endpoint: "https://tokens.attacker.example/oauth/token" }],
+    ["token endpoint on a look-alike host", { token_endpoint: "https://heroos-demo.idp.example.com.attacker.example/oauth/token" }],
+    ["token endpoint on another port", { token_endpoint: "https://heroos-demo.idp.example.com:8443/oauth/token" }],
+  ])("rejects a document with the %s", (_, overrides) => {
+    expect(parseDiscovery(discoveryDocument(overrides), OIDC_ISSUER, OIDC_ORIGIN)).toBeNull();
+  });
+
+  it("never sends the code or verifier to a diverted token endpoint", async () => {
+    const provider = idp({ discovery: () => json(discoveryDocument({ token_endpoint: "https://tokens.attacker.example/oauth/token" })) });
+    const response = await startLogin(OIDC_CONFIG, provider);
+    expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=unavailable`);
+    expect(provider.fetchMock.mock.calls.map(([u]) => u.toString())).toEqual([DISCOVERY]);
+  });
+
+  it("accepts Auth0-shaped metadata without an end_session_endpoint (local sign-out)", () => {
+    // Shape of https://samples.auth0.com/.well-known/openid-configuration (checked 2026-10-11).
+    const metadata = parseDiscovery(discoveryDocument({ end_session_endpoint: undefined }), OIDC_ISSUER, OIDC_ORIGIN);
+    expect(metadata).not.toBeNull();
+    expect(metadata!.endSession).toBeNull();
+  });
+});
+
+describe("TLS verification guard", () => {
+  it("refuses to run sign-in with certificate verification disabled", () => {
+    expect(readAuthConfig({ ...OIDC_ENV, NODE_TLS_REJECT_UNAUTHORIZED: "0" })).toEqual({
+      ok: false,
+      invalid: ["NODE_TLS_REJECT_UNAUTHORIZED"],
+    });
+    expect(readAuthConfig({ ...OIDC_ENV, NODE_TLS_REJECT_UNAUTHORIZED: "1" }).ok).toBe(true);
   });
 });
