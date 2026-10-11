@@ -1,6 +1,6 @@
 # HeroOS Authentication and Company Authorization
 
-**Status:** Implemented foundation (M1-05); browser sign-in and first Company endpoints for the temporary demo (B4, section 10); Staging/Production Cognito activation deferred to M5 (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
+**Status:** Implemented foundation (M1-05); browser sign-in and first Company endpoints (B4, section 10); provider-neutral OIDC for the pre-M5 demo (section 4.3); Cognito activation deferred to M5 (no AWS before M4 is complete) (cloud activation; [Delivery Plan](../milestones/delivery-plan.md))\
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-05 — Establish authentication & membership authorization foundation\
@@ -146,6 +146,32 @@ Membership is denied exactly like a Cognito token would be.
 Header-based identity shortcuts such as `X-User-ID`, `X-Dev-User` or `X-Company-ID`
 do not exist and are ignored.
 
+### 4.3 Provider-neutral OIDC access tokens (staging demo, pre-M5)
+
+`app/auth/providers/oidc.py`. AWS is not used before M4 is complete
+([Delivery Plan §6](../milestones/delivery-plan.md)), so the temporary demo
+authenticates with a standards-based OpenID Provider instead of Cognito
+([ADR-003 addendum](../decisions/ADR-003-authentication.md)). It is allowed in
+`development` and `staging` only; **production remains Cognito-only**, checked
+in settings validation and again when the provider is built.
+
+| Check | Rule |
+| --- | --- |
+| Algorithm | Header `alg` must be in `HEROOS_OIDC_ALGORITHMS` (default `RS256,ES256`; asymmetric RS/PS/ES only), checked **before** any key lookup. `none` and HMAC are never accepted |
+| Type | RFC 9068 profile (default): header `typ` must be `at+jwt` |
+| Keys | JWKS from OIDC discovery (`<issuer>/.well-known/openid-configuration`), whose `issuer` must equal the configured issuer exactly and whose `jwks_uri` must be https **on the issuer's origin**; a provider that serves keys elsewhere needs an explicit `HEROOS_OIDC_JWKS_URI`. Discovery and keys are fetched over https with explicit certificate and host-name verification, **never following redirects**, discovery capped at 256 KiB; unknown `kid` refetches are rate-limited (PyJWT cooldown). Fetched lazily (startup never contacts the provider); failures are not cached and fail closed (401) |
+| `iss` | Equals `HEROOS_OIDC_ISSUER` verbatim (a trailing `/` is significant) |
+| `aud` | Must contain `HEROOS_OIDC_AUDIENCE`, the HeroOS API identifier |
+| `exp`, `iat`, `nbf` | `exp` and `iat` required; expired or not-yet-valid tokens rejected (no leeway) |
+| `client_id`, `jti` | Required with the RFC 9068 profile |
+| Client | `HEROOS_OIDC_CLIENT_IDS` is **required**. The token's client (`client_id` and/or `azp`; both must agree when present) must be a string in that list, with or without the RFC 9068 profile |
+| `sub` | Required, non-empty, at most 255 characters |
+
+**ID tokens are never accepted as access tokens**: an ID token's `aud` is the
+client ID, and settings refuse an API audience equal to any client ID; ID tokens
+lack `typ: at+jwt`; and tokens carrying ID-token-only claims (`nonce`,
+`at_hash`, `c_hash`) are rejected.
+
 ## 5. Development Authentication Safety Boundary
 
 `HEROOS_ENV` is required and has no default. If it is missing, or is not one of
@@ -156,9 +182,10 @@ development.
 The development provider cannot run outside `HEROOS_ENV=development`. This is
 enforced in three independent places:
 
-1. **Settings validation** (`app/core/config.py`). When `HEROOS_ENV` is `staging` or
-   `production`, `HEROOS_AUTH_PROVIDER` must be `cognito` and
-   `HEROOS_DEV_AUTH_SECRET` must not be set at all. Any other combination raises at
+1. **Settings validation** (`app/core/config.py`). When `HEROOS_ENV` is `staging`,
+   `HEROOS_AUTH_PROVIDER` must be `cognito` or `oidc`; when it is `production`, it
+   must be `cognito`. Outside development `HEROOS_DEV_AUTH_SECRET` must not be set
+   at all. Any other combination raises at
    settings load.
 2. **Application startup** (`app/main.py`). Settings are loaded and the provider is
    built at import, so a misconfigured API process exits before serving requests.
@@ -190,12 +217,18 @@ in the requested Company. The helper never creates Users or Memberships.
 | Variable | Environments | Notes |
 | --- | --- | --- |
 | `HEROOS_ENV` | all | **Required, no default.** `development`, `staging` or `production`. Local development gets it from `.env` (copied from `.env.example`) or Docker Compose |
-| `HEROOS_AUTH_PROVIDER` | all | `development` or `cognito`. Required and must be `cognito` in staging/production. Unset in development rejects every protected request |
+| `HEROOS_AUTH_PROVIDER` | all | `development`, `cognito` or `oidc`. Required outside development: `cognito` or `oidc` in staging, `cognito` in production. Unset in development rejects every protected request |
 | `HEROOS_DEV_AUTH_SECRET` | development only | Startup fails if set in staging/production |
 | `HEROOS_COGNITO_ISSUER` | when `cognito` | `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>`, https, no trailing `/` |
 | `HEROOS_COGNITO_APP_CLIENT_ID` | when `cognito` | App Client ID of the HeroOS web client |
 | `HEROOS_COGNITO_JWKS_URI` | optional | Defaults to `<issuer>/.well-known/jwks.json`; must be https |
 | `HEROOS_COGNITO_RESOURCE_AUDIENCE` | optional | Resource-server identifier. When set, access tokens must carry a matching `aud`. Must not be blank |
+| `HEROOS_OIDC_ISSUER` | when `oidc` | Issuer identifier, https, no query or fragment; compared verbatim |
+| `HEROOS_OIDC_AUDIENCE` | when `oidc` | HeroOS API identifier required in `aud`; must differ from every client ID |
+| `HEROOS_OIDC_CLIENT_IDS` | when `oidc` | **Required.** Comma-separated client IDs allowed to obtain tokens (`client_id`/`azp`) |
+| `HEROOS_OIDC_JWKS_URI` | optional | Overrides discovery (needed only when keys are not on the issuer's origin); must be https |
+| `HEROOS_OIDC_ALGORITHMS` | optional | Default `RS256,ES256`; asymmetric algorithms only |
+| `HEROOS_OIDC_REQUIRE_RFC9068` | optional | Default `true` (`typ: at+jwt`, `client_id`, `jti` required) |
 
 Secrets use `SecretStr`, and settings validation errors hide input values, so
 neither repr nor startup errors print the development secret or `DATABASE_URL`.
@@ -256,10 +289,11 @@ authorizes entry into a Company. M1-06 scopes every query inside it. See
 [Tenant Isolation](tenant-isolation.md).
 
 **B4 — temporary demo (Vercel + Render + Supabase)** implements the browser side
-ahead of M5: frontend login, callback and logout against Cognito managed login,
-the server-side browser session (section 10), the first Company endpoints and
-the CORS and security-header controls. It uses a separate, disposable demo User
-Pool in `eu-west-1` with `HEROOS_ENV=staging`, synthetic data only. Deployment:
+ahead of M5: frontend login, callback and logout, the server-side browser
+session (section 10), the first Company endpoints and the CORS and
+security-header controls. Because AWS is not used before M4 is complete, the
+demo signs in with a provider-neutral OpenID Provider (section 4.3) under
+`HEROOS_ENV=staging`, synthetic data only. Deployment:
 [Demo Authentication Deployment](../operations/demo-authentication-deployment.md).
 
 **M5 — live Cognito activation** still includes:
@@ -271,7 +305,8 @@ Pool in `eu-west-1` with `HEROOS_ENV=staging`, synthetic data only. Deployment:
   tokens and session renewal
 - real Staging authentication with end-to-end proof
 
-The demo pool is not reused for M5.
+At M5 the web app switches to `HEROOS_WEB_AUTH_PROVIDER=cognito` and the API to
+`HEROOS_AUTH_PROVIDER=cognito`; Users are re-mapped to Cognito `sub` values.
 
 **Not in scope:** roles, fine-grained permissions, membership lifecycle states,
 user provisioning and onboarding.
@@ -305,7 +340,14 @@ Browser ──GET /auth/callback──▶ Next.js server ──POST /oauth2/toke
 Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Authorization: Bearer <access token>──▶ API
 ```
 
-- **Authorization Code + PKCE (S256)** with a public App Client (no client
+- **Provider**: `HEROOS_WEB_AUTH_PROVIDER=cognito` (fixed managed-login
+  endpoints) or `oidc` (endpoints from OIDC discovery, accepted only when the
+  document's `issuer` matches exactly, the authorization and token endpoints
+  are https on the issuer's origin, and `code` and PKCE `S256` are supported;
+  fetched without following redirects; cached for an hour, failures not cached). For `oidc` the
+  authorize request adds `audience=<API identifier>` so the access token is a
+  JWT for the HeroOS API.
+- **Authorization Code + PKCE (S256)** with a public client (no client
   secret). `state` and the PKCE verifier live in a sealed, 10-minute,
   single-use login cookie; the callback compares `state` in constant time and
   never contacts Cognito when it does not match.
@@ -321,7 +363,10 @@ Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Author
   exfiltrate it, and the API needs no CORS for the web app.
 - **Logout** is `POST /auth/logout` only, accepted only when `Origin` (or
   `Sec-Fetch-Site`) proves a same-origin request; it clears both cookies and
-  ends the Cognito managed-login session via `/logout`. A copied access token
+  ends the provider session: Cognito `/logout`, or OIDC RP-Initiated Logout
+  (`client_id` + `post_logout_redirect_uri`) when the discovered
+  `end_session_endpoint` is on the issuer's origin (the only origin CSP
+  `form-action` allows); otherwise sign-out is local only. A copied access token
   stays valid until it expires because API verification is stateless (see the
   M1 closeout risks).
 - **Redirects are fixed**: the callback always returns to the configured web

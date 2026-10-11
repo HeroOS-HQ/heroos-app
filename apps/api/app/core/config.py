@@ -9,7 +9,16 @@ from sqlalchemy.exc import ArgumentError
 from app.core.database_settings import DatabaseSettings
 
 Environment = Literal["development", "staging", "production"]
-AuthProviderName = Literal["development", "cognito"]
+AuthProviderName = Literal["development", "cognito", "oidc"]
+# Which providers each environment may use. Production stays Cognito-only (M5);
+# the provider-neutral OIDC provider serves the pre-M5 demo in staging.
+ALLOWED_AUTH_PROVIDERS: dict[str, frozenset[str]] = {
+    "staging": frozenset({"cognito", "oidc"}),
+    "production": frozenset({"cognito"}),
+}
+OIDC_SUPPORTED_ALGORITHMS = frozenset(
+    {"RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512"}
+)
 # "s3" is the production contract; no adapter exists yet, so selecting it
 # stops startup instead of falling back to anything else.
 StorageProviderName = Literal["local", "s3"]
@@ -90,6 +99,18 @@ class Settings(DatabaseSettings):
     # matching `aud`; when unset, `aud` is not used for any decision.
     heroos_cognito_resource_audience: str | None = None
 
+    # Provider-neutral OpenID Connect (staging only; docs/architecture/authentication.md §4.3).
+    heroos_oidc_issuer: str | None = None
+    # The HeroOS API identifier access tokens must carry in `aud`. Required.
+    heroos_oidc_audience: str | None = None
+    # Comma-separated client IDs allowed to obtain tokens (`client_id`/`azp`). Required.
+    heroos_oidc_client_ids: str | None = None
+    # Optional; defaults to the `jwks_uri` from OIDC discovery.
+    heroos_oidc_jwks_uri: str | None = None
+    heroos_oidc_algorithms: str = "RS256,ES256"
+    # RFC 9068 JWT access-token profile (typ at+jwt, client_id, jti).
+    heroos_oidc_require_rfc9068: bool = True
+
     # Private object storage. See docs/architecture/private-object-storage.md.
     # Unset means no storage: every storage operation fails; nothing falls back
     # to local disk.
@@ -136,11 +157,14 @@ class Settings(DatabaseSettings):
     @model_validator(mode="after")
     def _validate_authentication(self) -> Self:
         if self.heroos_env != "development":
-            # Deployed environments fail closed: Cognito only, and no development
-            # signing material may be present at all.
-            if self.heroos_auth_provider != "cognito":
+            # Deployed environments fail closed: production is Cognito only,
+            # staging Cognito or OIDC, and no development signing material may be
+            # present at all.
+            allowed = ALLOWED_AUTH_PROVIDERS[self.heroos_env]
+            if self.heroos_auth_provider not in allowed:
+                names = " or ".join(f"'{name}'" for name in sorted(allowed))
                 raise ValueError(
-                    f"HEROOS_AUTH_PROVIDER must be 'cognito' when HEROOS_ENV={self.heroos_env}"
+                    f"HEROOS_AUTH_PROVIDER must be {names} when HEROOS_ENV={self.heroos_env}"
                 )
             if self.heroos_dev_auth_secret is not None:
                 raise ValueError("HEROOS_DEV_AUTH_SECRET must not be set outside development")
@@ -172,7 +196,45 @@ class Settings(DatabaseSettings):
             if audience is not None and not audience.strip():
                 raise ValueError("HEROOS_COGNITO_RESOURCE_AUDIENCE must not be blank when set")
 
+        if self.heroos_auth_provider == "oidc":
+            self._validate_oidc()
+
         return self
+
+    def _validate_oidc(self) -> None:
+        issuer = self.heroos_oidc_issuer or ""
+        parts = urlsplit(issuer)
+        if parts.scheme != "https" or not parts.hostname or parts.query or parts.fragment:
+            raise ValueError("HEROOS_OIDC_ISSUER must be an https URL without query or fragment")
+        audience = (self.heroos_oidc_audience or "").strip()
+        if not audience:
+            raise ValueError("HEROOS_OIDC_AUDIENCE is required for the oidc provider")
+        if not self.oidc_client_ids:
+            # Without an allow-list any client registered at the issuer could
+            # obtain an access token the API would accept.
+            raise ValueError("HEROOS_OIDC_CLIENT_IDS is required for the oidc provider")
+        if audience in self.oidc_client_ids:
+            # ID tokens carry the client ID as `aud`: an API audience equal to a
+            # client ID would let an ID token pass the audience check.
+            raise ValueError("HEROOS_OIDC_AUDIENCE must differ from every client ID")
+        if self.heroos_oidc_jwks_uri and not self.heroos_oidc_jwks_uri.startswith("https://"):
+            raise ValueError("HEROOS_OIDC_JWKS_URI must be an https URL")
+        algorithms = self.oidc_algorithms
+        if not algorithms or not set(algorithms) <= OIDC_SUPPORTED_ALGORITHMS:
+            raise ValueError(
+                "HEROOS_OIDC_ALGORITHMS must list asymmetric algorithms only "
+                f"({', '.join(sorted(OIDC_SUPPORTED_ALGORITHMS))})"
+            )
+
+    @property
+    def oidc_algorithms(self) -> tuple[str, ...]:
+        return tuple(a.strip() for a in self.heroos_oidc_algorithms.split(",") if a.strip())
+
+    @property
+    def oidc_client_ids(self) -> frozenset[str]:
+        return frozenset(
+            c.strip() for c in (self.heroos_oidc_client_ids or "").split(",") if c.strip()
+        )
 
     @model_validator(mode="after")
     def _validate_database(self) -> Self:

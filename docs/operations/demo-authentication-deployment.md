@@ -1,95 +1,90 @@
 # HeroOS Demo Authentication Deployment (B4)
 
-**Status:** Code ready (branch `feature/b4-cognito-demo-auth`); nothing provisioned or deployed\
+**Status:** Code ready for a provider-neutral OpenID Provider; nothing provisioned or deployed\
 **Owner:** Technical Lead\
-**Scope:** Temporary M2–M4 demo: Vercel (web) + Render (API) + Supabase (PostgreSQL), synthetic data only. Replaced by AWS in M5\
-**Related:** [Authentication §10](../architecture/authentication.md#10-browser-access-b4),
+**Scope:** Temporary M2–M4 demo: Vercel (web) + Render (API) + Supabase (PostgreSQL), synthetic data only. **No AWS before M4 is complete**; Cognito returns in M5\
+**Related:** [Authentication §4.3, §10](../architecture/authentication.md),
+[ADR-003 addendum](../decisions/ADR-003-authentication.md),
+[Delivery Plan §6](../milestones/delivery-plan.md),
 [Tenant Isolation](../architecture/tenant-isolation.md), [Database Credentials](database-credentials.md)
 
-Every step below that creates or changes a cloud resource, a credential or data
-needs explicit approval first. Commands are shown for review; none has been run.
+Every step below that creates or changes an account, a cloud resource, a
+credential or data needs explicit approval first. Nothing here has been run.
 
 ## 1. Decisions
 
 | Decision | Value |
 | --- | --- |
-| Identity provider | Amazon Cognito, a **separate demo User Pool** in `eu-west-1`; not reused for M5 |
-| API environment | `HEROOS_ENV=staging`: Cognito required, local DB hosts, the migration credential and the dev provider refused |
-| Flow | Authorization Code + PKCE (S256), public App Client, Cognito managed login |
-| Users | Admin-created only (self sign-up disabled); the two synthetic demo users |
-| MFA | Optional TOTP (authenticator app); no SMS |
-| Callback domain | One stable Vercel **production** domain; previews are not registered |
-| Company | `HEROOS_DEMO_COMPANY_ID` configured in the web app; the API's Membership check decides access |
-| Browser session | Server-side (backend-for-frontend): sealed `HttpOnly` cookie, the browser never holds a token |
+| Identity provider | A standards-based **OpenID Provider** (to be selected; e.g. Auth0, Zitadel Cloud, Microsoft Entra External ID). Not AWS |
+| API | `HEROOS_ENV=staging`, `HEROOS_AUTH_PROVIDER=oidc`: deployed-environment database guards stay on; production remains Cognito-only |
+| Web | `HEROOS_WEB_AUTH_PROVIDER=oidc`: Authorization Code + PKCE (S256), endpoints from OIDC discovery, server-side sealed `HttpOnly` session |
+| Tokens | RFC 9068 JWT access tokens for the HeroOS API audience; ID tokens are never accepted by the API |
+| Users | Admin-created only (public sign-up disabled): the two synthetic demo users |
+| Callback | One stable Vercel **production** domain; previews are not registered |
+| Company | `HEROOS_DEMO_COMPANY_ID`; the API's Membership check decides access |
 | CORS | Not needed (`HEROOS_CORS_ALLOWED_ORIGINS` unset): the browser never calls the API |
 
-## 2. Cognito demo User Pool (eu-west-1)
+## 2. Provider requirements (checklist for selection)
+
+The provider must support all of these; record the choice in the
+[Service Inventory](../privacy/third-party-service-inventory.md) §4 and §9 first.
+
+- OIDC discovery at `<issuer>/.well-known/openid-configuration`, listing
+  `code` in `response_types_supported` and `S256` in
+  `code_challenge_methods_supported`.
+- Hosted login page (HeroOS never handles passwords), public clients with
+  PKCE, and disabling public sign-up.
+- **JWT access tokens for an API audience** (Auth0: an API with an identifier,
+  requested with `audience=`), signed RS256 or ES256, in the **RFC 9068
+  profile** (`typ: at+jwt`, `client_id`, `jti`). Disabling
+  `HEROOS_OIDC_REQUIRE_RFC9068` is allowed only after the provider's real token
+  profile is documented and tested; the client allow-list applies either way.
+- RP-Initiated Logout (`end_session_endpoint` on the issuer's origin). Without
+  it, sign-out is local only.
+- Optional TOTP MFA (confirm whether the free plan includes it).
+- Admin account protected with MFA.
+- Authorization, token and JWKS endpoints on the issuer's own origin (the web
+  app and API refuse others; keys elsewhere need `HEROOS_OIDC_JWKS_URI`).
+
+### Verified profile: Auth0 (intended provider)
+
+Checked on 2026-10-11 against Auth0's documentation ("Access Token Profiles",
+"Configure Access Token Profile") and the public metadata of
+`https://samples.auth0.com/.well-known/openid-configuration`:
+
+| Requirement | Auth0 |
+| --- | --- |
+| Issuer | `https://<tenant>.<region>.auth0.com/` (trailing slash, kept verbatim) |
+| Endpoints / keys | `/authorize`, `/oauth/token`, `/.well-known/jwks.json` on the issuer origin |
+| PKCE / response type | `S256` and `code` listed |
+| Access-token profile | API → Access Token Settings → JSON Web Token Profile = **RFC 9068** (Management API `token_dialect: rfc9068_profile`): `typ: at+jwt`, `client_id`, `jti`. The default "Auth0" profile (`typ: JWT`, `azp`, `gty`, no `client_id`/`jti`) is **rejected** by the API |
+| Signing | API signing algorithm **RS256** (HS256 is refused by the allow-list) |
+| Audience | Request `audience=<API identifier>`; `aud` also contains `<issuer>userinfo` (accepted) |
+| Logout | `end_session_endpoint` (`/oidc/logout`) present for tenants created since 14 Nov 2023 or when discovery of it is enabled; otherwise sign-out is local only |
+
+These shapes are pinned in `apps/api/tests/auth/test_oidc_hardening.py` and
+`apps/web/src/lib/server/oidc-flow.test.ts`. `HEROOS_OIDC_REQUIRE_RFC9068`
+stays `true` for Auth0. Before using any other provider, record its actual
+token header and claims and add an equivalent test first.
+
+## 3. Provider configuration (example values)
 
 | Setting | Value |
 | --- | --- |
-| Pool name | `heroos-demo-users` |
-| Sign-in identifier | Username |
-| Self-registration | **Disabled** (admin creates users) |
-| MFA | Optional; software token (TOTP) only |
-| Password policy | At least 14 characters, upper, lower, number, symbol; temporary password validity 1 day |
-| Account recovery | None needed (admin-set passwords; demo users have no real mailbox) |
-| User existence errors | Prevented (`PreventUserExistenceErrors=ENABLED`) |
-| Managed login domain | Cognito prefix domain, e.g. `heroos-demo-<random>` → `https://heroos-demo-<random>.auth.eu-west-1.amazoncognito.com` |
+| API / resource | Identifier `https://api.heroos-demo.example` (the audience; must differ from the client ID); signing RS256; RFC 9068 token profile if offered |
+| Application | Type single-page/native (**public, no client secret**); grant: authorization code only |
+| Allowed callback URL | `https://<vercel-production-domain>/auth/callback` |
+| Allowed logout URL | `https://<vercel-production-domain>/` |
+| Allowed web origins / CORS | none needed (the token exchange is server-side) |
+| Sign-up | Disabled |
+| Access-token lifetime | 60 minutes or less |
+| Users | `demo-alpha-admin`, `demo-beta-admin`, generated passwords stored only in the private secrets directory (0600) |
 
-App Client (`heroos-demo-web`):
+Record each user's `sub` (e.g. `auth0|…`); it is assigned by the provider.
 
-| Setting | Value |
-| --- | --- |
-| Client type | **Public, no client secret** (`GenerateSecret=false`) |
-| OAuth grant | **Authorization code only** (no implicit, no client credentials) |
-| Scopes | `openid` |
-| Allowed callback URL | `https://<vercel-production-domain>/auth/callback` (exactly one) |
-| Allowed sign-out URL | `https://<vercel-production-domain>/` |
-| Identity provider | Cognito user pool only |
-| Explicit auth flows | `ALLOW_REFRESH_TOKEN_AUTH` only (required by Cognito; the web app discards refresh tokens) |
-| Token validity | Access 60 min, ID 60 min, refresh 60 min |
-| Token revocation | Enabled |
+## 4. Map the identities to the seeded users (Supabase write)
 
-API verification needs only the issuer and App Client ID; there is no client
-secret anywhere.
-
-Illustrative AWS CLI (placeholders; review before any run):
-
-```bash
-aws cognito-idp create-user-pool --region eu-west-1 --pool-name heroos-demo-users \
-  --admin-create-user-config AllowAdminCreateUserOnly=true \
-  --mfa-configuration OPTIONAL \
-  --policies 'PasswordPolicy={MinimumLength=14,RequireUppercase=true,RequireLowercase=true,RequireNumbers=true,RequireSymbols=true,TemporaryPasswordValidityDays=1}' \
-  --user-pool-tags Project=HeroOS,Environment=demo,ManagedBy=manual
-aws cognito-idp set-user-pool-mfa-config --region eu-west-1 --user-pool-id <pool-id> \
-  --software-token-mfa-configuration Enabled=true --mfa-configuration OPTIONAL
-aws cognito-idp create-user-pool-domain --region eu-west-1 --user-pool-id <pool-id> --domain heroos-demo-<random>
-aws cognito-idp create-user-pool-client --region eu-west-1 --user-pool-id <pool-id> \
-  --client-name heroos-demo-web --no-generate-secret \
-  --allowed-o-auth-flows code --allowed-o-auth-scopes openid --allowed-o-auth-flows-user-pool-client \
-  --callback-urls https://<vercel-production-domain>/auth/callback \
-  --logout-urls https://<vercel-production-domain>/ \
-  --supported-identity-providers COGNITO \
-  --explicit-auth-flows ALLOW_REFRESH_TOKEN_AUTH \
-  --prevent-user-existence-errors ENABLED --enable-token-revocation \
-  --access-token-validity 60 --id-token-validity 60 --refresh-token-validity 60 \
-  --token-validity-units AccessToken=minutes,IdToken=minutes,RefreshToken=minutes
-```
-
-### Demo users
-
-Create `demo-alpha-admin` and `demo-beta-admin` with `admin-create-user
---message-action SUPPRESS`, then set generated permanent passwords with
-`admin-set-user-password --permanent`. Store the passwords only in the private
-secrets directory (0600), never in the repository, tickets or chat. Record each
-user's `sub` (`admin-get-user` → `sub` attribute); `sub` is assigned by Cognito
-and cannot be chosen.
-
-## 3. Map the Cognito identities to the seeded users (Supabase write)
-
-`users.identity_subject` must equal the Cognito `sub`
-([Authentication §3](../architecture/authentication.md#3-security-invariants)).
-The synthetic seed currently uses placeholder subjects. In one guarded admin
+`users.identity_subject` must equal the provider's `sub`. In one guarded admin
 transaction (identity guard as in the Supabase initialization), update exactly
 the two seed users and verify before commit:
 
@@ -101,65 +96,80 @@ UPDATE users SET identity_subject = '<beta-sub>', updated_at = now()
 -- expect 1 row each; Memberships and tenant data are unchanged
 ```
 
-## 4. Render (API)
+Rollback: the same statements with the values swapped back to the
+`synthetic-demo|…` placeholders.
 
-Docker service from `apps/api/Dockerfile` (build context: repository root).
-Health check path `/health`. The container listens on port 8000 (set `PORT=8000`
-if Render does not detect it).
+## 5. Render (API)
+
+Docker service from `apps/api/Dockerfile` (build context: repository root),
+health check `/health`, port 8000. Auto-deploy **off** until approved.
 
 | Variable | Value | Secret |
 | --- | --- | --- |
 | `HEROOS_ENV` | `staging` | no |
-| `HEROOS_AUTH_PROVIDER` | `cognito` | no |
-| `HEROOS_COGNITO_ISSUER` | `https://cognito-idp.eu-west-1.amazonaws.com/<pool-id>` (no trailing `/`) | no |
-| `HEROOS_COGNITO_APP_CLIENT_ID` | `<app-client-id>` | no |
+| `HEROOS_AUTH_PROVIDER` | `oidc` | no |
+| `HEROOS_OIDC_ISSUER` | the discovery `issuer`, verbatim (e.g. `https://<tenant>.<region>.auth0.com/`) | no |
+| `HEROOS_OIDC_AUDIENCE` | the API identifier | no |
+| `HEROOS_OIDC_CLIENT_IDS` | the web client ID (**required**) | no |
 | `DATABASE_URL` | `postgresql+psycopg://heroos_app.<project-ref>:<password>@<session-pooler-host>:5432/postgres?sslmode=verify-full&sslrootcert=/etc/secrets/supabase-ca.crt` | **yes** |
 | `HEROOS_LOG_LEVEL` | `INFO` | no |
 
-Secret File: `supabase-ca.crt` (the Supabase CA certificate).
+Secret File: `supabase-ca.crt`. Must **not** be set: `MIGRATION_DATABASE_URL`,
+`HEROOS_DEV_AUTH_SECRET`, `HEROOS_STORAGE_PROVIDER=local`,
+`HEROOS_CORS_ALLOWED_ORIGINS`, `NODE_TLS_REJECT_UNAUTHORIZED` (web). Defaults suffice for `HEROOS_OIDC_ALGORITHMS`
+(`RS256,ES256`) and `HEROOS_OIDC_REQUIRE_RFC9068` (`true`).
 
-Must **not** be set: `MIGRATION_DATABASE_URL`, `HEROOS_DEV_AUTH_SECRET`,
-`HEROOS_STORAGE_PROVIDER=local`, `HEROOS_CORS_ALLOWED_ORIGINS`. The API refuses
-to start with the first three outside development and with a privileged
-database role.
+## 6. Vercel (web)
 
-## 5. Vercel (web)
-
-Project root `apps/web`, framework Next.js, pnpm workspace install. Set the
-variables for the **Production** environment only; Preview deployments get none
-and show "Sign-in is not configured" (their URLs are not registered callbacks).
+Project root `apps/web`, Next.js, pnpm workspace install. Variables for the
+**Production** environment only (previews get none and show "Sign-in is not configured"):
 
 | Variable | Value | Secret |
 | --- | --- | --- |
+| `HEROOS_WEB_AUTH_PROVIDER` | `oidc` | no |
 | `HEROOS_WEB_ORIGIN` | `https://<vercel-production-domain>` | no |
-| `HEROOS_COGNITO_DOMAIN` | `https://heroos-demo-<random>.auth.eu-west-1.amazoncognito.com` | no |
-| `HEROOS_COGNITO_CLIENT_ID` | `<app-client-id>` | no |
+| `HEROOS_OIDC_ISSUER` | same as the API | no |
+| `HEROOS_OIDC_CLIENT_ID` | the web client ID | no |
+| `HEROOS_OIDC_AUDIENCE` | same as the API | no |
 | `HEROOS_API_BASE_URL` | `https://<render-service>.onrender.com` | no |
 | `HEROOS_DEMO_COMPANY_ID` | `d3e0a000-0000-4000-8000-000000000001` (synthetic Company A) | no |
 | `HEROOS_WEB_SESSION_SECRET` | `openssl rand -hex 32` | **yes** (Sensitive) |
 
-## 6. Smoke test after deployment
+## 7. Smoke test after deployment
 
-1. `GET https://<render>/health` → 200; `/docs` and `/openapi.json` → 404.
-2. `GET https://<render>/companies/<A>/cases` without a token → 401.
-3. Web: response headers carry the nonce CSP, `nosniff`, `DENY`, HSTS.
-4. Sign in as `demo-alpha-admin` → Company A and its cases are shown.
-5. Sign out → Cognito logout, back to the signed-out page; reload stays signed out.
-6. Sign in as `demo-beta-admin` → "Your account does not have access to the demo company." (403 from the API).
-7. Browser storage and DevTools: no token in `localStorage`, `sessionStorage` or
-   any non-`HttpOnly` cookie; the session cookie is `__Host-`, `Secure`, `HttpOnly`.
+1. `GET https://<render>/health` → 200; `/docs`, `/openapi.json` → 404.
+2. `GET https://<render>/companies/<A>/cases` without a token → 401; with an ID
+   token from the provider → 401.
+3. Web response headers: nonce CSP with `form-action 'self' <issuer origin>`,
+   `nosniff`, `DENY`, HSTS.
+4. Sign in as `demo-alpha-admin` → Company A and its cases.
+5. Sign out → provider logout (or local sign-out), back to the signed-out page.
+6. Sign in as `demo-beta-admin` → "Your account does not have access to the demo company."
+7. No token in `localStorage`, `sessionStorage` or any non-`HttpOnly` cookie.
 8. Tampered session cookie → signed out; `GET /auth/logout` → 405.
 
-## 7. Known limitations
+## 8. Known limitations
 
-- An access token is valid until it expires (≤ 60 min) even after sign-out,
-  because the API verifies JWTs statelessly. Only the web server ever holds it.
-- No session renewal: users sign in again after expiry.
-- One configured Company; Company discovery for multi-company users is M2 work.
-- Supabase Data API stays disabled; HeroOS tables have no API-role grants.
+- An access token stays valid until it expires (≤ 60 min) after sign-out
+  (stateless API verification); only the web server ever holds it.
+- No session renewal; one configured Company.
+- If the provider's discovery or JWKS is unreachable, sign-in reports
+  "unavailable" and API requests get 401 (fail closed).
 
-## 8. Teardown
+## 9. Rollback and teardown
 
-Delete the demo User Pool (and its domain), the Render service and the Vercel
-project; rotate or drop the Supabase `heroos_app` password; remove the demo
-secrets directory. None of these carry over to M5.
+- Before deployment: revert the PR; the Cognito path is untouched.
+- After deployment: unset `HEROOS_AUTH_PROVIDER` / `HEROOS_WEB_AUTH_PROVIDER`
+  (the API refuses to start in staging; the web reports "not configured"),
+  restore the two `identity_subject` placeholders (§4), delete the provider
+  tenant, the Render service and the Vercel project, and rotate or drop the
+  Supabase `heroos_app` password.
+
+## 10. M5 (Cognito)
+
+At M5 the same code switches to Cognito: `HEROOS_WEB_AUTH_PROVIDER=cognito`
+with `HEROOS_COGNITO_DOMAIN` / `HEROOS_COGNITO_CLIENT_ID`, and
+`HEROOS_AUTH_PROVIDER=cognito` with `HEROOS_COGNITO_ISSUER` /
+`HEROOS_COGNITO_APP_CLIENT_ID` (public App Client, authorization code + PKCE,
+`openid`, callback and sign-out URLs as above). Users are re-mapped to Cognito
+`sub` values. Provisioning follows the M5 Terraform plan, not this runbook.

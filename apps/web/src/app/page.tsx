@@ -6,7 +6,7 @@ import { readAuthConfig } from "@/lib/server/config";
 import { getCompanyOverview } from "@/lib/server/heroos-api";
 import { readSession } from "@/lib/server/session";
 
-const AUTH_OUTCOMES = new Set(["failed", "cancelled", "expired"]);
+const AUTH_OUTCOMES = new Set(["failed", "cancelled", "expired", "unavailable"]);
 
 export default function Home({ searchParams }: PageProps<"/">) {
   return (

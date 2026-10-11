@@ -4,7 +4,7 @@
 **Owner:** Technical Lead\
 **Milestone:** M1 — Foundation & Security\
 **Issue:** M1-01 — Finalize V1 architecture & security baseline; decision links added in M1-08\
-**Last updated:** 2026-10-09\
+**Last updated:** 2026-10-10\
 **Related:** [Privacy & Security Decision Register](decision-register.md)
 
 ## 1. Purpose
@@ -106,6 +106,10 @@ processing (PRIV-009) or for production customer data (PRIV-014).
 | Slack | Confirmed | Team communication | Project discussions and coordination | No | Sensitive production HR data and credentials should not be shared in Slack |
 | Ubuntu Development VPS | Confirmed development environment | Engineering workstation/runtime | Source code, synthetic development/test data | No production customer HR data intended | Development only; not Staging or Production. **Hosting provider not recorded in the repository: provider identity, location and contractual terms require confirmation** |
 | Claude Code (Anthropic) | In use for engineering (commits on `main` carry `Co-Authored-By: Claude … <noreply@anthropic.com>` trailers from M1-04 onward) | AI-assisted development: reading, writing and reviewing code and documentation and running local commands on the development VPS | Source code, documentation, configuration templates and command output in the development workspace (synthetic data only), processed through the tool as part of development | No | Engineering tooling only. Not approved for production customer HR data, and not the production AI provider (PRIV-009). Data-processing terms, retention, training use and processing location are not documented in the repository. Local development credentials in the workspace may be visible to the tool, so production secrets must never be placed there |
+| Supabase | Confirmed (temporary demo, M2–M4) | PostgreSQL for the demo deployment (project `heroos-app`, `eu-west-1`); Data API disabled; GitHub integration connected with deploy-to-production off | HeroOS schema and synthetic demonstration data only | No | Temporary; replaced by Amazon RDS in M5 (Delivery Plan §6) |
+| Render | Planned (temporary demo, M2–M4) | Hosting for the demo API (`HEROOS_ENV=staging`) | API runtime, database connection secret, minimized logs; synthetic data only | No | No service created yet; GitHub app installed; no auto-deploy configured |
+| Vercel | Planned (temporary demo, M2–M4) | Hosting for the demo web app | Web runtime, session-encryption secret; synthetic data only | No | No project created yet |
+| Demo OpenID Provider | Decision Required (temporary demo, M2–M4) | Sign-in for the demo through the provider-neutral `oidc` provider ([ADR-003 addendum](../decisions/ADR-003-authentication.md)) | Two synthetic demo identities (username, password managed by the provider, `sub`) | No | Provider not yet selected (e.g. Auth0, Zitadel Cloud, Microsoft Entra External ID); temporary; Cognito replaces it in M5 |
 
 ---
 
@@ -147,9 +151,11 @@ system is authoritative for HeroOS business workflow state.
 
 ### External Authentication Provider
 
-Not selected.
+Not selected for Staging or Production.
 
-Amazon Cognito is the selected V1 authentication service.
+Amazon Cognito is the selected V1 authentication service. The temporary M2–M4
+demo uses a separate OpenID Provider for synthetic identities only (§4); it is
+not a candidate for production customer data.
 
 ### External File Storage Provider
 
@@ -298,6 +304,8 @@ Production Enablement
 | Slack | Team communication | Whether any production personal/HR data may be shared in Slack | PRIV-014 | No | No |
 | Ubuntu Development VPS | Development only, synthetic data. Hosting provider not recorded; requires confirmation | Whether production data or restored production backups may ever be used in development; vendor review once the provider is identified | PRIV-014, PRIV-018 | No | No (provider unknown) |
 | Claude Code (Anthropic) | Engineering AI-assisted development tool; processes source code and workspace content during development | Confirmation that it is not approved for production customer HR data; vendor review of the tool's terms | PRIV-014 | No | No |
+| Supabase / Render / Vercel (demo hosting) | Temporary M2–M4 demo hosting with synthetic data only (Delivery Plan §6). Not Staging or Production | Whether any production or customer data may ever be placed there (default: no) | PRIV-014 | No | No |
+| Demo OpenID Provider | Provider not yet selected; holds two synthetic demo identities only | Vendor selection and terms review before any non-synthetic identity is created | PRIV-014 | No | No |
 
 "No" means no such document is referenced in this repository. It does not mean
 that no agreement exists outside the repository.
@@ -315,5 +323,7 @@ that no agreement exists outside the repository.
   images (`node`, `python`, `postgres`) and the third-party GitHub Action
   `pnpm/action-setup`. They receive no HeroOS data beyond download requests, but
   are dependencies to review for supply-chain risk.
+- **Demo OpenID Provider:** not yet selected. Its identity, region and terms
+  must be recorded in §4 and §9 before any account is created.
 - No legal/privacy reviewer is assigned to confirm vendor classification
   (decision register §1).

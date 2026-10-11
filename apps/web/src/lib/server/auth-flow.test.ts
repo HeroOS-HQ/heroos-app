@@ -12,7 +12,7 @@ import {
   startLogin,
 } from "./auth-flow";
 import { LOGIN_COOKIE, SESSION_COOKIE } from "./cookies";
-import { codeChallenge } from "./pkce";
+import { codeChallenge, createState } from "./pkce";
 import { unseal } from "./sealed";
 
 const NOW = 1_800_000_000_000;
@@ -43,8 +43,8 @@ function deps(response: Response | Error = tokenResponse(), now = NOW) {
 }
 
 /** Run startLogin and return the state and the login cookie a browser would hold. */
-function beginLogin(now = NOW) {
-  const response = startLogin(CONFIG, deps(tokenResponse(), now));
+async function beginLogin(now = NOW) {
+  const response = await startLogin(CONFIG, deps(tokenResponse(), now));
   const location = new URL(response.headers.get("location")!);
   return {
     response,
@@ -62,8 +62,8 @@ function callback(query: Record<string, string>, loginCookie?: string): Request 
 }
 
 describe("startLogin", () => {
-  it("redirects to Cognito with Authorization Code + PKCE (S256)", () => {
-    const { response, location, loginCookie } = beginLogin();
+  it("redirects to Cognito with Authorization Code + PKCE (S256)", async () => {
+    const { response, location, loginCookie } = await beginLogin();
     expect(response.status).toBe(302);
     expect(location.origin + location.pathname).toBe(`${COGNITO_ORIGIN}/oauth2/authorize`);
     expect(Object.fromEntries(location.searchParams)).toMatchObject({
@@ -80,8 +80,8 @@ describe("startLogin", () => {
     expect(location.toString()).not.toContain(transaction.verifier as string);
   });
 
-  it("stores the transaction in a short-lived __Host- HttpOnly cookie", () => {
-    const [cookie] = setCookies(beginLogin().response);
+  it("stores the transaction in a short-lived __Host- HttpOnly cookie", async () => {
+    const [cookie] = setCookies((await beginLogin()).response);
     expect(cookie.startsWith(`${LOGIN_COOKIE}=`)).toBe(true);
     for (const attribute of ["Path=/", `Max-Age=${LOGIN_TTL_SECONDS}`, "HttpOnly", "Secure", "SameSite=Lax"]) {
       expect(cookie).toContain(attribute);
@@ -89,14 +89,14 @@ describe("startLogin", () => {
     expect(cookie).not.toContain("Domain=");
   });
 
-  it("creates a new state and verifier per login", () => {
-    expect(beginLogin().state).not.toBe(beginLogin().state);
+  it("creates a new state and verifier per login", async () => {
+    expect((await beginLogin()).state).not.toBe((await beginLogin()).state);
   });
 });
 
 describe("completeLogin", () => {
   it("exchanges the code server-side and stores only the access token", async () => {
-    const { state, loginCookie } = beginLogin();
+    const { state, loginCookie } = await beginLogin();
     const d = deps();
     const response = await completeLogin(callback({ code: "auth-code", state }, loginCookie), CONFIG, d);
 
@@ -131,7 +131,7 @@ describe("completeLogin", () => {
   });
 
   it("caps the session lifetime", async () => {
-    const { state, loginCookie } = beginLogin();
+    const { state, loginCookie } = await beginLogin();
     const response = await completeLogin(
       callback({ code: "c", state }, loginCookie),
       CONFIG,
@@ -147,7 +147,7 @@ describe("completeLogin", () => {
     ["missing state", () => ({ code: "c" }), true, "failed"],
     ["no login cookie", (s: string) => ({ code: "c", state: s }), false, "failed"],
   ])("rejects %s without contacting Cognito", async (_, query, withCookie, expected) => {
-    const { state, loginCookie } = beginLogin();
+    const { state, loginCookie } = await beginLogin();
     const d = deps();
     const response = await completeLogin(callback(query(state), withCookie ? loginCookie : undefined), CONFIG, d);
     expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=${expected}`);
@@ -156,7 +156,7 @@ describe("completeLogin", () => {
   });
 
   it("rejects an expired login transaction", async () => {
-    const { state, loginCookie } = beginLogin(NOW);
+    const { state, loginCookie } = await beginLogin(NOW);
     const d = deps(tokenResponse(), NOW + (LOGIN_TTL_SECONDS + 1) * 1000);
     const response = await completeLogin(callback({ code: "c", state }, loginCookie), CONFIG, d);
     expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=expired`);
@@ -164,7 +164,7 @@ describe("completeLogin", () => {
   });
 
   it("rejects a session cookie presented as a login transaction", async () => {
-    const { state, loginCookie } = beginLogin();
+    const { state, loginCookie } = await beginLogin();
     const signedIn = await completeLogin(callback({ code: "c", state }, loginCookie), CONFIG, deps());
     const sessionCookie = cookieValue(signedIn, SESSION_COOKIE)!;
     const d = deps();
@@ -177,7 +177,7 @@ describe("completeLogin", () => {
     ["access_denied", "cancelled"],
     ["server_error", "failed"],
   ])("maps provider error %s to a fixed outcome without echoing it", async (error, expected) => {
-    const { state, loginCookie } = beginLogin();
+    const { state, loginCookie } = await beginLogin();
     const response = await completeLogin(
       callback({ error, error_description: "<script>alert(1)</script>", state }, loginCookie),
       CONFIG,
@@ -195,13 +195,13 @@ describe("completeLogin", () => {
       ["empty state", () => ({ state: "" })],
       ["invalid state", () => ({ state: "not a state value \u0000" })],
       ["mismatched state", (s) => ({ state: s.slice(0, -1) + (s.endsWith("A") ? "B" : "A") })],
-      ["another login's state", () => ({ state: beginLogin().state })],
+      ["another login's state", () => ({ state: createState() })],
     ];
 
     it.each(forgedStates)(
       "an OAuth error callback with %s leaves the login cookie intact",
       async (_, stateParams) => {
-        const { state, loginCookie } = beginLogin();
+        const { state, loginCookie } = await beginLogin();
         for (const error of ["access_denied", "server_error"]) {
           const forged = await completeLogin(
             callback({ error, ...stateParams(state) }, loginCookie),
@@ -222,7 +222,7 @@ describe("completeLogin", () => {
     it.each(forgedStates)(
       "a code callback with %s leaves the login cookie intact",
       async (_, stateParams) => {
-        const { state, loginCookie } = beginLogin();
+        const { state, loginCookie } = await beginLogin();
         const d = deps();
         const forged = await completeLogin(callback({ code: "forged", ...stateParams(state) }, loginCookie), CONFIG, d);
         expect(forged.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=failed`);
@@ -238,7 +238,7 @@ describe("completeLogin", () => {
     });
 
     it("an expired transaction is cleared even when the callback carries an error", async () => {
-      const { state, loginCookie } = beginLogin(NOW);
+      const { state, loginCookie } = await beginLogin(NOW);
       const response = await completeLogin(
         callback({ error: "access_denied", state }, loginCookie),
         CONFIG,
@@ -258,14 +258,14 @@ describe("completeLogin", () => {
     ["non-positive lifetime", tokenResponse({ expires_in: 0 })],
     ["oversized token", tokenResponse({ access_token: "x".repeat(5000) })],
   ])("fails closed on %s from the token endpoint", async (_, response) => {
-    const { state, loginCookie } = beginLogin();
+    const { state, loginCookie } = await beginLogin();
     const result = await completeLogin(callback({ code: "c", state }, loginCookie), CONFIG, deps(response));
     expect(result.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=failed`);
     expect(cookieValue(result, SESSION_COOKIE)).toBeUndefined();
   });
 
   it("never redirects to a URL taken from the request", async () => {
-    const { state, loginCookie } = beginLogin();
+    const { state, loginCookie } = await beginLogin();
     const response = await completeLogin(
       callback({ code: "c", state, redirect_uri: "https://evil.example", return_to: "https://evil.example" }, loginCookie),
       CONFIG,
@@ -288,8 +288,8 @@ describe("logout", () => {
   const post = (headers: Record<string, string>) =>
     new Request(`${WEB_ORIGIN}/auth/logout`, { method: "POST", headers });
 
-  it("clears both cookies and ends the Cognito session", () => {
-    const response = logout(post({ origin: WEB_ORIGIN }), CONFIG);
+  it("clears both cookies and ends the Cognito session", async () => {
+    const response = await logout(post({ origin: WEB_ORIGIN }), CONFIG, deps());
     expect(response.status).toBe(303);
     const location = new URL(response.headers.get("location")!);
     expect(location.origin + location.pathname).toBe(`${COGNITO_ORIGIN}/logout`);
@@ -302,8 +302,8 @@ describe("logout", () => {
     expect(cookies.find((c) => c.startsWith(`${LOGIN_COOKIE}=;`))).toContain("Max-Age=0");
   });
 
-  it("accepts Sec-Fetch-Site same-origin when no Origin header is sent", () => {
-    expect(logout(post({ "sec-fetch-site": "same-origin" }), CONFIG).status).toBe(303);
+  it("accepts Sec-Fetch-Site same-origin when no Origin header is sent", async () => {
+    expect((await logout(post({ "sec-fetch-site": "same-origin" }), CONFIG, deps())).status).toBe(303);
   });
 
   it.each([
@@ -311,8 +311,8 @@ describe("logout", () => {
     [{ origin: "null" }],
     [{ "sec-fetch-site": "cross-site" }],
     [{}],
-  ])("refuses cross-site or unverifiable requests: %o", (headers) => {
-    const response = logout(post(headers), CONFIG);
+  ])("refuses cross-site or unverifiable requests: %o", async (headers) => {
+    const response = await logout(post(headers), CONFIG, deps());
     expect(response.status).toBe(403);
     expect(setCookies(response)).toEqual([]);
   });

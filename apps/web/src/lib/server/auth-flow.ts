@@ -1,12 +1,14 @@
 import "server-only";
 
-import { type AuthConfig, callbackUrl, signedOutUrl } from "./config";
+import { type AuthConfig, callbackUrl } from "./config";
 import { LOGIN_COOKIE, SESSION_COOKIE, expireCookie, readCookie, serializeCookie } from "./cookies";
 import { codeChallenge, createCodeVerifier, createState, sameState } from "./pkce";
+import { resolveEndpoints } from "./provider-endpoints";
 import { seal, unseal } from "./sealed";
 
 /**
- * OAuth 2.0 Authorization Code + PKCE against Cognito managed login, run entirely
+ * OAuth 2.0 Authorization Code + PKCE against the configured identity provider
+ * (Cognito managed login, or any OpenID Provider via discovery), run entirely
  * on the web server (backend-for-frontend). See docs/architecture/authentication.md §10.
  *
  * - The browser only ever holds sealed, HttpOnly cookies: never an access,
@@ -26,7 +28,7 @@ export const MAX_SESSION_SECONDS = 3600;
 export const MAX_SEALED_SESSION_LENGTH = 3800;
 const TOKEN_TIMEOUT_MS = 10_000;
 
-export type AuthOutcome = "failed" | "cancelled" | "expired";
+export type AuthOutcome = "failed" | "cancelled" | "expired" | "unavailable";
 
 type LoginTransaction = { state: string; verifier: string; exp: number };
 export type Session = { accessToken: string; exp: number };
@@ -43,8 +45,10 @@ function outcome(config: AuthConfig, code: AuthOutcome, cookies: string[]): Resp
   return redirect(`${config.webOrigin}/?auth=${code}`, cookies);
 }
 
-/** GET /auth/login: new state + PKCE verifier in a sealed 10-minute cookie, then Cognito. */
-export function startLogin(config: AuthConfig, deps: Deps): Response {
+/** GET /auth/login: new state + PKCE verifier in a sealed 10-minute cookie, then the provider. */
+export async function startLogin(config: AuthConfig, deps: Deps): Promise<Response> {
+  const endpoints = await resolveEndpoints(config, deps);
+  if (endpoints === null) return outcome(config, "unavailable", []);
   const state = createState();
   const verifier = createCodeVerifier();
   const transaction: LoginTransaction = {
@@ -52,8 +56,8 @@ export function startLogin(config: AuthConfig, deps: Deps): Response {
     verifier,
     exp: seconds(deps) + LOGIN_TTL_SECONDS,
   };
-  const authorize = new URL("/oauth2/authorize", config.cognitoOrigin);
-  authorize.search = new URLSearchParams({
+  const authorize = new URL(endpoints.authorization);
+  const params: Record<string, string> = {
     response_type: "code",
     client_id: config.clientId,
     redirect_uri: callbackUrl(config),
@@ -61,7 +65,12 @@ export function startLogin(config: AuthConfig, deps: Deps): Response {
     state,
     code_challenge: codeChallenge(verifier),
     code_challenge_method: "S256",
-  }).toString();
+  };
+  if (config.provider.kind === "oidc") {
+    // Requests a JWT access token for the HeroOS API (its `aud`).
+    params.audience = config.provider.audience;
+  }
+  for (const [name, value] of Object.entries(params)) authorize.searchParams.set(name, value);
   return redirect(
     authorize.toString(),
     [serializeCookie(LOGIN_COOKIE, seal(transaction, config.sessionSecret, "login"), LOGIN_TTL_SECONDS)],
@@ -100,11 +109,13 @@ export async function completeLogin(request: Request, config: AuthConfig, deps: 
   }
   const code = url.searchParams.get("code");
   if (!code) return outcome(config, "failed", cookies);
+  const endpoints = await resolveEndpoints(config, deps);
+  if (endpoints === null) return outcome(config, "unavailable", cookies);
 
   let accessToken: string;
   let expiresIn: number;
   try {
-    const response = await deps.fetch(new URL("/oauth2/token", config.cognitoOrigin), {
+    const response = await deps.fetch(endpoints.token, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
       body: new URLSearchParams({
@@ -151,21 +162,19 @@ export function parseSession(value: unknown, nowSeconds: number): Session | null
 
 /**
  * POST /auth/logout: same-origin only (blocks cross-site logout forcing), clears
- * both cookies, then ends the Cognito managed-login session.
+ * both cookies, then ends the provider session when the provider supports it.
+ * The local session is cleared even when the provider is unreachable.
  */
-export function logout(request: Request, config: AuthConfig): Response {
+export async function logout(request: Request, config: AuthConfig, deps: Deps): Promise<Response> {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
   const sameOrigin = origin !== null ? origin === config.webOrigin : fetchSite === "same-origin";
   if (!sameOrigin) {
     return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
   }
-  const signOut = new URL("/logout", config.cognitoOrigin);
-  signOut.search = new URLSearchParams({
-    client_id: config.clientId,
-    logout_uri: signedOutUrl(config),
-  }).toString();
-  return redirect(signOut.toString(), [expireCookie(SESSION_COOKIE), expireCookie(LOGIN_COOKIE)]);
+  const endpoints = await resolveEndpoints(config, deps);
+  const location = endpoints?.signOut?.toString() ?? `${config.webOrigin}/`;
+  return redirect(location, [expireCookie(SESSION_COOKIE), expireCookie(LOGIN_COOKIE)]);
 }
 
 export function notConfigured(): Response {
