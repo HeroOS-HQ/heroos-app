@@ -111,10 +111,29 @@ health check `/health`, port 8000. Auto-deploy **off** until approved.
 | `HEROOS_OIDC_ISSUER` | the discovery `issuer`, verbatim (e.g. `https://<tenant>.<region>.auth0.com/`) | no |
 | `HEROOS_OIDC_AUDIENCE` | the API identifier | no |
 | `HEROOS_OIDC_CLIENT_IDS` | the web client ID (**required**) | no |
-| `DATABASE_URL` | `postgresql+psycopg://heroos_app.<project-ref>:<password>@<session-pooler-host>:5432/postgres?sslmode=verify-full&sslrootcert=/etc/secrets/supabase-ca.crt` | **yes** |
+| `DATABASE_URL` | `postgresql+psycopg://heroos_app.<project-ref>:<password>@<session-pooler-host>:5432/postgres?sslmode=verify-full&sslrootcert=/app/certs/supabase-root-2021-ca.crt` | **yes** |
 | `HEROOS_LOG_LEVEL` | `INFO` | no |
+| `PORT` | `8000` (the port the image listens on) | no |
 
-Secret File: `supabase-ca.crt`. Must **not** be set: `MIGRATION_DATABASE_URL`,
+No Secret File. The public Supabase Root 2021 CA is committed at
+`apps/api/certs/supabase-root-2021-ca.crt` and built into the image at
+`/app/certs/supabase-root-2021-ca.crt` (root-owned, mode 0444). The API runs as
+uid 1001, and Render Secret Files under `/etc/secrets` are reported to be
+readable by root only; an unreadable CA fails every connection closed.
+
+| CA | Value |
+| --- | --- |
+| Subject | `CN=Supabase Root 2021 CA, O=Supabase Inc` (self-signed root, `CA:TRUE`) |
+| SHA-256 | `80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA` |
+| Valid until | 2031-04-26 |
+
+`apps/api/tests/test_database_ca.py` pins the fingerprint and the expiry. If
+Supabase rotates its CA, replace the file with the one from the project's
+Database Settings (SSL certificate), verify it against the live pooler
+(`openssl s_client -starttls postgres -connect <session-pooler-host>:5432
+-CAfile <file> -verify_hostname <session-pooler-host>`), and update the test.
+
+Must **not** be set: `MIGRATION_DATABASE_URL`,
 `HEROOS_DEV_AUTH_SECRET`, `HEROOS_STORAGE_PROVIDER=local`,
 `HEROOS_CORS_ALLOWED_ORIGINS`, `NODE_TLS_REJECT_UNAUTHORIZED` (web). Defaults suffice for `HEROOS_OIDC_ALGORITHMS`
 (`RS256,ES256`) and `HEROOS_OIDC_REQUIRE_RFC9068` (`true`).

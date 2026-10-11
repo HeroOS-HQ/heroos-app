@@ -200,7 +200,7 @@ def test_env_files_are_ignored_by_git_and_docker() -> None:
         assert {".env", ".env.*", "!.env.example"} <= lines, ignore_file
 
 
-def test_api_image_copies_only_dependency_manifests_and_application_code() -> None:
+def test_api_image_copies_only_manifests_application_code_and_public_ca() -> None:
     dockerfile = (API_ROOT / "Dockerfile").read_text()
     copies = re.findall(r"^COPY\s+(.+)$", dockerfile, flags=re.MULTILINE)
     sources = {
@@ -211,7 +211,13 @@ def test_api_image_copies_only_dependency_manifests_and_application_code() -> No
         if not source.startswith("--")
     }
 
-    assert sources == {"apps/api/pyproject.toml", "apps/api/uv.lock", "apps/api/app"}
+    # The CA is a public certificate, pinned in test_database_ca.py.
+    assert sources == {
+        "apps/api/pyproject.toml",
+        "apps/api/uv.lock",
+        "apps/api/app",
+        "apps/api/certs/supabase-root-2021-ca.crt",
+    }
 
 
 def test_env_example_contains_no_credentials() -> None:

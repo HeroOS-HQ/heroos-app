@@ -31,6 +31,15 @@ COPY --from=builder /app/.venv /app/.venv
 
 COPY --chown=heroos:heroos apps/api/app ./app
 
+# Public Supabase Root 2021 CA for `sslmode=verify-full` on DATABASE_URL
+# (docs/operations/demo-authentication-deployment.md §5). Root-owned and 0444:
+# the runtime user can read it but not replace it, and no platform secret file
+# is needed (Render's /etc/secrets is reported to be root-only). --chmod also makes the mode
+# independent of the build checkout's umask. The directory is created first:
+# a directory COPY creates inherits --chmod, and 0444 would make it untraversable.
+RUN install -d -m 0755 /app/certs
+COPY --chmod=0444 apps/api/certs/supabase-root-2021-ca.crt /app/certs/supabase-root-2021-ca.crt
+
 USER heroos
 
 EXPOSE 8000
