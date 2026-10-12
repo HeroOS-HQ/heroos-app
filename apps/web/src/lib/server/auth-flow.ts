@@ -168,7 +168,10 @@ export function parseSession(value: unknown, nowSeconds: number): Session | null
 export async function logout(request: Request, config: AuthConfig, deps: Deps): Promise<Response> {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
-  const sameOrigin = origin !== null ? origin === config.webOrigin : fetchSite === "same-origin";
+  // Browsers send `Origin: null` on same-origin form posts under
+  // `Referrer-Policy: no-referrer`; only Sec-Fetch-Site can vouch for those.
+  const sameOrigin =
+    origin !== null && origin !== "null" ? origin === config.webOrigin : fetchSite === "same-origin";
   if (!sameOrigin) {
     return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
   }
