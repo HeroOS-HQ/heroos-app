@@ -110,9 +110,13 @@ recovery of a live database is not an automated mode.
    2. `heroos_app_runtime`: `NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`.
       Locally, `make db-runtime-role` (`scripts.bootstrap_runtime_role`) creates
       it;
-   3. the API login role (`heroos_app` locally; secret-managed in deployed
+   3. `heroos_identity_operator` (ADR-008): `NOLOGIN NOSUPERUSER NOBYPASSRLS
+      NOCREATEDB NOCREATEROLE`, never a member of `heroos_app_runtime`. The
+      restored grants and policies name it;
+   4. the API login role (`heroos_app` locally; secret-managed in deployed
       environments) as a member of `heroos_app_runtime`, with the same negative
-      attributes.
+      attributes. Operator logins (`heroos_op_*`) are recreated only after the
+      reconciliation gate below.
 
    Passwords come from the **current** credential source (locally the root
    `.env`, set as SCRAM verifiers by `make db-runtime-role` /
@@ -128,6 +132,14 @@ recovery of a live database is not an automated mode.
 6. **Re-apply deletions** made after the backup was taken, according to the
    approved policy (PRIV-018). Until that decision exists, a restored backup
    must not be put into service without engineering and JJ sign-off.
+7. **Identity reconciliation gate (fail closed, ADR-008).** A backup taken before
+   a suspension or revocation restores that access as active, and its audit
+   tables end at the backup time. Before step 5's cutover, every restored User,
+   binding and Membership must be reconciled independently (pre-incident
+   database, identity provider status, the Company's confirmation); anything
+   not reconciled is suspended or revoked first. Issue keys alone are not
+   enough to replay lifecycle state. Procedure:
+   [Identity Provisioning §5](../operations/identity-provisioning.md#5-restoring-a-backup-reconciliation-gate-fail-closed).
 
 ## 5. Post-restore validation
 

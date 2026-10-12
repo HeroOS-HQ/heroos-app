@@ -99,6 +99,14 @@ UPDATE users SET identity_subject = '<beta-sub>', updated_at = now()
 Rollback: the same statements with the values swapped back to the
 `synthetic-demo|…` placeholders.
 
+**After the identity migrations (M1-10B, [ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md)).**
+This section applies only to the pre-M1-10B schema. Migration B1a turns each
+mapped `identity_subject` into an exact `(issuer, subject)` binding, with
+`-x legacy_identity_issuer=<the HEROOS_OIDC_ISSUER value>`; B1b then removes the
+column. From then on identities are bound, suspended and revoked only with the
+operator CLI: [Identity Provisioning](identity-provisioning.md). Applying B1a/B1b
+to Supabase is a separately approved deployment step.
+
 ## 5. Render (API)
 
 Docker service from `apps/api/Dockerfile` (build context: repository root),
@@ -180,7 +188,8 @@ Project root `apps/web`, Next.js, pnpm workspace install. Variables for the
 - Before deployment: revert the PR; the Cognito path is untouched.
 - After deployment: unset `HEROOS_AUTH_PROVIDER` / `HEROOS_WEB_AUTH_PROVIDER`
   (the API refuses to start in staging; the web reports "not configured"),
-  restore the two `identity_subject` placeholders (§4), delete the provider
+  restore the two `identity_subject` placeholders (§4; before M1-10B only — after
+  B1b, revoke the bindings with the operator CLI instead), delete the provider
   tenant, the Render service and the Vercel project, and rotate or drop the
   Supabase `heroos_app` password.
 

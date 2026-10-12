@@ -118,11 +118,21 @@ Migration `97d4200fe7a2_add_tenant_row_level_security.py`.
   `NULLIF(current_setting('heroos.company_id', true), '')::uuid`. An unset or
   empty setting yields `NULL`, and `company_id = NULL` matches no row. A
   malformed value raises a cast error. Neither case ever widens visibility.
-- `users` has no tenant policy. It is a global identity table (`id`,
-  `identity_subject`) with no `company_id`, read before any Company is known to
-  map a verified identity to a HeroOS User. Adding a fake `company_id` would be
-  wrong, because a User can belong to several Companies. The runtime role may
-  only SELECT it, and no tenant repository exposes Users.
+- `users` and `user_identities` have no tenant policy. They are global identity
+  tables with no `company_id` (ADR-008), read before any Company is known to map
+  a verified identity to a HeroOS User. Adding a fake `company_id` would be
+  wrong, because a User can belong to several Companies. They hold no personal
+  data except the pseudonymous external `subject`. Instead of a tenant policy
+  they carry *lifecycle* policies: the runtime role may only SELECT active rows;
+  the identity operator group (`heroos_identity_operator`) manages them. No
+  tenant repository exposes them.
+- `memberships` also carries a RESTRICTIVE `lifecycle_active` policy for the
+  runtime role (`status = 'active'`): it can only narrow the tenant policy, never
+  widen it. Revoked Memberships are invisible to the API whatever code runs.
+- `membership_events` (tenant-owned audit) has the standard `tenant_isolation`
+  policy; `identity_events` (global audit) has RLS with no policy at all.
+  Neither is granted to the runtime or operator role: only the owner-run audit
+  triggers write them.
 - `TRUNCATE` is not subject to RLS and is never granted to the runtime role.
 - RLS is not `FORCE`d. The runtime role never owns tables, and the owner
   (migration/admin) role must still be able to run data migrations without a
@@ -146,7 +156,8 @@ There is no default tenant and no fallback to all tenants.
 | Role | Kind | Used by | Privileges |
 | --- | --- | --- | --- |
 | `heroos` (local) / RDS migration role | migration/admin, schema owner | Alembic (`MIGRATION_DATABASE_URL`) | DDL, owns tables and policies. Never used by the API |
-| `heroos_app_runtime` | `NOLOGIN` privilege role, created by the migration | — | SELECT/INSERT/UPDATE/DELETE on the 5 tenant tables, SELECT on `users`. Nothing on `alembic_version`. No TRUNCATE |
+| `heroos_app_runtime` | `NOLOGIN` privilege role, created by the migration | — | SELECT/INSERT/UPDATE/DELETE on `companies`, `company_blueprints`, `case_subjects`, `cases`; SELECT only on `memberships`, `users`, `user_identities` (ADR-008). Nothing on the audit tables or `alembic_version`. No TRUNCATE |
+| `heroos_identity_operator` | `NOLOGIN` group, created by migration B1a | identity operator CLI (ADR-008) | From B1b: SELECT/INSERT and column-level UPDATE (`status`, `revoked_at`/`suspended_at`, `updated_at`) on `users`, `user_identities`, `memberships` (RLS); SELECT (`id`) on `companies`. Nothing on HR tables, audit tables or `alembic_version`. No DELETE, no TRUNCATE. Never a member of `heroos_app_runtime` |
 | `heroos_app` | login role, member of `heroos_app_runtime` | the API (`DATABASE_URL`) | inherits the above. `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, owns nothing |
 
 - Superusers, `BYPASSRLS` roles and table owners skip RLS. The API therefore
@@ -201,7 +212,8 @@ deployment configuration with a secret-managed password, as a member of
 resolves this without any bypass:
 
 ```text
-resolve_user           SELECT users WHERE identity_subject = ...   (no tenant context; users is global)
+resolve_user           SELECT user_identities JOIN users            (no tenant context; global tables,
+                       WHERE issuer = ... AND subject = ...        active rows only, ADR-008)
         ↓
 authorize_company
   set_tenant_context(requested company_id)     candidate scope, NOT authorization
@@ -255,7 +267,8 @@ It refuses any database name other than `*_tenant_isolation_test`.
 
 | File | Proves |
 | --- | --- |
-| `test_runtime_role.py` | From the catalog: the runtime role is not superuser, BYPASSRLS, CREATEROLE or CREATEDB, cannot reach such a role, owns no table, and has exactly the expected grants (no TRUNCATE). It cannot create tables, disable RLS, drop or add policies, replace the context function, `SET ROLE` admin or read `alembic_version`. `row_security=off` errors. Every table except `users` and `alembic_version` has RLS. One permissive `FOR ALL` policy per tenant table. The startup guard accepts the runtime role and rejects admin |
+| `test_runtime_role.py` | From the catalog: the runtime role is not superuser, BYPASSRLS, CREATEROLE or CREATEDB, cannot reach such a role, owns no table, and has exactly the expected grants (no TRUNCATE). It cannot create tables, disable RLS, drop or add policies, replace the context function, `SET ROLE` admin or read `alembic_version`. `row_security=off` errors. Every table except `alembic_version` has RLS. One permissive `FOR ALL` policy per tenant table; the only other policies are the listed lifecycle policies (ADR-008). The startup guard accepts the runtime role and rejects admin and identity-operator logins |
+| `test_role_separation.py`, `test_identity_provisioning.py`, `test_identity_migration.py`, `test_operator_cli.py` | M1-10B (ADR-008): the runtime role cannot provision, bind, reassign, suspend, revoke or read audit; the operator cannot read HR data, delete, rewrite bindings or forge audit; lifecycle is denied on the next request; B1a/B1b compatibility with the previous API and history-based downgrade refusal |
 | `test_tenant_context.py` | Missing, stale, malformed and invalid context fail closed. Context is transaction-local across commit and rollback. A transaction cannot switch Company. A plain commit drops context even for ORM refreshes |
 | `test_cross_tenant_reads.py` | A↔B direct lookups, lists and guessed IDs, each proven three ways: repositories with RLS, RLS alone (unfiltered queries) and the repository filter alone (admin session that bypasses RLS) |
 | `test_cross_tenant_writes.py` | Cross-Company create (all 5 tables), update, delete and re-parenting are blocked by repositories and by RLS, each on its own. `WITH CHECK` is also proven alone, using INSERT without `RETURNING` and UPDATE without `WHERE`; otherwise PostgreSQL applies `USING` to the new row as well. Same-Company writes succeed |
@@ -294,7 +307,8 @@ facts, decisions or audit events) must have:
 
 `test_every_table_has_rls_unless_explicitly_exempt` fails for any new table
 without RLS unless it is added to the exemption list with a documented reason.
-Global, non-tenant tables (like `users`) need that explicit justification.
+Global, non-tenant tables (like `users` and `user_identities`, ADR-008) need that
+explicit justification and their own role-scoped RLS policies.
 
 Retention and deletion behavior of new entities (delete routes, soft-delete
 columns, cascades from Cases) is not a technical default. It follows the

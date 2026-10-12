@@ -89,7 +89,9 @@ Authorized Tenant Context```
 Recorded 2026-10-08 while implementing the foundation. Details:
 [Authentication and Company Authorization](../architecture/authentication.md).
 
-1. **Identity mapping.** The Cognito `sub` claim is stored as
+1. **Identity mapping.** *(Superseded by [ADR-008](ADR-008-external-identity-and-provisioning.md)
+   if adopted: identities are bound by exact `(issuer, subject)` in
+   `user_identities`.)* The Cognito `sub` claim is stored as
    `users.identity_subject` and is the only key used to resolve a HeroOS User.
    Email is never used for identity mapping or authorization. Users are not
    provisioned just-in-time; an unknown identity is denied.
