@@ -6,8 +6,11 @@ HTTP. It connects with a personal identity-operator login, a member of
 
     export HEROOS_OPERATOR_DATABASE_URL='postgresql+psycopg://heroos_op_<handle>@<host>/<db>?sslmode=verify-full&sslrootcert=<ca>'
     # password from ~/.pgpass (0600), never on the command line
-    uv run python -m scripts.manage_identities --expect-database <db> --reference HER-230 \\
-        provision --company <uuid> --issuer <exact issuer> < subject.txt
+    IFS= read -rs HEROOS_SUBJECT   # paste the subject; not echoed, not in history
+    printf '%s\\n' "$HEROOS_SUBJECT" | uv run python -m scripts.manage_identities \\
+        --expect-database <db> --reference HER-230 \\
+        provision --company <uuid> --issuer <exact issuer>
+    unset HEROOS_SUBJECT
 
 External subjects are pseudonymous personal data: they are read from standard
 input (one line), never from arguments (process lists, shell history), and are
@@ -15,8 +18,9 @@ never printed. Output is one JSON object with an outcome and internal IDs.
 
 Before any change the CLI refuses unless:
 
-- a non-local host is reached with ``sslmode=verify-full`` and the session is
-  really encrypted;
+- anything but a literal loopback host is reached with ``sslmode=verify-full``
+  and the session is really encrypted, and no libpq parameter or environment
+  variable can redirect the connection;
 - the login is an unprivileged identity operator (not superuser, BYPASSRLS,
   CREATEROLE, table owner or API runtime role);
 - the identity schema contract is exactly 2 (migration B1b);
@@ -31,7 +35,7 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Final
 from uuid import UUID
 
@@ -54,7 +58,17 @@ from app.identity.operator import set_actor_reference
 from app.identity.validation import ACTOR_REFERENCE
 
 OPERATOR_URL_ENV: Final = "HEROOS_OPERATOR_DATABASE_URL"
-LOCAL_HOSTS: Final = frozenset({"localhost", "127.0.0.1", "::1", "db"})
+# Only literal loopback addresses may skip TLS. A service name such as the
+# Compose "db" host is a network name that can resolve anywhere: local Compose
+# use goes through the published loopback port (127.0.0.1:5433) instead.
+LOOPBACK_HOSTS: Final = frozenset({"localhost", "127.0.0.1", "::1"})
+# libpq connection parameters that can redirect the connection away from the URL
+# host. SQLAlchemy passes URL query parameters straight to libpq, so
+# `postgresql://...@localhost/db?host=<remote>` would connect to <remote>.
+REDIRECTING_PARAMETERS: Final = frozenset({"host", "hostaddr", "service", "servicefile"})
+# Environment variables that can redirect a loopback URL (libpq applies them to
+# parameters the URL does not set). Refused when TLS is not required.
+REDIRECTING_ENVIRONMENT: Final = ("PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE")
 
 EXIT_REFUSED: Final = 3
 EXIT_OPERATION_REFUSED: Final = 4
@@ -65,20 +79,32 @@ class OperatorRefusal(Exception):
     """A pre-flight check failed. Messages never contain secrets or subjects."""
 
 
-def check_transport_policy(url: URL) -> bool:
+def check_transport_policy(url: URL, environment: Mapping[str, str] | None = None) -> bool:
     """Return whether TLS is required; refuse unsafe configurations.
 
-    Only loopback (and the local Compose ``db`` service) may connect without
-    TLS. Every other host needs ``sslmode=verify-full`` (certificate and host
-    name verified).
+    Only a literal loopback host (``localhost``, ``127.0.0.1``, ``::1``) may
+    connect without TLS, and only when nothing can redirect the connection
+    elsewhere. Every other host needs ``sslmode=verify-full`` (certificate and
+    host name verified), which also defeats any redirection.
     """
+    environment = os.environ if environment is None else environment
     host = url.host
     if not host:
         raise OperatorRefusal(f"{OPERATOR_URL_ENV} must name the database host")
-    if host in LOCAL_HOSTS:
-        return False
+    if any(name.lower() in REDIRECTING_PARAMETERS for name in url.query):
+        raise OperatorRefusal(
+            f"{OPERATOR_URL_ENV} must not set host, hostaddr or service parameters; "
+            "name the host in the URL itself"
+        )
+    if host in LOOPBACK_HOSTS:
+        if any(environment.get(name) for name in REDIRECTING_ENVIRONMENT):
+            raise OperatorRefusal(
+                "PGHOSTADDR/PGSERVICE/PGSERVICEFILE could redirect a loopback connection; "
+                "unset them"
+            )
+        return url.query.get("sslmode") == "verify-full"
     if url.query.get("sslmode") != "verify-full":
-        raise OperatorRefusal("non-local operator connections require sslmode=verify-full")
+        raise OperatorRefusal("non-loopback operator connections require sslmode=verify-full")
     return True
 
 

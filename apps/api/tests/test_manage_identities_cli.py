@@ -14,36 +14,88 @@ from scripts.manage_identities import OperatorRefusal, build_parser, check_trans
 API_ROOT = Path(__file__).resolve().parents[1]
 
 
+NO_ENV: dict[str, str] = {}
+
+
 @pytest.mark.parametrize(
     "url",
     [
         "postgresql+psycopg://heroos_op_x@localhost:5433/heroos",
         "postgresql+psycopg://heroos_op_x@127.0.0.1/heroos",
-        "postgresql+psycopg://heroos_op_x@db/heroos",
+        "postgresql+psycopg://heroos_op_x@[::1]:5433/heroos",
     ],
 )
-def test_local_connections_need_no_tls(url: str) -> None:
-    assert check_transport_policy(make_url(url)) is False
+def test_literal_loopback_connections_need_no_tls(url: str) -> None:
+    # Local Compose use: the published loopback port (127.0.0.1:5433).
+    assert check_transport_policy(make_url(url), NO_ENV) is False
 
 
+def test_loopback_with_verify_full_still_requires_an_encrypted_session() -> None:
+    url = make_url("postgresql+psycopg://heroos_op_x@localhost/heroos?sslmode=verify-full")
+    assert check_transport_policy(url, NO_ENV) is True
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        # Network names that merely look local can resolve anywhere.
+        "db",
+        "postgres",
+        "heroos-db",
+        "localhost.example.test",
+        "127.0.0.1.nip.io",
+        "0.0.0.0",
+        "127.0.0.2",
+        "10.0.0.5",
+        "db.example.test",
+    ],
+)
 @pytest.mark.parametrize(
     "query",
     ["", "?sslmode=disable", "?sslmode=prefer", "?sslmode=require", "?sslmode=verify-ca"],
 )
-def test_remote_connections_require_verify_full(query: str) -> None:
-    url = make_url(f"postgresql+psycopg://heroos_op_x@db.example.test/heroos{query}")
+def test_every_other_host_requires_verify_full(host: str, query: str) -> None:
+    url = make_url(f"postgresql+psycopg://heroos_op_x@{host}/heroos{query}")
     with pytest.raises(OperatorRefusal, match="verify-full"):
-        check_transport_policy(url)
+        check_transport_policy(url, NO_ENV)
 
 
-def test_remote_verify_full_is_accepted() -> None:
-    url = make_url("postgresql+psycopg://heroos_op_x@db.example.test/heroos?sslmode=verify-full")
-    assert check_transport_policy(url) is True
+@pytest.mark.parametrize("host", ["db", "db.example.test"])
+def test_non_loopback_with_verify_full_is_accepted(host: str) -> None:
+    url = make_url(f"postgresql+psycopg://heroos_op_x@{host}/heroos?sslmode=verify-full")
+    assert check_transport_policy(url, NO_ENV) is True
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "?host=db.example.test",
+        "?hostaddr=10.0.0.5",
+        "?HostAddr=10.0.0.5",
+        "?service=remote",
+        "?servicefile=/tmp/x",
+        "?sslmode=verify-full&host=db.example.test",
+    ],
+)
+def test_query_parameters_cannot_redirect_the_connection(query: str) -> None:
+    # SQLAlchemy passes query parameters to libpq: ?host= would override the
+    # loopback host in the URL and skip TLS.
+    url = make_url(f"postgresql+psycopg://heroos_op_x@localhost/heroos{query}")
+    with pytest.raises(OperatorRefusal, match="must not set host"):
+        check_transport_policy(url, NO_ENV)
+
+
+@pytest.mark.parametrize("variable", ["PGHOSTADDR", "PGSERVICE", "PGSERVICEFILE"])
+@pytest.mark.parametrize("query", ["", "?sslmode=verify-full"])
+def test_environment_cannot_redirect_a_loopback_connection(variable: str, query: str) -> None:
+    url = make_url(f"postgresql+psycopg://heroos_op_x@localhost/heroos{query}")
+    with pytest.raises(OperatorRefusal, match="redirect"):
+        check_transport_policy(url, {variable: "x"})
 
 
 def test_a_host_is_required() -> None:
     with pytest.raises(OperatorRefusal, match="host"):
-        check_transport_policy(make_url("postgresql+psycopg://heroos_op_x@/heroos"))
+        check_transport_policy(make_url("postgresql+psycopg://heroos_op_x@/heroos"), NO_ENV)
 
 
 def test_missing_operator_url_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:

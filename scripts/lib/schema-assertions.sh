@@ -197,4 +197,26 @@ assert_schema() {
     return 1
   fi
   echo "Identity operator role ${OPERATOR_ROLE} OK; audit trigger functions pinned"
+
+  # No role other than the owner and the two HeroOS groups holds any table
+  # privilege (portable: also catches Supabase default privileges for anon,
+  # authenticated and service_role, which never exist locally).
+  local outsiders
+  outsiders="$(psql_db "${db}" "SELECT count(*) FROM pg_class c, aclexplode(c.relacl) a
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+      AND a.grantee <> c.relowner
+      AND a.grantee NOT IN (SELECT oid FROM pg_roles
+                            WHERE rolname IN ('${RUNTIME_ROLE}', '${OPERATOR_ROLE}'));")"
+  if [[ "${outsiders}" != "0" ]]; then
+    echo "Unexpected table privileges for roles outside HeroOS (${outsiders})." >&2
+    return 1
+  fi
+  # Audit tables refuse TRUNCATE (statement-level append-only trigger).
+  if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_trigger
+      WHERE tgname = 'heroos_append_only_truncate'
+        AND tgrelid IN ('public.identity_events'::regclass, 'public.membership_events'::regclass);")" != "2" ]]; then
+    echo "Audit tables are missing their TRUNCATE guard." >&2
+    return 1
+  fi
+  echo "Table ACLs OK (owner and HeroOS groups only); audit TRUNCATE guards present"
 }

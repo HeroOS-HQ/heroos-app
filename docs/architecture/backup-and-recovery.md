@@ -139,7 +139,7 @@ recovery of a live database is not an automated mode.
    database, identity provider status, the Company's confirmation); anything
    not reconciled is suspended or revoked first. Issue keys alone are not
    enough to replay lifecycle state. Procedure:
-   [Identity Provisioning §5](../operations/identity-provisioning.md#5-restoring-a-backup-reconciliation-gate-fail-closed).
+   [Identity Provisioning §6](../operations/identity-provisioning.md#6-restoring-a-backup-reconciliation-gate-fail-closed).
 
 ## 5. Post-restore validation
 

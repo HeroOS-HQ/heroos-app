@@ -53,11 +53,25 @@ cd apps/api
 export HEROOS_OPERATOR_DATABASE_URL='postgresql+psycopg://heroos_op_<handle>@<host>:<port>/<db>?sslmode=verify-full&sslrootcert=<ca file>'
 # The password comes from ~/.pgpass; never put it in the URL or on the command line.
 
-# New person: create the IdP account first (admin console, public sign-up off), note its `sub`.
-printf '%s\n' '<sub>' | uv run python -m scripts.manage_identities \
+# New person: create the IdP account first (admin console, public sign-up off) and copy its `sub`.
+# Read it silently into a shell variable: it is never typed as a literal, so it
+# is not echoed and never reaches shell history or a process argument list
+# (printf is a shell builtin; the CLI reads it from standard input).
+IFS= read -rs HEROOS_SUBJECT
+printf '%s\n' "$HEROOS_SUBJECT" | uv run python -m scripts.manage_identities \
     --expect-database <db> --reference HER-230 \
     provision --company <company uuid> --issuer '<exact issuer>'
+unset HEROOS_SUBJECT
 ```
+
+- Never write a subject as a literal in a command (`echo 'auth0|…' | …`,
+  `<<< 'auth0|…'`): shell history records it. Do not keep subjects in files.
+- TLS: only a literal loopback host (`localhost`, `127.0.0.1`, `::1`, e.g. the
+  local Compose port `127.0.0.1:5433`) may connect without TLS. Every other
+  host, including Compose service names such as `db`, requires
+  `sslmode=verify-full`. The URL must not contain `host`, `hostaddr` or
+  `service` parameters, and for loopback URLs `PGHOSTADDR`, `PGSERVICE` and
+  `PGSERVICEFILE` must be unset: each could redirect the connection.
 
 | Command | Effect |
 | --- | --- |
@@ -111,7 +125,22 @@ Order, for a database that already has users:
 Never edit `alembic_version`, disable triggers or re-add the legacy column by
 hand: that would let the previous API ignore suspensions and revocations.
 
-## 5. Restoring a backup: reconciliation gate (fail closed)
+## 5. Audit integrity: what append-only does and does not cover
+
+- `identity_events` and `membership_events` refuse `UPDATE`, `DELETE` and
+  `TRUNCATE` (including cascaded truncation such as `TRUNCATE users CASCADE`)
+  for every role, the migration owner included. The API and operator roles
+  hold no privilege on them at all.
+- **Residual migration-owner capability:** the owner can still disable or drop
+  the triggers, drop the tables, or (as a superuser) set
+  `session_replication_role = replica`, which suspends all triggers. These are
+  deliberate schema-owner powers, not protected against inside the database.
+  Controls: the owner credential is held by the Technical Lead for Alembic only,
+  never by a service; shipping audit events to separate immutable storage is M5
+  work. The disposable test suites use the superuser-only replica switch to
+  reset their own databases.
+
+## 6. Restoring a backup: reconciliation gate (fail closed)
 
 A backup from before a suspension or revocation still contains the old, active
 state. The restored database's own audit tables end at the backup time, so they

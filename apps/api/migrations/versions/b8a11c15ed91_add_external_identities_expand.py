@@ -93,6 +93,26 @@ AUDIT_FUNCTIONS = (
 )
 
 
+# Role relationships that would join the API runtime and identity operator
+# capabilities: inheritance between the two groups in either direction, or any
+# login (other than superusers and the migration owner running this) holding
+# both. Checked on the server before any grant.
+ROLE_SEPARATION_VIOLATED = f"""
+    EXISTS (
+        SELECT FROM pg_roles runtime, pg_roles operator
+        WHERE runtime.rolname = '{RUNTIME_ROLE}' AND operator.rolname = '{OPERATOR_ROLE}'
+          AND (pg_has_role(runtime.oid, operator.oid, 'MEMBER')
+               OR pg_has_role(operator.oid, runtime.oid, 'MEMBER')
+               OR EXISTS (
+                    SELECT FROM pg_roles r
+                    WHERE NOT r.rolsuper AND r.rolname <> current_user
+                      AND r.oid NOT IN (runtime.oid, operator.oid)
+                      AND pg_has_role(r.oid, runtime.oid, 'MEMBER')
+                      AND pg_has_role(r.oid, operator.oid, 'MEMBER')))
+    )
+"""
+
+
 class MigrationRefused(RuntimeError):
     """A safety precondition failed. Messages name options, never values."""
 
@@ -156,6 +176,11 @@ def upgrade() -> None:
         )
 
     _create_operator_group()
+    guard(
+        ROLE_SEPARATION_VIOLATED,
+        f"a role relationship joins {RUNTIME_ROLE} and {OPERATOR_ROLE} "
+        "(inheritance in either direction, or a login in both); remove it first",
+    )
     _add_lifecycle_columns()
     _create_identity_tables()
     _create_audit_functions_and_triggers()
@@ -175,6 +200,7 @@ def upgrade() -> None:
     _enable_row_level_security()
     _grant()
     _create_schema_contract()
+    _settle_privileges()
 
 
 def _create_operator_group() -> None:
@@ -543,6 +569,12 @@ def _create_audit_functions_and_triggers() -> None:
             f"CREATE TRIGGER heroos_append_only BEFORE UPDATE OR DELETE ON public.{table} "
             "FOR EACH ROW EXECUTE FUNCTION public.heroos_audit_events_append_only()"
         )
+        # TRUNCATE skips row triggers, so it gets its own statement trigger. It
+        # also fires for cascaded truncation (e.g. TRUNCATE users CASCADE).
+        op.execute(
+            f"CREATE TRIGGER heroos_append_only_truncate BEFORE TRUNCATE ON public.{table} "
+            "FOR EACH STATEMENT EXECUTE FUNCTION public.heroos_audit_events_append_only()"
+        )
 
 
 def _verify_backfill(expected_count: object) -> None:
@@ -602,7 +634,6 @@ def _enable_row_level_security() -> None:
 def _grant() -> None:
     # Granting Company access is provisioning: operator-only from B1b on.
     op.execute(f"REVOKE INSERT, UPDATE, DELETE ON memberships FROM {RUNTIME_ROLE}")
-    op.execute(f"GRANT SELECT ON user_identities TO {RUNTIME_ROLE}")
     op.execute(f"GRANT USAGE ON SCHEMA public TO {OPERATOR_ROLE}")
     for table in ("identity_events", "membership_events"):
         op.execute(f"REVOKE ALL ON {table} FROM PUBLIC")
@@ -614,9 +645,91 @@ def _create_schema_contract() -> None:
         "LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ SELECT 1 $$"
     )
     op.execute("REVOKE ALL ON FUNCTION public.heroos_schema_contract() FROM PUBLIC")
+
+
+NEW_TABLES = ("user_identities", "identity_events", "membership_events")
+NEW_FUNCTIONS = (*AUDIT_FUNCTIONS, "heroos_schema_contract()")
+# Supabase grants these roles table access through default privileges; they
+# are not HeroOS roles and must hold nothing on HeroOS tables.
+SUPABASE_API_ROLES = ("anon", "authenticated", "service_role")
+
+_TABLE_OIDS = ", ".join(f"'public.{t}'::regclass" for t in NEW_TABLES)
+_FUNCTION_OIDS = ", ".join(f"'public.{f}'::regprocedure" for f in NEW_FUNCTIONS)
+
+
+def _settle_privileges() -> None:
+    """Make the new objects' privileges exactly the intended ones.
+
+    Default privileges (``ALTER DEFAULT PRIVILEGES``, e.g. Supabase's grants
+    to ``anon``, ``authenticated`` and ``service_role``) can attach grants to
+    every object this migration creates. Revoke whatever any non-owner role
+    received, re-apply only the intended grants, then verify on the server.
+    Portable: nothing here assumes those roles exist.
+    """
+    op.execute(
+        f"""
+        DO $$
+        DECLARE
+            entry record;
+        BEGIN
+            FOR entry IN
+                SELECT DISTINCT acl.target, acl.grantee FROM (
+                    SELECT 'TABLE ' || c.oid::regclass::text AS target,
+                           a.grantee, c.relowner AS owner
+                    FROM pg_class c, aclexplode(c.relacl) a
+                    WHERE c.oid IN ({_TABLE_OIDS})
+                    UNION ALL
+                    SELECT 'FUNCTION ' || p.oid::regprocedure::text,
+                           a.grantee, p.proowner
+                    FROM pg_proc p, aclexplode(p.proacl) a
+                    WHERE p.oid IN ({_FUNCTION_OIDS})
+                ) acl
+                WHERE acl.grantee <> acl.owner
+            LOOP
+                IF entry.grantee = 0 THEN
+                    EXECUTE format('REVOKE ALL ON %s FROM PUBLIC', entry.target);
+                ELSE
+                    EXECUTE format('REVOKE ALL ON %s FROM %I',
+                                   entry.target, pg_get_userbyid(entry.grantee));
+                END IF;
+            END LOOP;
+        END
+        $$;
+        """
+    )
+    # The only intended grants on the new objects.
+    op.execute(f"GRANT SELECT ON user_identities TO {RUNTIME_ROLE}")
     op.execute(
         "GRANT EXECUTE ON FUNCTION public.heroos_schema_contract() "
         f"TO {RUNTIME_ROLE}, {OPERATOR_ROLE}"
+    )
+
+    guard(
+        f"""EXISTS (
+            SELECT FROM pg_class c, aclexplode(c.relacl) a
+            WHERE c.oid IN ({_TABLE_OIDS}) AND a.grantee <> c.relowner
+              AND NOT (c.oid = 'public.user_identities'::regclass
+                       AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = '{RUNTIME_ROLE}')
+                       AND a.privilege_type = 'SELECT'))
+        OR EXISTS (
+            SELECT FROM pg_proc p, aclexplode(p.proacl) a
+            WHERE p.oid IN ({_FUNCTION_OIDS}) AND a.grantee <> p.proowner
+              AND NOT (p.oid = 'public.heroos_schema_contract()'::regprocedure
+                       AND a.grantee IN (SELECT oid FROM pg_roles
+                                         WHERE rolname IN ('{RUNTIME_ROLE}', '{OPERATOR_ROLE}'))
+                       AND a.privilege_type = 'EXECUTE'))""",
+        "unexpected privileges remain on the new identity or audit objects",
+    )
+    roles = ", ".join(f"'{role}'" for role in SUPABASE_API_ROLES)
+    guard(
+        f"""EXISTS (
+            SELECT FROM pg_roles r, pg_class c
+            WHERE r.rolname IN ({roles})
+              AND c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+              AND has_table_privilege(r.oid, c.oid,
+                    'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'))""",
+        "anon, authenticated or service_role hold privileges on a HeroOS table; revoke "
+        "them (and their default privileges) before migrating",
     )
 
 

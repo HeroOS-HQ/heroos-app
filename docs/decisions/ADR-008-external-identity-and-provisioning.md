@@ -68,7 +68,9 @@ binds a subject the operator already knows.
 The API refuses to start with an operator login or with
 `HEROOS_OPERATOR_DATABASE_URL` configured outside development. The operator CLI
 refuses the migration owner, privileged roles and API runtime logins, requires
-`sslmode=verify-full` for non-local hosts, and refuses any schema other than
+`sslmode=verify-full` for every host except a literal loopback address (and
+refuses parameters or environment variables that could redirect a loopback
+connection), and refuses any schema other than
 contract 2. No HTTP route reaches the provisioning code (enforced by tests).
 
 ### 4. Provisioning
@@ -92,7 +94,20 @@ authenticated `session_user`, an actor kind (`owner`, `operator`, `api`) and a
 change reference that must be an issue key (or `alembic:<revision>` for the
 migration owner); a change without a valid reference is rejected. Events never
 copy the issuer or subject (`identity_id` is referenced instead). They are
-append-only, also for the owner (trigger). Retention is not set (PRIV-005).
+append-only, also for the owner: row triggers refuse `UPDATE`/`DELETE` and a
+statement trigger refuses `TRUNCATE`, including cascaded truncation. The
+migration owner can still disable or drop those triggers or the tables; that is
+a documented residual schema-owner capability (operator runbook §5), mitigated
+by keeping the owner credential out of every service, with immutable log
+shipping at M5. Retention is not set (PRIV-005).
+
+Objects created by the migrations shed any privileges inherited from default
+ACLs (for example Supabase's grants to `anon`, `authenticated`,
+`service_role`); B1a verifies the exact ACLs on the server and refuses to run
+while those well-known roles hold privileges on any HeroOS table. B1a and B1b
+also refuse any role relationship that joins the runtime and operator groups
+(inheritance either way, or a login in both); the local role bootstrap runs the
+same checks before changing anything, in one transaction.
 
 ### 6. Migrations and rollback
 

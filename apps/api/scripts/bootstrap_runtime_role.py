@@ -114,6 +114,47 @@ def bootstrap_operator_role(admin_url: str, operator_url: str) -> None:
     _create_or_update_login(admin, login, password, OPERATOR_GROUP_ROLE, create_group=False)
 
 
+# Directional inheritance between two roles, by name; false if either is absent.
+_MEMBER_OF = """
+    SELECT EXISTS (
+        SELECT FROM pg_roles member, pg_roles parent
+        WHERE member.rolname = %(member)s AND parent.rolname = %(parent)s
+          AND pg_has_role(member.oid, parent.oid, 'MEMBER')
+    )
+"""
+_PRIVILEGED = """
+    SELECT EXISTS (
+        SELECT FROM pg_roles login, pg_roles r
+        WHERE login.rolname = %(login)s
+          AND (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole)
+          AND pg_has_role(login.oid, r.oid, 'MEMBER')
+    )
+"""
+
+
+def _is_member(conn: psycopg.Connection[tuple[object, ...]], member: str, parent: str) -> bool:
+    row = conn.execute(_MEMBER_OF, {"member": member, "parent": parent}).fetchone()
+    return bool(row and row[0])
+
+
+def _check_separation(conn: psycopg.Connection[tuple[object, ...]], login: str, group: str) -> None:
+    """Refuse any role relationship that joins API runtime and identity operator.
+
+    Runs before and after the role statements. Everything happens in one
+    transaction, so a refusal leaves no partial change behind.
+    """
+    other = RUNTIME_GROUP_ROLE if group == OPERATOR_GROUP_ROLE else OPERATOR_GROUP_ROLE
+    if _is_member(conn, group, other) or _is_member(conn, other, group):
+        raise BootstrapError(
+            f"{RUNTIME_GROUP_ROLE} and {OPERATOR_GROUP_ROLE} must not inherit from each other"
+        )
+    if _is_member(conn, login, other):
+        raise BootstrapError(f"role {login} is a member of {other}")
+    row = conn.execute(_PRIVILEGED, {"login": login}).fetchone()
+    if row is None or row[0]:
+        raise BootstrapError(f"role {login} can bypass Row-Level Security")
+
+
 def _create_or_update_login(
     admin: URL, login: str, password: str, group: str, *, create_group: bool
 ) -> None:
@@ -121,20 +162,26 @@ def _create_or_update_login(
     group_role = sql.Identifier(group)
     attributes = sql.SQL("NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE INHERIT")
 
-    with psycopg.connect(_libpq(admin), autocommit=True) as conn:
-        if create_group:
+    # Role DDL is transactional in PostgreSQL: checks, changes and verification
+    # commit together or not at all.
+    with psycopg.connect(_libpq(admin)) as conn, conn.transaction():
+        group_exists = conn.execute(
+            "SELECT 1 FROM pg_roles WHERE rolname = %s", (group,)
+        ).fetchone()
+        if not group_exists and not create_group:
+            raise BootstrapError(f"{group} does not exist; apply the migrations first")
+        # Before any change: an existing login or group relationship that
+        # crosses the runtime/operator boundary is refused untouched.
+        _check_separation(conn, login, group)
+
+        if not group_exists:
             # Migrations create the privilege role too; creating it here keeps
             # this script independent of migration order.
             conn.execute(
                 sql.SQL(
-                    "DO $$ BEGIN"
-                    " IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = {name}) THEN"
-                    " CREATE ROLE {role} NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;"
-                    " END IF; END $$"
-                ).format(name=sql.Literal(group), role=group_role)
+                    "CREATE ROLE {role} NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE"
+                ).format(role=group_role)
             )
-        elif not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (group,)).fetchone():
-            raise BootstrapError(f"{group} does not exist; apply the migrations first")
         exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (login,)).fetchone()
         verb = sql.SQL("ALTER ROLE" if exists else "CREATE ROLE")
         conn.execute(
@@ -148,27 +195,7 @@ def _create_or_update_login(
         conn.execute(sql.SQL("GRANT {group} TO {role}").format(group=group_role, role=login_role))
 
         # Verify from the catalog rather than trusting the statements above.
-        privileged = conn.execute(
-            """
-            SELECT EXISTS (
-                SELECT FROM pg_roles r
-                WHERE (r.rolsuper OR r.rolbypassrls OR r.rolcreaterole)
-                  AND pg_has_role(%(login)s, r.oid, 'MEMBER')
-            )
-            """,
-            {"login": login},
-        ).fetchone()
-        if privileged is None or privileged[0]:
-            raise BootstrapError(f"role {login} can bypass Row-Level Security")
-        # Operator and API runtime capabilities never meet in one login.
-        other = RUNTIME_GROUP_ROLE if group == OPERATOR_GROUP_ROLE else OPERATOR_GROUP_ROLE
-        crossed = conn.execute(
-            "SELECT EXISTS (SELECT FROM pg_roles r WHERE r.rolname = %(other)s"
-            " AND pg_has_role(%(login)s, r.oid, 'MEMBER'))",
-            {"other": other, "login": login},
-        ).fetchone()
-        if crossed is None or crossed[0]:
-            raise BootstrapError(f"role {login} is also a member of {other}")
+        _check_separation(conn, login, group)
 
 
 def main(argv: list[str] | None = None) -> int:

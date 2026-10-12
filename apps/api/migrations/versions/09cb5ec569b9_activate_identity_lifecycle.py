@@ -38,6 +38,7 @@ down_revision: str | Sequence[str] | None = "b8a11c15ed91"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
+RUNTIME_ROLE = "heroos_app_runtime"
 OPERATOR_ROLE = "heroos_identity_operator"
 B1A_BACKFILL_REFERENCE = "alembic:b8a11c15ed91"
 
@@ -47,6 +48,26 @@ OPERATOR_GRANTS = (
     ("user_identities", "SELECT, INSERT", "status, revoked_at, updated_at"),
     ("memberships", "SELECT, INSERT", "status, revoked_at, updated_at"),
 )
+
+
+# Role relationships that would join the API runtime and identity operator
+# capabilities: inheritance between the two groups in either direction, or any
+# login (other than superusers and the migration owner running this) holding
+# both. Checked on the server before any grant.
+ROLE_SEPARATION_VIOLATED = f"""
+    EXISTS (
+        SELECT FROM pg_roles runtime, pg_roles operator
+        WHERE runtime.rolname = '{RUNTIME_ROLE}' AND operator.rolname = '{OPERATOR_ROLE}'
+          AND (pg_has_role(runtime.oid, operator.oid, 'MEMBER')
+               OR pg_has_role(operator.oid, runtime.oid, 'MEMBER')
+               OR EXISTS (
+                    SELECT FROM pg_roles r
+                    WHERE NOT r.rolsuper AND r.rolname <> current_user
+                      AND r.oid NOT IN (runtime.oid, operator.oid)
+                      AND pg_has_role(r.oid, runtime.oid, 'MEMBER')
+                      AND pg_has_role(r.oid, operator.oid, 'MEMBER')))
+    )
+"""
 
 
 def guard(condition: str, message: str) -> None:
@@ -81,6 +102,13 @@ def upgrade() -> None:
                       AND i.subject = u.identity_subject))""",
         "some users lack exactly one active binding matching their legacy identity_subject; "
         "reconcile them before B1b",
+    )
+
+    # The operator grants below must never become reachable from the API role.
+    guard(
+        ROLE_SEPARATION_VIOLATED,
+        f"a role relationship joins {RUNTIME_ROLE} and {OPERATOR_ROLE} "
+        "(inheritance in either direction, or a login in both); remove it first",
     )
 
     op.drop_constraint("users_identity_subject_key", "users", type_="unique")

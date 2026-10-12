@@ -338,8 +338,13 @@ def _create_tenant(db: Session, label: str, subject: str) -> Tenant:
 def tenants(admin_sessions: sessionmaker[Session]) -> Tenants:
     """Fresh two-tenant data for every test, written as admin (bypasses RLS)."""
     with admin_sessions() as db:
-        # Cascades to memberships, identities and the audit tables.
+        # Cascades to memberships, identities and the audit tables. The audit
+        # tables refuse TRUNCATE (append-only trigger); this disposable test
+        # database is reset by suspending trigger firing for this transaction,
+        # which only a superuser (the local test admin) can do.
+        db.execute(text("SET LOCAL session_replication_role = replica"))
         db.execute(text("TRUNCATE companies, users CASCADE"))
+        db.execute(text("SET LOCAL session_replication_role = origin"))
         attribute_changes(db)
         a = _create_tenant(db, "A", "alice-subject")
         b = _create_tenant(db, "B", "bob-subject")
