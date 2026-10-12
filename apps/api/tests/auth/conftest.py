@@ -26,9 +26,12 @@ from sqlalchemy.pool import StaticPool
 from app.auth.dependencies import CompanyContext, get_authentication_provider
 from app.auth.providers.base import AuthenticationProvider
 from app.auth.providers.cognito import CognitoAccessTokenProvider
-from app.auth.providers.development import DevelopmentAuthenticationProvider
+from app.auth.providers.development import (
+    DEVELOPMENT_ISSUER,
+    DevelopmentAuthenticationProvider,
+)
 from app.db.base import Base
-from app.db.models import Company, Membership, User
+from app.db.models import Company, Membership, User, UserIdentity
 from app.db.session import get_db
 
 TEST_COGNITO_ISSUER = "https://cognito-idp.test.invalid/test-user-pool"
@@ -152,6 +155,8 @@ class SeedData:
     bob: uuid.UUID
     carol: uuid.UUID
     alice_membership_a: uuid.UUID
+    # alice's Cognito binding.
+    alice_identity: uuid.UUID
 
 
 @pytest.fixture
@@ -171,7 +176,13 @@ def session_factory() -> Iterator[sessionmaker[Session]]:
         dbapi_connection.create_function("current_setting", 2, lambda _name, _missing_ok: None)
 
     Base.metadata.create_all(
-        engine, tables=[Company.__table__, User.__table__, Membership.__table__]
+        engine,
+        tables=[
+            Company.__table__,
+            User.__table__,
+            UserIdentity.__table__,
+            Membership.__table__,
+        ],
     )
     yield sessionmaker(bind=engine, autoflush=False)
     engine.dispose()
@@ -182,10 +193,23 @@ def seed(session_factory: sessionmaker[Session]) -> SeedData:
     with session_factory() as db:
         company_a = Company(name="Company A")
         company_b = Company(name="Company B")
-        alice = User(identity_subject="alice-subject")
-        bob = User(identity_subject="bob-subject")
-        carol = User(identity_subject="carol-subject")
+        alice, bob, carol = User(), User(), User()
         db.add_all([company_a, company_b, alice, bob, carol])
+        db.flush()
+        # Exact (issuer, subject) bindings. alice and bob can sign in through
+        # Cognito or the development provider; carol through Cognito only.
+        alice_identity = UserIdentity(
+            user_id=alice.id, issuer=TEST_COGNITO_ISSUER, subject="alice-subject"
+        )
+        db.add_all(
+            [
+                alice_identity,
+                UserIdentity(user_id=alice.id, issuer=DEVELOPMENT_ISSUER, subject="alice-subject"),
+                UserIdentity(user_id=bob.id, issuer=TEST_COGNITO_ISSUER, subject="bob-subject"),
+                UserIdentity(user_id=bob.id, issuer=DEVELOPMENT_ISSUER, subject="bob-subject"),
+                UserIdentity(user_id=carol.id, issuer=TEST_COGNITO_ISSUER, subject="carol-subject"),
+            ]
+        )
         db.flush()
         alice_membership_a = Membership(company_id=company_a.id, user_id=alice.id)
         db.add_all([alice_membership_a, Membership(company_id=company_b.id, user_id=bob.id)])
@@ -197,6 +221,7 @@ def seed(session_factory: sessionmaker[Session]) -> SeedData:
             bob=bob.id,
             carol=carol.id,
             alice_membership_a=alice_membership_a.id,
+            alice_identity=alice_identity.id,
         )
 
 
@@ -220,7 +245,7 @@ def make_client(session_factory: sessionmaker[Session]) -> ClientFactory:
                 "user_id": str(context.user_id),
                 "company_id": str(context.company_id),
                 "membership_id": str(context.membership_id),
-                "identity_subject": context.identity_subject,
+                "identity_id": str(context.identity_id),
             }
 
         def _db() -> Generator[Session, None, None]:

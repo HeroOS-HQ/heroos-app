@@ -17,11 +17,13 @@ def identity(subject: str) -> VerifiedIdentity:
     return VerifiedIdentity(subject=subject, issuer=TEST_COGNITO_ISSUER)
 
 
-def test_identity_resolves_to_user_by_identity_subject(
+def test_identity_resolves_to_user_by_exact_issuer_and_subject(
     session_factory: sessionmaker[Session], seed: SeedData
 ) -> None:
     with session_factory() as db:
-        assert resolve_user(db, identity("alice-subject")).id == seed.alice
+        resolved = resolve_user(db, identity("alice-subject"))
+    assert resolved.user_id == seed.alice
+    assert resolved.identity_id == seed.alice_identity
 
 
 def test_unknown_identity_denied_without_provisioning(
@@ -44,7 +46,7 @@ def test_member_authorized_for_own_company(
     assert context.user_id == seed.alice
     assert context.company_id == seed.company_a
     assert context.membership_id == seed.alice_membership_a
-    assert context.identity_subject == "alice-subject"
+    assert context.identity_id == seed.alice_identity
 
 
 def test_member_of_company_a_denied_company_b(

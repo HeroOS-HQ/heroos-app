@@ -26,9 +26,14 @@ from app.core.config import Settings
 from app.db.session import get_db
 from app.main import create_app
 from tests.auth.conftest import LocalJWKClient
-from tests.tenant_isolation.conftest import TenantDatabase, Tenants, tenant_setting
+from tests.tenant_isolation.conftest import (
+    OIDC_TEST_ISSUER,
+    TenantDatabase,
+    Tenants,
+    tenant_setting,
+)
 
-ISSUER = "https://heroos-demo.idp.test.invalid/"
+ISSUER = OIDC_TEST_ISSUER
 AUDIENCE = "https://api.heroos-demo.test.invalid"
 CLIENT_ID = "web-client-123"
 KID = "tenant-isolation-oidc-key"

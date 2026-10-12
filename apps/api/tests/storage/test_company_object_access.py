@@ -123,7 +123,7 @@ def test_service_accepts_no_caller_supplied_company_key_or_path() -> None:
             user_id=uuid.uuid4(),
             company_id=COMPANY_A,
             membership_id=uuid.uuid4(),
-            identity_subject="alice-subject",
+            identity_id=uuid.uuid4(),
         ),
     ],
 )

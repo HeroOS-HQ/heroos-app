@@ -28,6 +28,9 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 # refuse them for DATABASE_URL.
 LOCAL_DATABASE_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 
+# Matches user_identities.issuer (app.db.models.user_identity.MAX_ISSUER_LENGTH).
+MAX_ISSUER_LENGTH = 512
+
 # HS256 keys shorter than the 256-bit digest weaken the development signature.
 DEV_AUTH_SECRET_MIN_LENGTH = 32
 
@@ -122,6 +125,11 @@ class Settings(DatabaseSettings):
     # server (docs/operations/demo-authentication-deployment.md), so it needs none.
     heroos_cors_allowed_origins: str | None = None
 
+    # The identity operator credential (ADR-008). It belongs only to the operator
+    # CLI's shell, never to a running API: declared here so deployed
+    # environments can refuse it if it is ever configured.
+    heroos_operator_database_url: SecretStr | None = None
+
     @model_validator(mode="after")
     def _validate_cors(self) -> Self:
         parse_cors_origins(self.heroos_cors_allowed_origins, self.heroos_env)
@@ -199,6 +207,15 @@ class Settings(DatabaseSettings):
         if self.heroos_auth_provider == "oidc":
             self._validate_oidc()
 
+        issuers: tuple[tuple[str, str | None], ...] = (
+            ("HEROOS_COGNITO_ISSUER", self.heroos_cognito_issuer),
+            ("HEROOS_OIDC_ISSUER", self.heroos_oidc_issuer),
+        )
+        for name, configured in issuers:
+            # Identities are bound to the exact issuer (user_identities.issuer).
+            if configured is not None and len(configured) > MAX_ISSUER_LENGTH:
+                raise ValueError(f"{name} must be at most {MAX_ISSUER_LENGTH} characters")
+
         return self
 
     def _validate_oidc(self) -> None:
@@ -262,6 +279,10 @@ class Settings(DatabaseSettings):
         if "migration_database_url" in self.model_fields_set:
             raise ValueError(
                 "MIGRATION_DATABASE_URL must not be provided to the API outside development"
+            )
+        if "heroos_operator_database_url" in self.model_fields_set:
+            raise ValueError(
+                "HEROOS_OPERATOR_DATABASE_URL must not be provided to the API outside development"
             )
         return self
 
