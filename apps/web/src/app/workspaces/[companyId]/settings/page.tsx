@@ -1,0 +1,98 @@
+import type { Metadata } from "next";
+import { Suspense } from "react";
+
+import { AppShell } from "@/components/app/app-shell";
+import { LoadingView } from "@/components/app/loading-view";
+import {
+  AccessDeniedView,
+  ApiUnavailableView,
+  NotConfiguredView,
+  SessionExpiredView,
+  SignedOutView,
+} from "@/components/app/state-views";
+import { ArrowLeftIcon } from "@/components/site/icons";
+import { CompanySettingsForm } from "@/components/settings/company-settings-form";
+import { Notice } from "@/components/ui/notice";
+import { buttonQuiet, card, lede, pageTitle, sectionTitle } from "@/components/ui/styles";
+import { CompanyFacts } from "@/components/workspace/company-facts";
+import { JurisdictionStatus } from "@/components/workspace/jurisdiction-status";
+import { loadWorkspace } from "@/lib/server/app-state";
+
+export const metadata: Metadata = { title: "Company details · HeroOS" };
+
+/**
+ * Screen H. PROFILE_EDITABLE for an administrator (per the API's membership
+ * answer), PROFILE_READ_ONLY for a member. The API enforces the role on save.
+ */
+export default function SettingsPage({ params }: PageProps<"/workspaces/[companyId]/settings">) {
+  return (
+    <Suspense fallback={<LoadingView label="Loading company details…" />}>
+      <SettingsContent params={params} />
+    </Suspense>
+  );
+}
+
+async function SettingsContent({ params }: Pick<PageProps<"/workspaces/[companyId]/settings">, "params">) {
+  const { companyId } = await params;
+  const state = await loadWorkspace(companyId);
+  switch (state.kind) {
+    case "not_configured":
+      return <NotConfiguredView />;
+    case "signed_out":
+      return <SignedOutView />;
+    case "session_expired":
+      return <SessionExpiredView />;
+    case "access_denied":
+      return <AccessDeniedView />;
+    case "api_unavailable":
+      return <ApiUnavailableView retryHref={`/workspaces/${encodeURIComponent(companyId)}/settings`} />;
+    case "workspace_ready":
+      break;
+  }
+  const { company, membership, blueprint } = state.details;
+  const editable = membership?.canUpdateBlueprint === true && blueprint !== null;
+  return (
+    <AppShell
+      context={company.name}
+      switcher={{ currentId: company.id, items: state.workspaces.map(({ companyId: id, name }) => ({ companyId: id, name })) }}
+    >
+      <div className="mx-auto flex w-full max-w-[52rem] flex-col gap-6 px-4 py-8 sm:px-6 sm:py-12">
+        <div>
+          <a className={buttonQuiet} href={`/workspaces/${encodeURIComponent(company.id)}`}>
+            <ArrowLeftIcon className="size-4" />
+            {company.name}
+          </a>
+          <h1 className={`${pageTitle} mt-3`}>Company details</h1>
+          <p className={`mt-2 ${lede}`}>
+            {editable
+              ? "Keep your company profile up to date. Changes are saved only when you select “Save changes”."
+              : "Your company's saved profile."}
+          </p>
+        </div>
+        {blueprint === null ? (
+          <Notice title="Company profile isn't available yet">
+            This HeroOS service doesn&apos;t provide company profiles yet.
+          </Notice>
+        ) : editable ? (
+          // Keyed by Company: switching Companies never carries form state over.
+          <CompanySettingsForm companyId={company.id} companyName={company.name} initial={blueprint} key={company.id} />
+        ) : (
+          <>
+            <Notice title="View only">Only company administrators can change these details.</Notice>
+            <section aria-labelledby="profile-heading" className={`${card} p-5 sm:p-8`}>
+              <h2 className={sectionTitle} id="profile-heading">
+                Company profile
+              </h2>
+              <div className="mt-3">
+                <CompanyFacts blueprint={blueprint} />
+              </div>
+              <div className="mt-5">
+                <JurisdictionStatus jurisdiction={blueprint.jurisdiction} />
+              </div>
+            </section>
+          </>
+        )}
+      </div>
+    </AppShell>
+  );
+}

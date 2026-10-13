@@ -25,8 +25,9 @@ export type AuthConfig = {
   /** HeroOS API base URL (Render), without trailing slash. */
   apiBaseUrl: string;
   /**
-   * Candidate demo Companies (trusted server-side configuration). Only a
-   * candidate-list: access is still decided per Company by the API's Membership check.
+   * Optional legacy demo candidates (trusted server-side configuration), used
+   * only when the API has no `GET /me/companies` (before M1-10C). Candidates
+   * grant nothing: access is still decided per Company by the API. Empty when unset.
    */
   demoCompanyIds: string[];
   /** 32-byte key material for sealing cookies. */
@@ -41,11 +42,16 @@ type Env = Record<string, string | undefined>;
 
 const MAX_DEMO_COMPANIES = 5;
 
-/** `HEROOS_DEMO_COMPANY_IDS` (comma-separated), else the single `HEROOS_DEMO_COMPANY_ID`. */
+/**
+ * `HEROOS_DEMO_COMPANY_IDS` (comma-separated), else the single
+ * `HEROOS_DEMO_COMPANY_ID`, else none. Optional since M1-10D (workspace
+ * discovery comes from the API); a value that is set must still be valid.
+ */
 function parseCompanyIds(env: Env): string[] | null {
   const list = env.HEROOS_DEMO_COMPANY_IDS;
   if (list === undefined || list === "") {
     const single = env.HEROOS_DEMO_COMPANY_ID ?? "";
+    if (single === "") return [];
     return UUID.test(single) ? [single] : null;
   }
   const ids = list.split(",");

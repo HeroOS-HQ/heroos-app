@@ -16,6 +16,8 @@ import { seal, unseal } from "./sealed";
  * - Only the access token is kept. ID and refresh tokens from the token response
  *   are discarded, so a session ends when its access token expires.
  * - Redirect targets are fixed (never taken from the request): no open redirect.
+ *   The only variation is the sign-in *intent*, sealed in the login cookie:
+ *   `signup` (first-time founders, M1-10D) lands on `/onboarding`, `login` on `/`.
  * - Failures redirect to `/?auth=<fixed code>`; provider error text is never echoed.
  */
 
@@ -30,7 +32,11 @@ const TOKEN_TIMEOUT_MS = 10_000;
 
 export type AuthOutcome = "failed" | "cancelled" | "expired" | "unavailable";
 
-type LoginTransaction = { state: string; verifier: string; exp: number };
+/** Why the user is signing in. Each intent has one fixed landing path. */
+export type LoginIntent = "login" | "signup";
+const LANDING: Record<LoginIntent, string> = { login: "/", signup: "/onboarding" };
+
+type LoginTransaction = { state: string; verifier: string; exp: number; intent: LoginIntent };
 export type Session = { accessToken: string; exp: number };
 
 const seconds = (deps: Deps) => Math.floor(deps.now() / 1000);
@@ -45,8 +51,17 @@ function outcome(config: AuthConfig, code: AuthOutcome, cookies: string[]): Resp
   return redirect(`${config.webOrigin}/?auth=${code}`, cookies);
 }
 
-/** GET /auth/login: new state + PKCE verifier in a sealed 10-minute cookie, then the provider. */
-export async function startLogin(config: AuthConfig, deps: Deps): Promise<Response> {
+/**
+ * GET /auth/login and GET /auth/signup: new state + PKCE verifier (and the
+ * intent) in a sealed 10-minute cookie, then the provider's hosted page.
+ *
+ * `signup` asks an OpenID Provider for its hosted sign-up screen with the fixed
+ * Auth0 hint `screen_hint=signup` (other providers ignore unknown parameters and
+ * show their login page, which links to sign-up). Cognito's managed login is
+ * opened unchanged. Whether public sign-up is allowed at all is the provider's
+ * configuration, not this code's.
+ */
+export async function startLogin(config: AuthConfig, deps: Deps, intent: LoginIntent = "login"): Promise<Response> {
   const endpoints = await resolveEndpoints(config, deps);
   if (endpoints === null) return outcome(config, "unavailable", []);
   const state = createState();
@@ -55,6 +70,7 @@ export async function startLogin(config: AuthConfig, deps: Deps): Promise<Respon
     state,
     verifier,
     exp: seconds(deps) + LOGIN_TTL_SECONDS,
+    intent,
   };
   const authorize = new URL(endpoints.authorization);
   const params: Record<string, string> = {
@@ -69,6 +85,7 @@ export async function startLogin(config: AuthConfig, deps: Deps): Promise<Respon
   if (config.provider.kind === "oidc") {
     // Requests a JWT access token for the HeroOS API (its `aud`).
     params.audience = config.provider.audience;
+    if (intent === "signup") params.screen_hint = "signup";
   }
   for (const [name, value] of Object.entries(params)) authorize.searchParams.set(name, value);
   return redirect(
@@ -80,11 +97,12 @@ export async function startLogin(config: AuthConfig, deps: Deps): Promise<Respon
 
 function parseTransaction(value: unknown): LoginTransaction | null {
   if (typeof value !== "object" || value === null) return null;
-  const { state, verifier, exp } = value as Record<string, unknown>;
+  const { state, verifier, exp, intent } = value as Record<string, unknown>;
   if (typeof state !== "string" || typeof verifier !== "string" || typeof exp !== "number") {
     return null;
   }
-  return { state, verifier, exp };
+  // Login cookies sealed before M1-10D carry no intent: they were sign-ins.
+  return { state, verifier, exp, intent: intent === "signup" ? "signup" : "login" };
 }
 
 /** GET /auth/callback: validate state, exchange the code server-side, set the session. */
@@ -150,7 +168,10 @@ export async function completeLogin(request: Request, config: AuthConfig, deps: 
   const session: Session = { accessToken, exp: seconds(deps) + expiresIn };
   const sealed = seal(session, config.sessionSecret, "session");
   if (sealed.length > MAX_SEALED_SESSION_LENGTH) return outcome(config, "failed", cookies);
-  return redirect(`${config.webOrigin}/`, [...cookies, serializeCookie(SESSION_COOKIE, sealed, expiresIn)]);
+  return redirect(`${config.webOrigin}${LANDING[transaction.intent]}`, [
+    ...cookies,
+    serializeCookie(SESSION_COOKIE, sealed, expiresIn),
+  ]);
 }
 
 export function parseSession(value: unknown, nowSeconds: number): Session | null {
@@ -160,19 +181,32 @@ export function parseSession(value: unknown, nowSeconds: number): Session | null
   return { accessToken, exp };
 }
 
+/** The session sealed in a request's cookie header, or null (route handlers). */
+export function sessionFromRequest(request: Request, config: AuthConfig, nowSeconds: number): Session | null {
+  const sealed = readCookie(request.headers.get("cookie"), SESSION_COOKIE);
+  return parseSession(unseal(sealed, config.sessionSecret, "session"), nowSeconds);
+}
+
+/**
+ * Whether a state-changing request comes from this web app's own pages (CSRF
+ * defence for logout and the BFF mutations). The `Origin` must equal the web
+ * origin; browsers send `Origin: null` on same-origin posts under
+ * `Referrer-Policy: no-referrer`, and only `Sec-Fetch-Site: same-origin` can
+ * vouch for those. A request with neither is refused.
+ */
+export function isSameOriginRequest(request: Request, config: AuthConfig): boolean {
+  const origin = request.headers.get("origin");
+  const fetchSite = request.headers.get("sec-fetch-site");
+  return origin !== null && origin !== "null" ? origin === config.webOrigin : fetchSite === "same-origin";
+}
+
 /**
  * POST /auth/logout: same-origin only (blocks cross-site logout forcing), clears
  * both cookies, then ends the provider session when the provider supports it.
  * The local session is cleared even when the provider is unreachable.
  */
 export async function logout(request: Request, config: AuthConfig, deps: Deps): Promise<Response> {
-  const origin = request.headers.get("origin");
-  const fetchSite = request.headers.get("sec-fetch-site");
-  // Browsers send `Origin: null` on same-origin form posts under
-  // `Referrer-Policy: no-referrer`; only Sec-Fetch-Site can vouch for those.
-  const sameOrigin =
-    origin !== null && origin !== "null" ? origin === config.webOrigin : fetchSite === "same-origin";
-  if (!sameOrigin) {
+  if (!isSameOriginRequest(request, config)) {
     return new Response("Forbidden", { status: 403, headers: { "Cache-Control": "no-store" } });
   }
   const endpoints = await resolveEndpoints(config, deps);

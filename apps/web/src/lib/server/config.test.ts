@@ -23,7 +23,6 @@ describe("readAuthConfig", () => {
         "HEROOS_WEB_ORIGIN",
         "HEROOS_WEB_AUTH_PROVIDER",
         "HEROOS_API_BASE_URL",
-        "HEROOS_DEMO_COMPANY_ID",
         "HEROOS_WEB_SESSION_SECRET",
       ],
     });
@@ -77,6 +76,11 @@ describe("readAuthConfig", () => {
   it("falls back to the single HEROOS_DEMO_COMPANY_ID", () => {
     const result = readAuthConfig(ENV);
     expect(result.ok && result.config.demoCompanyIds).toEqual([ENV.HEROOS_DEMO_COMPANY_ID]);
+  });
+
+  it("needs no demo Company at all: workspaces come from the API (M1-10D)", () => {
+    const result = readAuthConfig({ ...ENV, HEROOS_DEMO_COMPANY_ID: undefined, HEROOS_DEMO_COMPANY_IDS: "" });
+    expect(result.ok && result.config.demoCompanyIds).toEqual([]);
   });
 
   it("allows plain-http localhost only outside production", () => {

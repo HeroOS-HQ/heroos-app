@@ -18,6 +18,15 @@
   --hero-yellow-tint: #fff8d1;
   --hero-blue-ink: #2f57a8;
 
+  /* App states (onboarding and workspace). Status is always also written in
+     words; these only support it. `--hero-control` is the form-control border:
+     3.1:1 against white (WCAG 1.4.11), where the decorative border is not. */
+  --hero-control: #8593ab;
+  --hero-danger: #a12239;
+  --hero-danger-tint: #fff1f2;
+  --hero-success: #1d6b40;
+  --hero-success-tint: #ecf7f0;
+
   color-scheme: light;
 }
 
@@ -35,6 +44,11 @@
   --color-hero-blue-tint: var(--hero-blue-tint);
   --color-hero-yellow-tint: var(--hero-yellow-tint);
   --color-hero-blue-ink: var(--hero-blue-ink);
+  --color-hero-control: var(--hero-control);
+  --color-hero-danger: var(--hero-danger);
+  --color-hero-danger-tint: var(--hero-danger-tint);
+  --color-hero-success: var(--hero-success);
+  --color-hero-success-tint: var(--hero-success-tint);
   --font-sans: var(--font-heroos-sans);
   --shadow-hero-card: 0 1px 2px rgb(14 30 61 / 0.04), 0 8px 24px -12px rgb(14 30 61 / 0.12);
   --shadow-hero-card-hover: 0 2px 4px rgb(14 30 61 / 0.05), 0 16px 32px -14px rgb(14 30 61 / 0.2);
