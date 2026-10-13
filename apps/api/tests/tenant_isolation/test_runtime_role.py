@@ -203,7 +203,6 @@ def test_runtime_role_has_only_required_table_privileges(
             "LANGUAGE sql AS $$ SELECT NULL::uuid $$",
             id="replace-context-function",
         ),
-        pytest.param("SET ROLE heroos", id="set-role-admin"),
         pytest.param("CREATE ROLE intruder BYPASSRLS", id="create-role"),
     ],
 )
@@ -214,6 +213,30 @@ def test_runtime_role_cannot_change_schema_or_security(
         conn.execute(text(statement))
 
     # 42501 insufficient_privilege / must be owner.
+    assert getattr(exc_info.value.orig, "sqlstate", None) == "42501"
+
+
+def test_runtime_role_cannot_assume_the_admin_role(
+    runtime_engine: Engine, admin_engine: Engine, tenant_database: TenantDatabase
+) -> None:
+    # The migration/admin role is whatever the suite connects as: `heroos` locally
+    # and in CI, `supabase_admin` on the Supabase image. Hardcoding the name made
+    # PostgreSQL answer 22023 (undefined role) instead of 42501 on other clusters,
+    # which proves nothing about privileges.
+    admin_role = make_url(tenant_database.admin_url).username
+    assert admin_role
+    with admin_engine.connect() as conn:
+        # Ground truth: the role exists, is the one connected, and owns the schema.
+        assert conn.scalar(text("SELECT current_user")) == admin_role
+        assert conn.scalar(text("SELECT tableowner FROM pg_tables WHERE tablename = 'cases'")) == (
+            admin_role
+        )
+
+    quoted = runtime_engine.dialect.identifier_preparer.quote(admin_role)
+    with runtime_engine.connect() as conn, pytest.raises(DBAPIError) as exc_info:
+        conn.execute(text(f"SET ROLE {quoted}"))
+
+    # 42501 insufficient_privilege: the role exists and the runtime role may not become it.
     assert getattr(exc_info.value.orig, "sqlstate", None) == "42501"
 
 
