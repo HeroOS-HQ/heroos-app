@@ -153,6 +153,8 @@ OpenID Provider for the pre-M5 demo, Cognito from M5) and keeps
 the access token server-side in a sealed `HttpOnly` cookie; its settings are in
 `apps/web/.env.example`. Deployment of the temporary demo is described in
 [docs/operations/demo-authentication-deployment.md](docs/operations/demo-authentication-deployment.md).
+Sign-up, founder onboarding, workspace discovery and Company settings (M1-10D):
+[Customer Onboarding and Workspace UI](docs/architecture/web-onboarding.md).
 
 ## Private Storage, Logging and Production Gates
 

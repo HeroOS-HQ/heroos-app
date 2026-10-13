@@ -416,14 +416,30 @@ Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Author
 - **No prerendering of auth routes**: every auth route handler awaits
   `connection()`, so state and verifiers are generated per request (with Cache
   Components a GET handler that reads no request data would be built once).
-- **Company choice**: the web app lists only those configured candidate
-  Companies (`HEROOS_DEMO_COMPANY_IDS`; the legacy single `HEROOS_DEMO_COMPANY_ID`
-  still works) that the API authorizes for the signed-in user. The IDs are only
-  resource identifiers: the API's identity-binding and Membership checks decide
-  access, exactly as for any client-supplied ID. A user without an active
-  binding, or whose User is suspended, gets the same 403 for every candidate, so
-  the web lists nothing and shows the "no access" message. This demo discovery
-  is superseded by `GET /me/companies` (M1-10C) once M1-10D switches to it.
+- **Sign-up entry** (M1-10D): `GET /auth/signup` is the same flow with a
+  fixed `screen_hint=signup` (OIDC only; Auth0 opens its sign-up form, other
+  providers ignore the parameter). It lands on `/onboarding` after the callback.
+  The landing path travels in the sealed login cookie, never in the URL.
+  Whether sign-up is possible is the provider's setting.
+- **Company choice** (M1-10D): `GET /me/companies` lists the user's
+  workspaces. `HEROOS_DEMO_COMPANY_IDS` (or the legacy single
+  `HEROOS_DEMO_COMPANY_ID`) is now optional. It is used only when the API has no
+  `/me/companies` (answers 404, an API older than M1-10C), and the API still
+  authorizes each candidate. The IDs are only resource identifiers in either
+  case: the API's identity-binding and Membership checks decide access.
+- **Mutations** (M1-10D): `POST /bff/registrations` and
+  `PATCH /bff/companies/{id}/blueprint` are Route Handlers on the web server.
+  - They accept only same-origin requests. The check is the same as logout's:
+    `Origin`, or `Sec-Fetch-Site` when the browser sends `Origin: null` under
+    `no-referrer`.
+  - They also require JSON within 16 KiB and a session.
+  - The body is parsed strictly and rebuilt before the API is called with the
+    session's token.
+  - Responses are fixed codes, `no-store`.
+
+  Server Actions are not used because their origin check rejects
+  `Origin: null`. Details:
+  [Customer Onboarding and Workspace UI §7](web-onboarding.md#7-security).
 
 Why not tokens in the browser: HeroOS handles HR data, and a script injection
 could read tokens kept in `localStorage`/`sessionStorage`. The session design

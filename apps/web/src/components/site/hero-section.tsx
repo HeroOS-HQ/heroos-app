@@ -30,9 +30,9 @@ export function HeroSection() {
             <p>Just describe your situation.</p>
           </div>
           <div className="enter enter-3 mt-10 flex flex-col gap-4 sm:flex-row">
-            {/* A plain link, not next/link: the login route must not be prefetched. */}
-            <a className={primaryCta} href="/auth/login">
-              Sign in to HeroOS
+            {/* Plain links, not next/link: the auth routes must not be prefetched. */}
+            <a className={primaryCta} href="/auth/signup">
+              Get started
               <ArrowRightIcon className="size-4 transition-transform duration-200 group-hover:translate-x-0.5" />
             </a>
             <a className={secondaryCta} href="#how-it-works">
@@ -40,6 +40,12 @@ export function HeroSection() {
               <ArrowRightIcon className="size-4 transition-transform duration-200 group-hover:translate-x-0.5" />
             </a>
           </div>
+          <p className="enter enter-3 mt-5 text-base text-hero-muted">
+            Already have an account?{" "}
+            <a className="font-bold text-hero-blue-ink underline-offset-4 hover:underline" href="/auth/login">
+              Sign in
+            </a>
+          </p>
           <DemoNotice className="enter enter-4 mt-8" />
         </div>
 

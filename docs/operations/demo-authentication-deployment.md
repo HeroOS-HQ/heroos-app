@@ -21,7 +21,7 @@ credential or data needs explicit approval first. Nothing here has been run.
 | Tokens | RFC 9068 JWT access tokens for the HeroOS API audience; ID tokens are never accepted by the API |
 | Users | Admin-created only (public sign-up disabled): the two synthetic demo users |
 | Callback | One stable Vercel **production** domain; previews are not registered |
-| Company | `HEROOS_DEMO_COMPANY_IDS` (candidate list; legacy single `HEROOS_DEMO_COMPANY_ID` still works). The web asks the API about each candidate and lists only those the API's Membership check authorizes |
+| Company | `GET /me/companies` (M1-10C API, M1-10D web). `HEROOS_DEMO_COMPANY_IDS` (or the legacy single `HEROOS_DEMO_COMPANY_ID`) is optional: it is used only against an API without `/me/companies`, and the API still authorizes each candidate |
 | CORS | Not needed (`HEROOS_CORS_ALLOWED_ORIGINS` unset): the browser never calls the API |
 
 ## 2. Provider requirements (checklist for selection)
@@ -164,7 +164,7 @@ Project root `apps/web`, Next.js, pnpm workspace install. Variables for the
 | `HEROOS_OIDC_CLIENT_ID` | the web client ID | no |
 | `HEROOS_OIDC_AUDIENCE` | same as the API | no |
 | `HEROOS_API_BASE_URL` | `https://<render-service>.onrender.com` | no |
-| `HEROOS_DEMO_COMPANY_IDS` | `d3e0a000-0000-4000-8000-000000000001,d3e0b000-0000-4000-8000-000000000001` (synthetic Companies A and B; max 5, comma-separated, no spaces). Candidates only: the API still authorizes each one. Falls back to `HEROOS_DEMO_COMPANY_ID` when unset | no |
+| `HEROOS_DEMO_COMPANY_IDS` | Optional, legacy. `d3e0a000-0000-4000-8000-000000000001,d3e0b000-0000-4000-8000-000000000001` (synthetic Companies A and B; max 5, comma-separated, no spaces). Keep it while the Render API predates M1-10C; remove it once `GET /me/companies` is live. Candidates only: the API still authorizes each one. Falls back to `HEROOS_DEMO_COMPANY_ID` when unset | no |
 | `HEROOS_WEB_SESSION_SECRET` | `openssl rand -hex 32` | **yes** (Sensitive) |
 
 ## 7. Smoke test after deployment
@@ -174,15 +174,17 @@ Project root `apps/web`, Next.js, pnpm workspace install. Variables for the
    token from the provider → 401.
 3. Web response headers: nonce CSP with `form-action 'self' <issuer origin>`,
    `nosniff`, `DENY`, HSTS.
-4. Sign in as `demo-alpha-admin` → Company A and its cases. Only Companies the
-   API authorizes are listed: a configured candidate the API answers 403 for
-   (`HEROOS_DEMO_COMPANY_IDS` may name more than A) never appears.
+4. Sign in as `demo-alpha-admin` → Company A's workspace and its cases (or the
+   chooser, if the account has more than one Company). Only Companies the API
+   authorizes are listed.
 5. Sign out → provider logout (or local sign-out), back to the signed-out page.
-6. Sign in as `demo-beta-admin` → Company A is not listed and its cases are not
-   shown. If `demo-beta-admin` is authorized for none of the configured
-   candidates the page says "Your account does not have access to the demo
-   company."; if it is authorized for another configured candidate (e.g. Company
-   B), that Company and its cases are shown instead.
+6. Sign in as `demo-beta-admin` → Company A is not listed, and
+   `/workspaces/<A>` shows "You don't have access to this workspace". With no
+   active Membership the page says "No active workspace". An identity HeroOS
+   doesn't know sees the neutral "Let's set up your company workspace"
+   welcome; nothing is created unless the person completes onboarding.
+   (Against an API from before M1-10C, the configured candidates decide what is
+   listed, as before.)
 7. No token in `localStorage`, `sessionStorage` or any non-`HttpOnly` cookie.
 8. Tampered session cookie → signed out; `GET /auth/logout` → 405.
 
@@ -190,7 +192,7 @@ Project root `apps/web`, Next.js, pnpm workspace install. Variables for the
 
 - An access token stays valid until it expires (≤ 60 min) after sign-out
   (stateless API verification); only the web server ever holds it.
-- No session renewal; one configured Company.
+- No session renewal.
 - If the provider's discovery or JWKS is unreachable, sign-in reports
   "unavailable" and API requests get 401 (fail closed).
 

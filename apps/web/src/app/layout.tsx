@@ -27,6 +27,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
     <html
       lang="en"
       className={`${heroosSans.variable} h-full antialiased`}
+      // globals.css scrolls smoothly for in-page links; this Next.js 16 opt-in
+      // makes route changes scroll instantly, so they can't race to a wrong spot.
+      data-scroll-behavior="smooth"
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

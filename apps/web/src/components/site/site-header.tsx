@@ -11,13 +11,16 @@ const NAV_ITEMS = [
   { id: "platform", label: "Platform", href: "#platform" },
 ] as const;
 
-const signInClass =
+const getStartedClass =
   "inline-flex h-11 items-center justify-center rounded-full bg-hero-yellow px-5 text-sm font-bold text-hero-navy transition-[background-color,box-shadow,transform] duration-200 hover:-translate-y-px hover:shadow-md focus-visible:-translate-y-px sm:px-6";
+const signInClass =
+  "hidden h-11 items-center justify-center rounded-full px-4 text-sm font-bold text-hero-navy transition-colors duration-200 hover:bg-hero-blue-tint sm:inline-flex";
 
 /**
- * Landing: wordmark, in-page navigation, Sign in. Workspace: wordmark only (the
- * workspace has its own sign-out control). Navigation targets are sections of
- * the landing page itself; there is no Pricing or Contact page to link to yet.
+ * Landing: wordmark, in-page navigation, Sign in and Get started (hosted
+ * sign-up, then company onboarding). Workspace: wordmark only (the workspace
+ * has its own sign-out control). Navigation targets are sections of the landing
+ * page itself; there is no Pricing or Contact page to link to yet.
  */
 export function SiteHeader({ variant }: { variant: "landing" | "workspace" }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -75,10 +78,13 @@ export function SiteHeader({ variant }: { variant: "landing" | "workspace" }) {
                 ))}
               </ul>
             </nav>
-            <div className="flex items-center gap-2">
-              {/* A plain link, not next/link: the login route must not be prefetched. */}
+            <div className="flex items-center gap-1 sm:gap-2">
+              {/* Plain links, not next/link: the auth routes must not be prefetched. */}
               <a className={signInClass} href="/auth/login">
                 Sign in
+              </a>
+              <a className={getStartedClass} href="/auth/signup">
+                Get started
               </a>
               <button
                 ref={toggleRef}
@@ -115,6 +121,14 @@ export function SiteHeader({ variant }: { variant: "landing" | "workspace" }) {
                 </a>
               </li>
             ))}
+            <li>
+              <a
+                className="flex min-h-12 items-center border-b border-hero-border text-base font-bold text-hero-blue-ink"
+                href="/auth/login"
+              >
+                Sign in
+              </a>
+            </li>
           </ul>
         </nav>
       ) : null}

@@ -1,6 +1,6 @@
 # Company Registration, Administrators and Jurisdiction (Runbook)
 
-**Status:** Implemented on a feature branch (M1-10C); nothing here has been run against a deployed database or identity provider\
+**Status:** M1-10C merged (`f2f1325`); the M1-10D web onboarding is on a feature branch. Nothing here has been run against a deployed database or identity provider\
 **Owner:** Technical Lead\
 **Related:** [ADR-010](../decisions/ADR-010-company-registration-and-administrators.md),
 [ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md),
@@ -131,17 +131,23 @@ fixed strings and must not be rendered.
 
 ### Onboarding flow
 
+As implemented by the web app (M1-10D; routes, states and copy in
+[Customer Onboarding and Workspace UI](../architecture/web-onboarding.md)):
+
 ```text
-sign in (provider) ──▶ GET /me/companies
-                         ├─ 200 [..]  → workspace list / the single workspace
-                         ├─ 200 []    → "no active access" (all Memberships revoked)
-                         └─ 403       → not provisioned yet → onboarding form
-onboarding form ──▶ POST /company-registrations
-                         ├─ 201 created  → open /companies/{company_id}
-                         ├─ 200 existing → same (retry, second tab, other sign-in)
+sign in or sign up (provider) ──▶ GET /me/companies
+                         ├─ 200 [..]  → the single workspace / the chooser
+                         ├─ 200 []    → "no active workspace" (all Memberships revoked)
+                         └─ 403       → neutral welcome; the 403 is not proof of
+                                        eligibility (a blocked identity looks the same)
+"Set up my company" (deliberate click) ──▶ three-step form ──▶ "Create my workspace"
+                     ──▶ POST /bff/registrations ──▶ POST /company-registrations
+                         ├─ 201 created  → /workspaces/{company_id}/ready
+                         ├─ 200 existing → same page, "your existing workspace wasn't changed"
                          ├─ 403          → account suspended / access revoked
                          ├─ 404          → self-registration not enabled
-                         └─ 422          → fix the form
+                         ├─ 422          → fix the named fields
+                         └─ 5xx/timeout  → outcome unknown; retry is safe (idempotent)
 ```
 
 ### `POST /company-registrations`
@@ -214,3 +220,6 @@ UI rules from the 13 October direction:
   the API did not return. For `unsupported`, explain that HeroOS V1 does not
   cover that jurisdiction.
 - No jurisdiction quiz.
+
+M1-10D follows these rules (offering "I'm not sure", with free text for Other).
+See [Customer Onboarding and Workspace UI §6](../architecture/web-onboarding.md#6-jurisdiction-ui).
