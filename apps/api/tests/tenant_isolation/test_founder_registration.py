@@ -323,6 +323,39 @@ def test_retries_return_the_same_company_and_create_nothing(
     )
 
 
+def test_a_demoted_founder_retrying_registration_is_told_the_role_actually_held(
+    client: TestClient, admin_engine: Engine, operator_engine: Engine, tenants: Tenants, auth: Any
+) -> None:
+    # M1-10E: the answer used to re-assert company_admin for every earlier
+    # registration, even after an operator had demoted the founder.
+    founder = auth("demoted-founder-subject")
+    first = client.post(URL, headers=founder, json={"company_name": "Demoted Ltd"}).json()
+    company = uuid.UUID(first["company_id"])
+    membership = uuid.UUID(first["membership_id"])
+    operator_change(
+        operator_engine,
+        lambda session: service.set_membership_role(
+            session, company_id=company, membership_id=membership, role="member"
+        ),
+    )
+    before = table_counts(admin_engine)
+
+    again = client.post(URL, headers=founder, json={"company_name": "Demoted Ltd"})
+
+    assert again.status_code == 200
+    assert again.json() == {**first, "outcome": "existing", "role": "member"}
+    membership_view = client.get(f"/companies/{company}/membership", headers=founder).json()
+    assert membership_view["role"] == "member"
+    # Nothing was granted or created by asking again.
+    assert table_counts(admin_engine) == before
+    assert (
+        client.patch(
+            f"/companies/{company}/blueprint", headers=founder, json={"industry": "x"}
+        ).status_code
+        == 403
+    )
+
+
 def _wait_for_lock_wait(admin_engine: Engine, timeout: float = 20.0) -> None:
     deadline = time.monotonic() + timeout
     with admin_engine.connect() as conn:

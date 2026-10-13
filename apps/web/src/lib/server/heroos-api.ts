@@ -223,7 +223,10 @@ export function parseRegistration(body: unknown): Registration | null {
     (body.outcome !== "created" && body.outcome !== "existing") ||
     !isId(body.company_id) ||
     !isId(body.membership_id) ||
-    body.role !== "company_admin"
+    // A new registration always makes its founder company_admin. An earlier one
+    // reports the role held now (an operator may have demoted the founder);
+    // the ready page reads the Membership again either way.
+    (body.outcome === "created" ? body.role !== "company_admin" : body.role !== "company_admin" && body.role !== "member")
   ) {
     return null;
   }

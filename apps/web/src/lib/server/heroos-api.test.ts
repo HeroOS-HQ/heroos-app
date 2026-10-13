@@ -307,6 +307,16 @@ describe("registerCompany", () => {
     expect(result).toMatchObject({ ok: true, data: { outcome: "existing", companyId: COMPANY_ID } });
   });
 
+  it("accepts an existing registration whose founder has since been demoted to member", async () => {
+    const result = await registerCompany(
+      TOKEN,
+      CONFIG,
+      PAYLOAD,
+      asFetch(api({ "/company-registrations": json({ ...REGISTERED, outcome: "existing", role: "member" }) })),
+    );
+    expect(result).toMatchObject({ ok: true, data: { outcome: "existing", companyId: COMPANY_ID } });
+  });
+
   it.each([
     [401, "unauthenticated"],
     [403, "forbidden"],

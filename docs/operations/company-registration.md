@@ -176,6 +176,10 @@ Response `201` (created) or `200` (existing):
 {"outcome": "created", "company_id": "…", "membership_id": "…", "role": "company_admin"}
 ```
 
+`role` is always `company_admin` for `created`. For `existing` it is the role
+the person holds in that Company now: an operator may have demoted the founder
+since. M1-10E fixed an answer that re-asserted `company_admin` there.
+
 ### `GET /me/companies`
 
 `[{"company_id": "…", "name": "…", "membership_id": "…", "role": "company_admin"}]`,
