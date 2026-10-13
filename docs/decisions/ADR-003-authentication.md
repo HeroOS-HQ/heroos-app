@@ -80,7 +80,8 @@ HeroOS User
 Company Membership
   |
   v
-Authorized Tenant Context```
+Authorized Tenant Context
+```
 
 ---
 
@@ -138,6 +139,9 @@ synthetic data only, and still needs real per-user sign-in.
    CSRF protections and tenant authorization; only the endpoints (OIDC
    discovery) and the sign-out style differ by provider.
 4. Identity mapping is unchanged: the provider's `sub` is `users.identity_subject`.
+   *(Superseded by [ADR-008](ADR-008-external-identity-and-provisioning.md) if
+   adopted: the exact `(issuer, subject)` is bound in `user_identities`, and
+   moving to Cognito adds a binding instead of re-mapping.)*
    Only one provider is configured at a time; moving to Cognito at M5 re-maps
    the (synthetic) Users.
 5. Rejected for the demo: Supabase Auth (no hosted login for email/password, so

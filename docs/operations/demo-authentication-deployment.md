@@ -111,9 +111,9 @@ to Supabase is a separately approved deployment step.
 
 Docker service from `apps/api/Dockerfile` (build context: repository root),
 health check `/health`, port 8000. Auto-deploy **off** until approved. This is
-the required setting, not a recorded fact: before merging anything that changes
-the API, check it with the
-[pre-merge safety gate](identity-provisioning.md#pre-merge-safety-gate-render).
+the required setting, not a recorded fact: check it before merging anything that
+changes the API (recommended) and before any database migration (required); see
+the [merge and deployment checks](identity-provisioning.md#merge-and-deployment-checks-render-github-supabase).
 `/health` does not touch the database; the API's database and schema checks run
 at startup.
 

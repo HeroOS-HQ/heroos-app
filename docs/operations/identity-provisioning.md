@@ -19,7 +19,7 @@ synthetic only.
 | --- | --- | --- |
 | API runtime login (`heroos_app`) | the API service (`DATABASE_URL`) | provisioning; the operator CLI refuses it |
 | Identity operator login (`heroos_op_<handle>`) | the Technical Lead only, in every environment including production (policy D1); on their workstation only (`~/.pgpass`, 0600) | the API, Render, Vercel or CI. The API refuses to start with it |
-| Migration owner | Technical Lead, for Alembic only | the API or the operator CLI (both refuse it) |
+| Migration owner | Technical Lead, for Alembic and the documented backup/restore procedure (any other use needs a recorded exception, §8) | the API or the operator CLI (both refuse it) |
 
 Handles are opaque, for example `heroos_op_01` (policy D6). The Technical Lead
 keeps the handle-to-person mapping securely, outside the repository. The
@@ -114,51 +114,54 @@ reconcile every event:
 
 ## 3. Deploying the identity migrations (approval required)
 
-### Pre-merge safety gate (Render)
+### Merge and deployment checks (Render, GitHub, Supabase)
 
-Merging this work into `main` must not deploy anything. Before the merge, every
-row below is checked and recorded with evidence (no secrets) in the pull
-request. A row without evidence means: do not merge.
+Merging this work must not deploy or activate anything. Checks G1–G7 are split
+by when they are needed: **before merge** (the merge itself must stay
+inactive) or **before deployment** (step 3 below). Evidence is recorded in the
+pull request, never secrets.
 
-| # | Check | How | Why |
-| --- | --- | --- | --- |
-| G1 | Render API service **Auto-Deploy = Off** | Render dashboard → the API service → Settings → Auto-Deploy | Render's options are *On Commit* (deploys on every push or merge to the linked branch; the default for new services), *After CI Checks Pass* (still deploys after the merge, once CI is green) and *Off*. Only *Off* keeps the merge from becoming a deployment |
-| G2 | Nothing else deploys the API on a push to `main` | Render → the service's deploy hook is not called by any automation; GitHub → organization Settings → GitHub Apps → Render → repository access | The Render GitHub App is installed on the organization (selected repositories). This repository has no deploy workflow (`.github/workflows/ci.yml` only builds and tests), no repository webhooks and no deploy-hook call |
-| G3 | The service's linked branch and the commit it currently serves are recorded | Render → the service's settings and deploy history | Must be a commit from before this work (no `user_identities` code); B1a is compatible with it |
-| G4 | `HEROOS_OIDC_ISSUER` copied verbatim from the service environment | Render → the service → Environment (not a secret) | Needed for the B1a `-x legacy_identity_issuer`; a mismatch makes every sign-in fail closed |
-| G5 | `HEROOS_OPERATOR_DATABASE_URL` and `MIGRATION_DATABASE_URL` absent from the service environment | Render → the service → Environment | The new API refuses to start with either outside development |
-| G6 | All six CI jobs green on the merge commit (Web, API, Containers, Tenant Isolation, Backup & Restore, Privacy Decisions) | Pull request checks | The `main` ruleset requires only Web and API, so a failing security gate would not block the merge on its own |
-| G7 | No Supabase migration is applied by the merge | Repository has no `supabase/` directory; the Supabase GitHub integration reports "skipped" on this pull request | Alembic migrations are applied only by hand (step 3 below) |
+| # | Check | When | How | Why |
+| --- | --- | --- | --- | --- |
+| G1 | Render API service **Auto-Deploy = Off** | Recommended before merge; **required before B1a** | Render dashboard → the API service → Settings → Auto-Deploy | Render's options are *On Commit* (deploys on every push or merge to the linked branch; the default for new services), *After CI Checks Pass* (still deploys after the merge, once CI is green) and *Off*. Only *Off* keeps a merge from becoming a deployment |
+| G2 | Nothing in the repository deploys the API on a push to `main` | Before merge | `.github/workflows/`, repository webhooks, deploy-hook calls | A merge must not start a deployment from this repository |
+| G3 | The service's linked branch and the commit it currently serves are recorded | Before deployment | Render → the service's settings and deploy history | Must be a commit from before this work (no `user_identities` code); B1a is compatible with it |
+| G4 | `HEROOS_OIDC_ISSUER` copied verbatim from the service environment | Before deployment | Render → the service → Environment (not a secret) | Needed for the B1a `-x legacy_identity_issuer`; a mismatch makes every sign-in fail closed |
+| G5 | `HEROOS_OPERATOR_DATABASE_URL` and `MIGRATION_DATABASE_URL` absent from the service environment | Before deployment | Render → the service → Environment | The new API refuses to start with either outside development |
+| G6 | All six CI jobs green on the head being merged (Web, API, Containers, Tenant Isolation, Backup & Restore, Privacy Decisions) | Before merge | Pull request checks | The `main` ruleset requires only Web and API, so a failing security gate would not block the merge on its own |
+| G7 | No Supabase migration is applied by the merge | Before merge | Repository contents | Alembic migrations are applied only by hand (step 3 below) |
 
-If G1 cannot be confirmed, do not merge. What would happen otherwise: before
-B1a, the new API exits at startup because `heroos_schema_contract()` is missing
-and never serves its port (verified on a disposable PostgreSQL 17, 2026-10-13;
-`/health` itself does not touch the database). Render's documentation says a
-deploy that fails to start is abandoned and the previous deploy keeps serving;
-that has not been tested against this service. After B1a, the merge would
-deploy the new API without its own approval. Neither is acceptable as a plan.
+**Why G1 is recommended, not required, for the merge.** If Auto-Deploy is on
+when this is merged, Render tries to deploy the new API against the
+still-unmigrated database. The new API exits at startup because
+`heroos_schema_contract()` is missing and never serves its port (verified on a
+disposable PostgreSQL 17, 2026-10-13; `/health` does not touch the database).
+Render's documentation says a deploy that fails to start is abandoned and the
+previous deploy keeps serving, so the staging demo would stay on its current
+version; that has not been tested against this service. Before B1a, G1 is
+required: once the schema is migrated, an automatic deploy would put the new
+API live without its own approval.
 
-Merging also triggers a Vercel production build of the web; `apps/web` is
-unchanged by this work, so that build serves the same web code.
+Merging also triggers a Vercel production build of the web. `apps/web` differs
+from `main` only in `.env.example`, so that build serves the same web code.
 
-**Evidence recorded by engineering for PR #16 (2026-10-13, head `c14969a`).**
-Read-only checks of the repository and GitHub. No Render, Supabase or Vercel
-setting was inspected. **No row is satisfied.**
+**Evidence recorded by engineering (2026-10-13).** Read-only checks of the
+repository and GitHub. No Render, Supabase or Vercel setting was inspected.
 
-| # | Evidence so far | Still to check | Status |
-| --- | --- | --- | --- |
-| G1 | None | Auto-Deploy setting in Render | Open |
-| G2 | Only `.github/workflows/ci.yml` exists; 0 repository webhooks; no deploy-hook call in the repository; the Render GitHub App is installed on the organization with *selected* repository access | Whether that access includes this repository; whether anything outside the repository calls the service's deploy hook | Open |
-| G3 | None | Linked branch and the commit the service serves | Open |
-| G4 | None | Issuer value in the service environment | Open |
-| G5 | None | Service environment variables | Open |
-| G6 | All six jobs green on the PR head `c14969a`; the `main` ruleset requires only Web and API, with 0 approving reviews | The merge commit does not exist yet | Open |
-| G7 | No `supabase/` directory at `c14969a`; the Supabase GitHub check reports "skipped" on `c14969a` | The Supabase project's GitHub integration settings | Open |
+| # | Evidence | Status |
+| --- | --- | --- |
+| G1 | The Render GitHub App is installed on the organization with *selected* repository access; whether it covers this repository and the service's Auto-Deploy setting were not visible | Open: Render dashboard |
+| G2 | Only `.github/workflows/ci.yml` exists (build and test only); 0 repository webhooks; no deploy-hook call in the repository | Satisfied for the repository; Render's own trigger is G1 |
+| G3 | — | Open: before deployment |
+| G4 | — | Open: before deployment |
+| G5 | — | Open: before deployment |
+| G6 | All six jobs green on every PR #16 head so far; the head to be merged is recorded in the pull request | Re-check on the final head |
+| G7 | No `supabase/` directory, so the Supabase GitHub integration has no migration to apply; its check reports "skipped" on PR #16 | Satisfied |
 
 Order, for a database that already has users:
 
-1. The pre-merge safety gate above is recorded as satisfied, and the API host
-   still does **not** auto-deploy from `main`.
+1. G1–G7 are recorded as satisfied. G1 (Auto-Deploy Off) must hold from here
+   on.
 2. Take a logical backup ([Backup and Recovery](../architecture/backup-and-recovery.md)).
 3. Count users and read the exact configured issuer (`HEROOS_OIDC_ISSUER`, not
    secret). Then, as the migration owner, from a clean checkout:
@@ -177,10 +180,9 @@ Order, for a database that already has users:
    their own Companies (and, with none, the "no access" message).
 7. `uv run alembic upgrade head` (B1b). The previous API can no longer resolve
    anyone (fail closed).
-8. Only with its own approval: create the Technical Lead's operator login (§1,
-   policy D1). Until the audit-report access issue (§8) is resolved, operator
-   changes on that database cannot get the independent review policy D4
-   requires.
+8. Only when the operator activation checklist (§8) is complete: create the
+   Technical Lead's operator login (§1, policy D1). Without it, operator changes
+   on that database could not get the independent review policy D4 requires.
 
 ## 4. Rollback
 
@@ -203,8 +205,8 @@ hand: that would let the previous API ignore suspensions and revocations.
   the triggers, drop the tables, or (as a superuser) set
   `session_replication_role = replica`, which suspends all triggers. These are
   deliberate schema-owner powers, not protected against inside the database.
-  Control: the owner credential is held by the Technical Lead for Alembic only,
-  never by a service. Shipping audit events to separate immutable storage
+  Control: the owner credential is held by the Technical Lead for Alembic and
+  the documented backup/restore procedure only, never by a service. Shipping audit events to separate immutable storage
   (earlier planned for M5) is not approved: policy R2 approves manual audit
   reports only. The disposable test suites use the superuser-only replica switch
   to reset their own databases.
@@ -263,17 +265,53 @@ Under the approved business policy
 
 ## 8. Manual audit reports (D4, R2)
 
-> **Blocked.** Only the migration owner can read `identity_events` and
-> `membership_events`, and ADR-008 limits that credential to Alembic. No
-> approved path exists for producing a report
-> ([policy §4.1](identity-operator-access-policy-proposal.md#41-unresolved-no-approved-way-to-read-the-audit-tables-for-a-report)).
-> This section defines the procedure; it cannot be run until the Technical Lead
-> and JJ choose an access path. No new database privilege is to be created for
-> it without a separate decision (R2).
+> **Activation prerequisite, not a merge blocker.** Only the migration owner
+> can read `identity_events` and `membership_events`, and ADR-008 scopes that
+> credential to Alembic and backup/restore. No audit-reader role exists or is
+> approved (R2). Reports therefore need the authorized exception below
+> ([policy §4.1](identity-operator-access-policy-proposal.md#41-audit-table-access-for-reports-an-activation-prerequisite)).
+> Nothing here creates a privilege.
+
+### Operator activation checklist
+
+The Technical Lead's operator login is not created on a deployed database until
+each item is recorded (with links) in an activation issue:
+
+1. The deployment steps for that database are approved and done (§3, B1b
+   applied).
+2. The minimum report procedure below is authorized in writing as an exception
+   to the migration-owner scope, by the Technical Lead (ADR owner) and JJ
+   (policy owner). Authorization record: *not yet recorded*.
+3. JJ has named the independent reviewer. *Not yet named.*
+4. The report storage and delivery location is agreed. *Not yet agreed.*
+5. JJ's written approval of D1–D6 and R1–R3 is linked from the policy. *Not yet
+   linked.*
+6. For real customer data also: the per-change review deadline (D4 = C) is set,
+   and any intended security-risk acceptance is recorded (policy §5).
+7. Creating the login is itself approved (§1).
+
+### Minimum report procedure (witnessed, read-only; needs item 2)
+
+1. Use only the report query at the end of this section, from a recorded Git
+   commit, unedited.
+2. The Technical Lead connects as the migration owner, with the reviewer
+   watching the whole session live (screen share), and runs the query with the
+   period values. The query runs in one `REPEATABLE READ READ ONLY`
+   transaction; no other statement is run in that session.
+3. The output is saved once; both record its SHA-256 in the report issue before
+   the session ends. Section 1 of the output shows the database name and the
+   period.
+4. Then follow the table below (reconciliation, delivery, proof of review,
+   retention).
+
+This is procedure, not enforcement: nothing in the database limits the
+migration owner to read-only use, proves the query was unedited, or requires
+the witness. The report is produced with the reported person's credential
+(policy §5, risk 6).
 
 | Topic | Procedure |
 | --- | --- |
-| Prepared by | The Technical Lead, through the access path chosen under policy §4.1. The preparer is the reported operator; that limits what the review can prove (policy §5, risk 6) |
+| Prepared by | The Technical Lead, by the witnessed procedure above. The preparer is the reported operator; that limits what the review can prove (policy §5, risk 6) |
 | Reviewed by | An independent reviewer: someone other than the Technical Lead, named by JJ (not yet named) |
 | Cadence | Synthetic demo: monthly. Real customer data: weekly, and after every operator change (D4; no deadline set yet for the per-change review) |
 | Period | Half-open, in UTC: it starts exactly at the previous report's end and ends at this report's cut-off, so no event falls between two reports. The first report starts when B1a was applied |

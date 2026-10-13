@@ -1,6 +1,7 @@
 # ADR-008 — Provider-Independent Identity and Secure Provisioning
 
-**Status:** Proposed. Implemented on a feature branch for review; not merged, not deployed\
+**Status (technical):** Proposed. Implemented on a feature branch for review; technical acceptance is the Technical Lead's, at merge review\
+**Deployment and activation:** not authorized. Applying B1a/B1b, deploying the API and creating the operator login each need their own approval (pending decisions below)\
 **Business policy:** the identity operator policy (D1–D6, R1–R3) is approved by
 JJ and recorded in the [Identity Operator Access and Approval Policy](../operations/identity-operator-access-policy-proposal.md).
 That approval covers business policy only: it does not accept this ADR's
@@ -67,7 +68,7 @@ binds a subject the operator already knows.
 | --- | --- |
 | `heroos_app_runtime` (API) | `SELECT` on `users`, `user_identities` (active rows only), `memberships` (active rows only). No write on any of them, no audit access |
 | `heroos_identity_operator` (new NOLOGIN group; per-person `heroos_op_<handle>` logins) | From B1b: `SELECT, INSERT` and column-level `UPDATE (status, revoked_at/suspended_at, updated_at)` on `users`, `user_identities`, `memberships` (Memberships under the tenant RLS policy); `SELECT (id)` on `companies`. Nothing on `cases`, `case_subjects`, `company_blueprints`, the audit tables or `alembic_version`. No `DELETE`, no `TRUNCATE`. Never a member of `heroos_app_runtime` |
-| Migration owner | Alembic only. Never used by the API or the operator CLI |
+| Migration owner | Alembic migrations and the documented logical backup/restore procedure ([Backup and Recovery](../architecture/backup-and-recovery.md)). Never used by the API or the operator CLI. Any other use (for example the audit report of the operator policy) needs a recorded exception |
 | Future background worker (ADR-009, not created) | No identity privileges; not a member of the runtime or operator group |
 
 The API refuses to start with an operator login or with
@@ -121,8 +122,10 @@ is no mandatory second-person approval (D2), self-grants are unrestricted (D3,
 R1), controls are procedural only (D5) and Company-access management is
 unrestricted apart from issue references and audit records (R3). The findings
 above therefore stay true in every environment. The only planned check is the
-independent audit review of D4, which cannot be performed yet because no
-approved role may read the audit tables for a report (policy §4.1). The policy,
+independent audit review of D4. No approved role may read the audit tables for
+a report today, so the review becomes operable only once the minimum report
+procedure is authorized (policy §4.1): a prerequisite for creating the operator
+login, not for merging this code. The policy,
 its residual-risk register and its open items are in
 [Identity Operator Access and Approval Policy](../operations/identity-operator-access-policy-proposal.md);
 operator procedures are in runbook
@@ -207,11 +210,10 @@ simply provisioned with Cognito bindings.
 | --- | --- |
 | Technical acceptance of this ADR (status stays Proposed) | Technical Lead |
 | Lifecycle terminology (`active`/`suspended`, `active`/`revoked`) | JJ |
-| Reading the audit tables for D4 reports: today only the migration owner can, and §3 limits it to Alembic ([policy §4.1](../operations/identity-operator-access-policy-proposal.md#41-unresolved-no-approved-way-to-read-the-audit-tables-for-a-report)) | Technical Lead and JJ |
-| Migration-owner scope: §3 says Alembic only, while the [backup procedure](../architecture/backup-and-recovery.md) already uses the same role for `pg_dump`/`pg_restore` | Technical Lead |
-| Independent audit reviewer, report storage, per-change review deadline ([policy §7](../operations/identity-operator-access-policy-proposal.md#7-open-items)) | JJ (with the Technical Lead for storage) |
+| Authorizing the minimum audit-report procedure (a recorded exception to the migration-owner scope in §3; [policy §4.1](../operations/identity-operator-access-policy-proposal.md#41-audit-table-access-for-reports-an-activation-prerequisite)); needed before creating the operator login | Technical Lead and JJ |
+| Independent audit reviewer, report storage, per-change review deadline ([policy §7](../operations/identity-operator-access-policy-proposal.md#7-open-items-none-blocks-merging-the-code)) | JJ (with the Technical Lead for storage) |
 | Security-risk acceptance for the residual risks, if intended ([policy §5](../operations/identity-operator-access-policy-proposal.md#5-residual-security-risks)); none is on record | JJ with the Technical Lead |
-| Merging this ADR's implementation: the Render pre-merge safety gate must be recorded as satisfied ([runbook §3, pre-merge safety gate](../operations/identity-provisioning.md#pre-merge-safety-gate-render)) | Technical Lead |
+| Merging this ADR's implementation: merge-time checks G2, G6 and G7 recorded, G1 (Render Auto-Deploy Off) recommended; G1 is required before B1a ([runbook §3](../operations/identity-provisioning.md#merge-and-deployment-checks-render-github-supabase)) | Technical Lead |
 | Audit-event retention | PRIV-005 (Legal Review Required) |
 | User / Company deletion and the treatment of their audit events | PRIV-008, PRIV-020 |
 | Role and permission model, Company administrators, approval authority, external experts | JJ, M1-10C |

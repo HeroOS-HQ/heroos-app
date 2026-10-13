@@ -51,7 +51,7 @@ Recorded as relayed. Wording in the "Decision" column is JJ's.
 | D1 | **A.** Only the Technical Lead may hold an identity operator login, including in production | Exactly one operator login per environment, held by the Technical Lead. Creating it on a deployed database still needs the separate deployment approval (ADR-008) |
 | D2 | **A.** No mandatory second-person approval in any environment. Each operation still requires an issue reference and database audit | No approval step before any command. Every command carries `--reference <issue key>`; the database records it with the login |
 | D3 | **C** (amended from A). Operator self-grants are unrestricted, including in production | The Technical Lead may grant their own identity access to any Company |
-| D4 | Synthetic demo: independent monthly audit review. Real customer data: independent weekly review plus review after every operator change | Review by someone other than the Technical Lead (§4). Not yet operable: see §4.1 |
+| D4 | **B** for the synthetic demo: independent monthly audit review. **C** for real customer data: independent weekly review plus review after every operator change | Review by someone other than the Technical Lead (§4). Operable once the activation prerequisites in §4.1 are met |
 | D5 | **A.** Procedural controls only in every environment | No new technical enforcement is built for this policy. The controls that already exist in the schema and CLI (ADR-008) stay as they are |
 | D6 | **A.** Opaque operator login handles. A secure mapping from handle to actual person is maintained by the Technical Lead | Logins are named `heroos_op_<opaque handle>` (for example `heroos_op_01`); the mapping is kept by the Technical Lead outside the repository |
 | R1 | Unrestricted self-grants in all environments | Same as D3 |
@@ -70,7 +70,7 @@ policy.
 | Identity operator | Technical Lead only (D1), opaque handle (D6) | One personal login per environment; never stored with a service |
 | Handle-to-person mapping | Technical Lead (D6) | Kept securely outside the repository |
 | Independent audit reviewer | Someone other than the Technical Lead (D4); **not yet named** | Reviews reports, records the review (runbook §8) |
-| Migration owner | Technical Lead, Alembic only (ADR-008) | Unchanged by this policy; see §4.1 for the conflict with reporting |
+| Migration owner | Technical Lead, for Alembic and the documented backup/restore procedure (ADR-008) | Unchanged by this policy; any other use, such as the audit report, needs the recorded exception in §4.1 |
 
 | Command | Approval before the change | Record |
 | --- | --- | --- |
@@ -80,39 +80,52 @@ policy.
 
 | Environment | Cadence | Reviewer |
 | --- | --- | --- |
-| Synthetic demo | Monthly | Independent of the Technical Lead |
-| Real customer data | Weekly, plus after every operator change | Independent of the Technical Lead |
+| Synthetic demo | Monthly (D4 = B) | Independent of the Technical Lead |
+| Real customer data | Weekly, plus after every operator change (D4 = C) | Independent of the Technical Lead |
 
-The procedure (content, issue reconciliation, delivery, proof of review,
-retention) is in [runbook §8](identity-provisioning.md#8-manual-audit-reports-d4-r2).
-D4 sets no deadline for the per-change review on real data; that is open (§7).
+The manual report (R2) and its procedure (content, issue reconciliation,
+delivery, proof of review, retention) are in
+[runbook §8](identity-provisioning.md#8-manual-audit-reports-d4-r2).
 
-### 4.1 Unresolved: no approved way to read the audit tables for a report
+### 4.1 Audit-table access for reports: an activation prerequisite
 
 - `identity_events` and `membership_events` can be read only by their owner,
   the migration owner. The API runtime and operator roles have no privilege on
   them (by design, ADR-008 §5).
-- ADR-008 limits the migration-owner credential to Alembic.
-- R2 approves no dedicated audit-reader role.
-- D1 and the migration-owner rule put every credential that can read the audit
-  tables with the Technical Lead, the only operator. A report prepared from
-  them is prepared by the person whose changes it reports.
+- ADR-008 limits the migration-owner credential to Alembic and the documented
+  backup/restore procedure. Reading the audit tables for a report is neither.
+- R2 approves no dedicated audit-reader role, and none is created.
+- D1 puts the only operator login and the migration owner with the same person,
+  the Technical Lead, so a report is prepared with the reported person's
+  credential.
 
-So a D4 report cannot be produced today without either using the migration
-owner outside Alembic or creating a new privilege. Neither is approved, and
-neither is done here. Until this is decided, **D4 cannot be met**.
+This does not block merging the M1-10B code: a merge activates nothing. The
+operator group is created only by migration B1a and receives its privileges only
+by B1b, and a merge applies neither. It blocks **operator activation**: the
+Technical Lead's operator login is not created on any deployed database until
+the procedure below is authorized in writing (runbook §8, activation checklist).
 
-Alternatives for review (none creates a database privilege):
+**Minimum safe procedure (selected; needs written authorization before
+activation).** A witnessed, read-only report run by the migration owner, as set
+out step by step in runbook §8. The authorization is a recorded, scoped
+exception to ADR-008's migration-owner scope ("run the fixed audit report query,
+read-only, witnessed by the independent reviewer"), approved by the Technical
+Lead as ADR owner and by JJ as policy owner, and linked from runbook §8.
 
-| | Alternative | What it needs | Limits |
-| --- | --- | --- | --- |
-| A | **Witnessed read-only run.** The Technical Lead runs the fixed report query (runbook §8) as the migration owner inside a `READ ONLY` transaction, while the reviewer watches the session; the output goes straight to the reviewer | A written, scoped exception to ADR-008's "Alembic only" rule, approved by the Technical Lead (ADR owner) and JJ | Still the reported person's credential and environment; the reviewer sees the run but cannot verify the database independently |
-| B | **Report from a restored backup.** The latest logical backup (already taken with the migration/admin role, [Backup and Recovery](../architecture/backup-and-recovery.md)) is restored into a disposable database; the report query runs there; the copy is dropped | Resolving the existing conflict that the backup procedure already uses the migration owner outside Alembic (§6, item 7); a backup cadence that matches D4 | Freshness bounded by the backup; the backup and restore are still done by the Technical Lead; handing the reviewer the archive instead would expose all HR data |
-| C | **Reviewer uses the hosting provider's admin access** (for example a SQL console on the managed database) | Not verified which role such a console uses for this project | Gives the reviewer far broader access than a report needs. Not recommended |
-| D | **No reports until decided** | Nothing | D4 is not met; operator changes then have no review at all |
+What it does **not** provide: it is procedural. Nothing in the database limits
+the migration owner to read-only use, proves that the query was not edited, or
+requires the witness; the read-only transaction only prevents writes inside that
+transaction. The report is still produced with the reported person's credential
+(§5, risk 6).
 
-Any option that adds a database role or privilege (for example the audit-reader
-role) is excluded by R2 and would need a new decision.
+Alternatives considered and not selected (none creates a privilege):
+
+| Alternative | Why not selected |
+| --- | --- |
+| Report from a restored logical backup (an existing, documented use of the migration owner) | Copies all HR data into another database for every report; freshness bounded by the backup; per-change reviews on real data would need a backup per change |
+| The hosting provider's admin console used by the reviewer | Far broader access than a report needs; which role it uses for this project is not verified |
+| No reports | D4 would not be met |
+| Audit-reader role or immutable external log | Excluded by R2; would need a new decision |
 
 ## 5. Residual security risks
 
@@ -124,7 +137,7 @@ be that acceptance has to be stated explicitly.
 
 | # | Risk | Verified facts | Existing technical limits (ADR-008) | Policy position |
 | --- | --- | --- | --- | --- |
-| 1 | Operator self-grant across Companies | One login can give its own identity a Membership in every Company and read their data through the API; no table links an operator login to a HeroOS User, so a self-grant looks like any grant | None that prevent it; every grant is audited with the login | Permitted (D3, R1, R3). Detective review only (D4), currently not operable (§4.1) |
+| 1 | Operator self-grant across Companies | One login can give its own identity a Membership in every Company and read their data through the API; no table links an operator login to a HeroOS User, so a self-grant looks like any grant | None that prevent it; every grant is audited with the login | Permitted (D3, R1, R3). Detective review only (D4), operable after the activation prerequisites (§4.1) |
 | 2 | Compromised operator credential | Whoever holds it can grant any Company to any account that can sign in at the configured issuer, and suspend or revoke anyone. Its changes are indistinguishable from the Technical Lead's | Cannot read HR or audit tables, cannot delete, cannot disable triggers; per-person login on a workstation (`~/.pgpass`, 0600) | No time-boxing, second person or alerting (D2, D5). Under D1 the same person also holds the migration owner, so one compromised workstation can give both |
 | 3 | Direct SQL bypass of the CLI | The CLI is a convenience; the same login can insert or update with plain SQL | The database grants, RLS and audit triggers apply to SQL exactly as to the CLI; a reference is still required | CLI use is procedure, not enforcement (D5) |
 | 4 | Issue references are format-checked only | A nonexistent key such as `ZZ-9999999` is accepted | Format check in the trigger | Reconciled by hand in each report (runbook §8) |
@@ -134,42 +147,43 @@ be that acceptance has to be stated explicitly.
 
 ## 6. Consistency check of D1–D6 and R1–R3 (2026-10-13)
 
-The decisions do not contradict each other. These implementation conflicts and
-gaps remain:
+The decisions do not contradict each other. How each implementation point is
+handled:
 
-1. **D4 cannot be operated** with D1, R2 and ADR-008's migration-owner rule
-   (§4.1). Open.
-2. **"Independent" reviewer**: D4 requires one; none is named. Open.
-3. **D4 per-change review on real data** has no deadline. Open.
-4. **R2 versus the earlier M5 log-shipping plan**: ADR-008 §5 and runbook §5
+1. **D4 needs audit-table access** that D1, R2 and the migration-owner scope do
+   not provide. Handled as an activation prerequisite with a minimum procedure
+   that needs authorization (§4.1). Not a code-merge blocker.
+2. **"Independent" reviewer**: D4 requires one; none is named yet. Activation
+   prerequisite.
+3. **D4 = C per-change review on real data** has no deadline. Needed before
+   real customer data.
+4. **R2 versus the earlier M5 log-shipping plan**: ADR-008 §5 and runbook §5 had
    described immutable log shipping at M5 as a mitigation. Corrected: it is not
-   approved by this decision and is not a current mitigation.
+   approved and is not a current mitigation.
 5. **D1 "including in production" versus the earlier interim rule** ("no
    operator login on databases with real customer data"): the interim rule was
    proposed in ADR-008 before the decision and is withdrawn. Creating any
-   operator login on a deployed database still needs the separate deployment
-   approval.
+   operator login on a deployed database still needs its own approval.
 6. **D5 "procedural controls only"** is recorded as "build no new technical
    enforcement". The existing technical controls (grants, RLS, append-only
-   triggers, CLI pre-flight refusals) remain; JJ to confirm this reading.
-7. **Migration-owner scope**: ADR-008 says "Alembic only", while the backup
-   procedure already uses the same role for `pg_dump`/`pg_restore`. Pre-dates
-   this policy; for the Technical Lead to reconcile.
+   triggers, CLI pre-flight refusals) remain.
+7. **Migration-owner scope**: ADR-008 said "Alembic only" while the M1-07
+   backup procedure already used the same role for `pg_dump`/`pg_restore`.
+   Resolved: ADR-008 now states both uses; any other use, such as the audit
+   report, needs a recorded exception (§4.1).
 8. **D6 with D1**: with a single operator the opaque handle maps to one known
    person, so it gives little pseudonymity. Consistent; noted only.
 
-## 7. Open items
+## 7. Open items (none blocks merging the code)
 
-| Item | Owner |
-| --- | --- |
-| Choose a reporting access path (§4.1); until then D4 is not met | Technical Lead and JJ |
-| Name the independent reviewer | JJ |
-| Agree the report storage and delivery location (runbook §8) | JJ and Technical Lead |
-| Set a deadline for the per-change review on real data | JJ |
-| Link JJ's written approval record and date (§8) | Technical Lead |
-| State whether a security-risk acceptance is intended for §5, and record it if so | JJ (with the Technical Lead) |
-| Reconcile the migration-owner scope (§6, item 7) | Technical Lead |
-| Confirm the reading of D5 (§6, item 6) | JJ |
+| Item | Needed before | Owner |
+| --- | --- | --- |
+| Authorize the minimum audit-report procedure (§4.1) | Creating the operator login on any deployed database | Technical Lead and JJ |
+| Name the independent reviewer | Creating the operator login on any deployed database | JJ |
+| Agree the report storage and delivery location (runbook §8) | Creating the operator login on any deployed database | JJ and Technical Lead |
+| Link JJ's written approval record and date (§8) | Creating the operator login on any deployed database | Technical Lead |
+| Set a deadline for the per-change review (D4 = C) | Any real customer data | JJ |
+| State whether a security-risk acceptance is intended for §5, and record it if so | Any real customer data (recommended) | JJ with the Technical Lead |
 
 ## 8. Decision record
 
@@ -178,7 +192,7 @@ gaps remain:
 | D1 | A | JJ | Not provided | Relayed to engineering by the Technical Lead, 2026-10-13; JJ's record not linked |
 | D2 | A | JJ | Not provided | As D1 |
 | D3 | C (amended from A) | JJ | Not provided | As D1 |
-| D4 | Demo: independent monthly review. Real customer data: independent weekly review plus review after every operator change | JJ | Not provided | As D1 |
+| D4 | B for the synthetic demo (independent monthly review); C for real customer data (independent weekly review plus review after every operator change) | JJ | Not provided | As D1 |
 | D5 | A | JJ | Not provided | As D1 |
 | D6 | A | JJ | Not provided | As D1 |
 | R1 | Unrestricted self-grants in all environments | JJ | Not provided | As D1 |
