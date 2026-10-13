@@ -1,6 +1,11 @@
 # ADR-008 — Provider-Independent Identity and Secure Provisioning
 
-**Status:** Proposed. Implemented on a feature branch for review; not merged, not deployed
+**Status:** Proposed. Implemented on a feature branch for review; not merged, not deployed\
+**Business policy:** the identity operator policy (D1–D6, R1–R3) is approved by
+JJ and recorded in the [Identity Operator Access and Approval Policy](../operations/identity-operator-access-policy-proposal.md).
+That approval covers business policy only: it does not accept this ADR's
+technical design, does not mitigate the risks in §4, and is not a recorded
+security-risk acceptance\
 **Date:** 2026-10-12
 **Owner:** Technical Lead
 **Milestone:** M1-10 (HER-230), sub-issue M1-10B
@@ -108,12 +113,21 @@ granting it two more succeeded, and its token was then authorized for all three.
   cannot delete anything, cannot disable the audit triggers, and cannot become
   the API runtime role or another login.
 
-The same login can also suspend or revoke anyone (an availability risk). Until a
-policy is decided, operator logins must not exist on any database holding real
-customer data. The proposed approval and permission policy is in
-[Identity Operator Access Policy (proposal)](../operations/identity-operator-access-policy-proposal.md)
-(runbook [§7](../operations/identity-provisioning.md#7-operator-trust-boundary-what-one-operator-login-can-do-alone));
-it is **not approved**.
+The same login can also suspend or revoke anyone (an availability risk).
+
+**Business policy (approved by JJ, not a mitigation).** Only the Technical Lead
+holds an operator login, in every environment including production (D1). There
+is no mandatory second-person approval (D2), self-grants are unrestricted (D3,
+R1), controls are procedural only (D5) and Company-access management is
+unrestricted apart from issue references and audit records (R3). The findings
+above therefore stay true in every environment. The only planned check is the
+independent audit review of D4, which cannot be performed yet because no
+approved role may read the audit tables for a report (policy §4.1). The policy,
+its residual-risk register and its open items are in
+[Identity Operator Access and Approval Policy](../operations/identity-operator-access-policy-proposal.md);
+operator procedures are in runbook
+[§7](../operations/identity-provisioning.md#7-operator-trust-boundary-what-one-operator-login-can-do-alone)
+and [§8](../operations/identity-provisioning.md#8-manual-audit-reports-d4-r2).
 
 ### 5. Audit
 
@@ -128,9 +142,10 @@ copy the issuer or subject (`identity_id` is referenced instead). They are
 append-only, also for the owner: row triggers refuse `UPDATE`/`DELETE` and a
 statement trigger refuses `TRUNCATE`, including cascaded truncation. The
 migration owner can still disable or drop those triggers or the tables; that is
-a documented residual schema-owner capability (operator runbook §5), mitigated
-by keeping the owner credential out of every service, with immutable log
-shipping at M5. Retention is not set (PRIV-005).
+a documented residual schema-owner capability (operator runbook §5). The only
+control is keeping the owner credential out of every service. Shipping audit
+events to immutable external storage, earlier planned for M5, is not approved:
+R2 approves manual audit reports only. Retention is not set (PRIV-005).
 
 Objects created by the migrations shed any privileges inherited from default
 ACLs (for example Supabase's grants to `anon`, `authenticated`,
@@ -176,16 +191,26 @@ simply provisioned with Cognito bindings.
   must re-grant narrowly, behind permissions, when it adds admin endpoints.
 - The audit tables and `RESTRICT` foreign keys mean Users, bindings and
   Memberships cannot be deleted until PRIV-005/008/020 decide how.
-- Each deployed environment needs operator logins created through an approved
-  procedure (`bootstrap_runtime_role.py --operator` is local-only).
+- Each deployed environment needs the Technical Lead's operator login (D1),
+  created through an approved procedure (`bootstrap_runtime_role.py --operator`
+  is local-only).
+
+## Decided outside this ADR
+
+| Decision | Decided by | Record |
+| --- | --- | --- |
+| Identity operator business policy: who holds operator logins (D1), approvals (D2), self-grants (D3, R1), audit review cadence (D4), procedural controls only (D5), opaque handles (D6), manual reports only (R2), unrestricted Company-access management (R3) | JJ | [Policy §2 and §8](../operations/identity-operator-access-policy-proposal.md#2-approved-decisions); JJ's approval date and written record not yet linked |
 
 ## Pending decisions (not approved by this ADR)
 
 | Decision | Owner |
 | --- | --- |
+| Technical acceptance of this ADR (status stays Proposed) | Technical Lead |
 | Lifecycle terminology (`active`/`suspended`, `active`/`revoked`) | JJ |
-| Operator attribution: opaque handles (`heroos_op_01`) vs. named logins; where the handle-to-person mapping is kept | JJ (operator personal data) |
-| Operator access and approval policy: who may hold an operator login, which changes need a second person, self-grant, audit review ([proposal](../operations/identity-operator-access-policy-proposal.md), not approved) | JJ; Technical Lead for the technical controls |
+| Reading the audit tables for D4 reports: today only the migration owner can, and §3 limits it to Alembic ([policy §4.1](../operations/identity-operator-access-policy-proposal.md#41-unresolved-no-approved-way-to-read-the-audit-tables-for-a-report)) | Technical Lead and JJ |
+| Migration-owner scope: §3 says Alembic only, while the [backup procedure](../architecture/backup-and-recovery.md) already uses the same role for `pg_dump`/`pg_restore` | Technical Lead |
+| Independent audit reviewer, report storage, per-change review deadline ([policy §7](../operations/identity-operator-access-policy-proposal.md#7-open-items)) | JJ (with the Technical Lead for storage) |
+| Security-risk acceptance for the residual risks, if intended ([policy §5](../operations/identity-operator-access-policy-proposal.md#5-residual-security-risks)); none is on record | JJ with the Technical Lead |
 | Merging this ADR's implementation: the Render pre-merge safety gate must be recorded as satisfied ([runbook §3, pre-merge safety gate](../operations/identity-provisioning.md#pre-merge-safety-gate-render)) | Technical Lead |
 | Audit-event retention | PRIV-005 (Legal Review Required) |
 | User / Company deletion and the treatment of their audit events | PRIV-008, PRIV-020 |

@@ -18,12 +18,14 @@ synthetic only.
 | Credential | Who holds it | Never |
 | --- | --- | --- |
 | API runtime login (`heroos_app`) | the API service (`DATABASE_URL`) | provisioning; the operator CLI refuses it |
-| Identity operator login (`heroos_op_<handle>`, one per person) | that operator's workstation only (`~/.pgpass`, 0600) | the API, Render, Vercel or CI. The API refuses to start with it |
+| Identity operator login (`heroos_op_<handle>`) | the Technical Lead only, in every environment including production (policy D1); on their workstation only (`~/.pgpass`, 0600) | the API, Render, Vercel or CI. The API refuses to start with it |
 | Migration owner | Technical Lead, for Alembic only | the API or the operator CLI (both refuse it) |
 
-Handles should be opaque (`heroos_op_01`); the handle-to-person mapping is kept
-in the Technical Lead's operational records. This is pending JJ's decision
-(ADR-008).
+Handles are opaque, for example `heroos_op_01` (policy D6). The Technical Lead
+keeps the handle-to-person mapping securely, outside the repository. The
+business policy for operators is recorded in the
+[Identity Operator Access and Approval Policy](identity-operator-access-policy-proposal.md)
+(approved by JJ; ADR-008 itself is still Proposed).
 
 ### Creating an operator login
 
@@ -32,7 +34,8 @@ in the Technical Lead's operational records. This is pending JJ's decision
   password) in the environment,
   `cd apps/api && uv run python -m scripts.bootstrap_runtime_role --operator`.
   It refuses non-local hosts.
-- **Deployed database (approval required):** as the migration owner, after B1b:
+- **Deployed database (approval required):** only for the Technical Lead
+  (policy D1), as the migration owner, after B1b:
 
   ```sql
   CREATE ROLE heroos_op_<handle> LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE
@@ -85,7 +88,24 @@ unset HEROOS_SUBJECT
 - The issuer must be exactly what the provider puts in `iss` (Auth0 keeps a
   trailing slash). A wrong issuer simply never matches (fail closed).
 - `--reference` must be an issue key. The database rejects any change without
-  one, and records it with your login in the audit tables.
+  one, and records it with your login in the audit tables. It checks the format
+  only, so the issue itself is the change record (below).
+- No approval is needed before any command, including a grant to your own
+  identity (policy D2, D3, R1, R3).
+
+**Change record (policy D2).** Every operation has an issue, and its key is the
+`--reference`. Engineering procedure, so that the audit review (§8) can
+reconcile every event:
+
+1. Before the command, the issue states the command, the Company UUID (if any),
+   the reason, and whether the identity is the operator's own (self-grants are
+   permitted; recording them keeps the review complete).
+2. After the command, paste the CLI's JSON output (outcome and internal IDs
+   only) into the issue.
+3. Never put an external subject, an email address or other personal details of
+   the person in the issue; internal IDs are enough.
+4. One issue may cover several commands of the same change; a refused command is
+   recorded too.
 - Output is JSON with an outcome (`created`, `updated`, `unchanged`, `refused`)
   and internal IDs; subjects are never printed. Exit codes: 0 done, 2 usage,
   3 pre-flight refused, 4 operation refused, 5 database error.
@@ -121,6 +141,20 @@ deploy the new API without its own approval. Neither is acceptable as a plan.
 Merging also triggers a Vercel production build of the web; `apps/web` is
 unchanged by this work, so that build serves the same web code.
 
+**Evidence recorded by engineering for PR #16 (2026-10-13, head `c14969a`).**
+Read-only checks of the repository and GitHub. No Render, Supabase or Vercel
+setting was inspected. **No row is satisfied.**
+
+| # | Evidence so far | Still to check | Status |
+| --- | --- | --- | --- |
+| G1 | None | Auto-Deploy setting in Render | Open |
+| G2 | Only `.github/workflows/ci.yml` exists; 0 repository webhooks; no deploy-hook call in the repository; the Render GitHub App is installed on the organization with *selected* repository access | Whether that access includes this repository; whether anything outside the repository calls the service's deploy hook | Open |
+| G3 | None | Linked branch and the commit the service serves | Open |
+| G4 | None | Issuer value in the service environment | Open |
+| G5 | None | Service environment variables | Open |
+| G6 | All six jobs green on the PR head `c14969a`; the `main` ruleset requires only Web and API, with 0 approving reviews | The merge commit does not exist yet | Open |
+| G7 | No `supabase/` directory at `c14969a`; the Supabase GitHub check reports "skipped" on `c14969a` | The Supabase project's GitHub integration settings | Open |
+
 Order, for a database that already has users:
 
 1. The pre-merge safety gate above is recorded as satisfied, and the API host
@@ -142,7 +176,11 @@ Order, for a database that already has users:
    only the candidate Companies the API authorizes, so a user must see exactly
    their own Companies (and, with none, the "no access" message).
 7. `uv run alembic upgrade head` (B1b). The previous API can no longer resolve
-   anyone (fail closed). Create operator logins (§1).
+   anyone (fail closed).
+8. Only with its own approval: create the Technical Lead's operator login (§1,
+   policy D1). Until the audit-report access issue (§8) is resolved, operator
+   changes on that database cannot get the independent review policy D4
+   requires.
 
 ## 4. Rollback
 
@@ -165,10 +203,11 @@ hand: that would let the previous API ignore suspensions and revocations.
   the triggers, drop the tables, or (as a superuser) set
   `session_replication_role = replica`, which suspends all triggers. These are
   deliberate schema-owner powers, not protected against inside the database.
-  Controls: the owner credential is held by the Technical Lead for Alembic only,
-  never by a service; shipping audit events to separate immutable storage is M5
-  work. The disposable test suites use the superuser-only replica switch to
-  reset their own databases.
+  Control: the owner credential is held by the Technical Lead for Alembic only,
+  never by a service. Shipping audit events to separate immutable storage
+  (earlier planned for M5) is not approved: policy R2 approves manual audit
+  reports only. The disposable test suites use the superuser-only replica switch
+  to reset their own databases.
 
 ## 6. Restoring a backup: reconciliation gate (fail closed)
 
@@ -207,13 +246,95 @@ Read this before anyone is given an operator login
 | Attach any well-formed issue key as `--reference`, including one that does not exist | Disable the audit triggers or change `db_role` (`SET ROLE`/`SET SESSION AUTHORIZATION` are refused) |
 | Suspend or revoke anyone, or reactivate what another operator revoked | Become the API runtime role |
 
-Consequences until the [access policy proposal](identity-operator-access-policy-proposal.md)
-is decided by JJ:
+Under the approved business policy
+([policy §2](identity-operator-access-policy-proposal.md#2-approved-decisions)):
 
+- The only operator is the Technical Lead, in every environment (D1). Every
+  capability in the left column is permitted, including self-grants (D3, R1,
+  R3), with no approval before the change (D2) and no new technical control
+  (D5). The table describes behaviour the policy accepts; it does not mitigate
+  it.
 - A self-grant cannot be detected in the database: no table links an operator
-  login to a HeroOS User. Only a reviewer who knows whose identity a `user_id`
-  is can spot it, and nobody reviews the audit yet.
-- Operator logins are limited to the synthetic demo. None is created on any
-  database holding real customer data.
-- Every change still needs its own issue that names the requester and the
-  Company; the reference is the operator's claim, not proof of approval.
+  login to a HeroOS User. It is visible only through the change record (§2),
+  which the operator writes, and the independent review (§8).
+- Every change has its issue (§2); the reference is the operator's claim, not
+  proof of approval or of the issue's existence.
+- Residual risks and their status: [policy §5](identity-operator-access-policy-proposal.md#5-residual-security-risks).
+
+## 8. Manual audit reports (D4, R2)
+
+> **Blocked.** Only the migration owner can read `identity_events` and
+> `membership_events`, and ADR-008 limits that credential to Alembic. No
+> approved path exists for producing a report
+> ([policy §4.1](identity-operator-access-policy-proposal.md#41-unresolved-no-approved-way-to-read-the-audit-tables-for-a-report)).
+> This section defines the procedure; it cannot be run until the Technical Lead
+> and JJ choose an access path. No new database privilege is to be created for
+> it without a separate decision (R2).
+
+| Topic | Procedure |
+| --- | --- |
+| Prepared by | The Technical Lead, through the access path chosen under policy §4.1. The preparer is the reported operator; that limits what the review can prove (policy §5, risk 6) |
+| Reviewed by | An independent reviewer: someone other than the Technical Lead, named by JJ (not yet named) |
+| Cadence | Synthetic demo: monthly. Real customer data: weekly, and after every operator change (D4; no deadline set yet for the per-change review) |
+| Period | Half-open, in UTC: it starts exactly at the previous report's end and ends at this report's cut-off, so no event falls between two reports. The first report starts when B1a was applied |
+| Content | Sections 1–5 of the query below, unedited, plus a header: report ID, environment, database name, period, previous report ID, preparer handle, reviewer, Git commit of this runbook, and the Technical Lead's own HeroOS `user_id`s (self-declared, for spotting self-grants) |
+| Never in a report | External subjects, email addresses or names; the report uses internal IDs only |
+| Issue reconciliation | Every `actor_reference` in section 4 must be an existing issue that records the change (§2). `alembic:<revision>` references must match a recorded migration run. A missing issue, an issue that does not describe the events, or events without an issue are findings |
+| Completeness check | `*_total` in section 1 must equal the previous report's totals plus this period's events. Any difference is a finding (rows removed or back-dated) |
+| Delivery and storage | The report contains pseudonymous personal data (internal IDs, operator handle, access history). Not by email attachment or chat; only through the access-restricted location agreed by JJ and the Technical Lead (not yet agreed); never in the repository |
+| Proof of generation | The preparer records the report's SHA-256 in a report issue when it is generated |
+| Proof of receipt and review | The reviewer records in the same issue: date received, the SHA-256 they computed (must match), review date, findings (each with a follow-up issue) and their sign-off |
+| Retention | Reports and review records are kept and not deleted until PRIV-005 sets audit retention; then the same rule applies to them |
+
+The report query. Read-only, one snapshot (`REPEATABLE READ READ ONLY`); run
+with `psql -X -v period_start='<UTC timestamp>' -v period_end='<UTC timestamp>'`:
+
+```sql
+BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
+
+-- 1. Boundaries and totals
+SELECT current_database() AS database, now() AS generated_at,
+       :'period_start'::timestamptz AS period_start,
+       :'period_end'::timestamptz AS period_end,
+       (SELECT count(*) FROM identity_events) AS identity_events_total,
+       (SELECT count(*) FROM membership_events) AS membership_events_total,
+       (SELECT count(*) FROM identity_events
+         WHERE occurred_at >= :'period_start' AND occurred_at < :'period_end') AS identity_events_in_period,
+       (SELECT count(*) FROM membership_events
+         WHERE occurred_at >= :'period_start' AND occurred_at < :'period_end') AS membership_events_in_period;
+
+-- 2. Identity and User events in the period
+SELECT occurred_at, txid, event_type, user_id, identity_id, actor_kind, db_role, actor_reference, id
+  FROM identity_events
+ WHERE occurred_at >= :'period_start' AND occurred_at < :'period_end'
+ ORDER BY occurred_at, id;
+
+-- 3. Membership events in the period
+SELECT occurred_at, txid, event_type, company_id, membership_id, user_id, actor_kind, db_role, actor_reference, id
+  FROM membership_events
+ WHERE occurred_at >= :'period_start' AND occurred_at < :'period_end'
+ ORDER BY occurred_at, id;
+
+-- 4. References to reconcile against the issue tracker
+SELECT actor_reference, actor_kind, db_role, count(*) AS events,
+       min(occurred_at) AS first_event, max(occurred_at) AS last_event
+  FROM (SELECT actor_reference, actor_kind, db_role, occurred_at FROM identity_events
+         WHERE occurred_at >= :'period_start' AND occurred_at < :'period_end'
+        UNION ALL
+        SELECT actor_reference, actor_kind, db_role, occurred_at FROM membership_events
+         WHERE occurred_at >= :'period_start' AND occurred_at < :'period_end') AS events
+ GROUP BY actor_reference, actor_kind, db_role
+ ORDER BY actor_reference, actor_kind, db_role;
+
+-- 5. Current access snapshot (internal IDs only)
+SELECT m.company_id, m.id AS membership_id, m.user_id, u.status AS user_status,
+       m.created_at, m.updated_at
+  FROM memberships m JOIN users u ON u.id = m.user_id
+ WHERE m.status = 'active'
+ ORDER BY m.company_id, m.user_id;
+SELECT status, count(*) AS users FROM users GROUP BY status ORDER BY status;
+SELECT issuer, status, count(*) AS identities
+  FROM user_identities GROUP BY issuer, status ORDER BY issuer, status;
+
+COMMIT;
+```
