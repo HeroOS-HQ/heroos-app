@@ -45,7 +45,12 @@ the live database.
   (`ResolvedUser`), and `AuthenticatedCompanyContext` carries `identity_id`
   instead of the external subject.
 - No just-in-time provisioning. A valid login without an active binding of an
-  active User is denied with the same 403 as before.
+  active User is denied with the same 403 as before. **Amended by M1-10C
+  ([ADR-010](ADR-010-company-registration-and-administrators.md)):** the one
+  exception is founder self-registration (`POST /company-registrations`), which
+  binds the verified `(issuer, subject)` only while creating a *new* Company
+  with that person as its first administrator. Every other route still denies
+  unknown identities.
 
 ### 2. Lifecycle (three non-overlapping states)
 
@@ -66,8 +71,8 @@ binds a subject the operator already knows.
 
 | Role | Identity privileges |
 | --- | --- |
-| `heroos_app_runtime` (API) | `SELECT` on `users`, `user_identities` (active rows only), `memberships` (active rows only). No write on any of them, no audit access |
-| `heroos_identity_operator` (new NOLOGIN group; per-person `heroos_op_<handle>` logins) | From B1b: `SELECT, INSERT` and column-level `UPDATE (status, revoked_at/suspended_at, updated_at)` on `users`, `user_identities`, `memberships` (Memberships under the tenant RLS policy); `SELECT (id)` on `companies`. Nothing on `cases`, `case_subjects`, `company_blueprints`, the audit tables or `alembic_version`. No `DELETE`, no `TRUNCATE`. Never a member of `heroos_app_runtime` |
+| `heroos_app_runtime` (API) | `SELECT` on `users`, `user_identities` (active rows only), `memberships` (active rows only). No write on any of them, no audit access. From M1-10C also `EXECUTE` on `heroos_register_company` (founder self-registration, a new Company only) and `heroos_identity_companies` (own Memberships), both `SECURITY DEFINER` (ADR-010) |
+| `heroos_identity_operator` (new NOLOGIN group; per-person `heroos_op_<handle>` logins) | From B1b: `SELECT, INSERT` and column-level `UPDATE (status, revoked_at/suspended_at, updated_at)` on `users`, `user_identities`, `memberships` (Memberships under the tenant RLS policy); `SELECT (id)` on `companies`. From C1 (M1-10C, ADR-010): `INSERT (id, name)` on `companies`, `INSERT (id, company_id)`, `SELECT` of the licensing and confirmation columns and `UPDATE` of the confirmation columns on `company_blueprints`, `UPDATE (role)` on `memberships`. Nothing on `cases`, `case_subjects`, the Blueprint business profile, the audit tables or `alembic_version`. No `DELETE`, no `TRUNCATE`. Never a member of `heroos_app_runtime` |
 | Migration owner | Alembic migrations and the documented logical backup/restore procedure ([Backup and Recovery](../architecture/backup-and-recovery.md)). Never used by the API or the operator CLI. Any other use (for example the audit report of the operator policy) needs a recorded exception |
 | Future background worker (ADR-009, not created) | No identity privileges; not a member of the runtime or operator group |
 
@@ -87,8 +92,10 @@ reactivate for Memberships and identities, suspend and reactivate Users). The
 IdP account is created first, out of band (public sign-up disabled), so its
 `sub` is known; HeroOS then creates the User, binding and Membership in one
 transaction. Every command is idempotent. Subjects are read from standard input
-and never printed. The first member of a Company is created the same way; the
-first *administrator* needs the M1-10C role model.
+and never printed. M1-10C ([ADR-010](ADR-010-company-registration-and-administrators.md))
+adds Company roles (`company_admin`, `member`), founder self-registration, and
+the operator commands `register-company`, `set-role`, `confirm-jurisdiction`,
+`clear-jurisdiction` and `jurisdiction-status`.
 
 #### Operator trust boundary: self-grant (residual risk, not mitigated)
 
@@ -216,7 +223,7 @@ simply provisioned with Cognito bindings.
 | Merging this ADR's implementation: merge-time checks G2, G6 and G7 recorded, G1 (Render Auto-Deploy Off) recommended; G1 is required before B1a ([runbook §3](../operations/identity-provisioning.md#merge-and-deployment-checks-render-github-supabase)) | Technical Lead |
 | Audit-event retention | PRIV-005 (Legal Review Required) |
 | User / Company deletion and the treatment of their audit events | PRIV-008, PRIV-020 |
-| Role and permission model, Company administrators, approval authority, external experts | JJ, M1-10C |
-| Production provisioning procedure (Cognito `AdminCreateUser` vs. invitations) | Technical Lead + JJ, M1-10D/M5 |
+| Role and permission model beyond `company_admin`/`member` (approval authority, external experts, invitations) | JJ; minimal roles implemented in M1-10C ([ADR-010](ADR-010-company-registration-and-administrators.md)) |
+| ~~Production provisioning procedure~~ Decided 2026-10-13: founder self-registration; additional Company users through invitations (later milestone) | [ADR-010 §1](ADR-010-company-registration-and-administrators.md) |
 | Applying B1a/B1b to the Supabase demo and creating operator logins there | Separate infrastructure/deployment approval |
 | Deploying the API to Render, and the deployment order (B1a, API, B1b) | Separate deployment approval |

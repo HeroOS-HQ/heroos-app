@@ -84,6 +84,7 @@ unset HEROOS_SUBJECT
 | `bind-identity --user --issuer` (+ subject) | additional binding (e.g. Cognito at M5) |
 | `revoke-identity` / `reactivate-identity --identity` | one login binding |
 | `suspend-user` / `reactivate-user --user` | the person, in every Company |
+| `register-company`, `set-role`, `confirm-jurisdiction`, `clear-jurisdiction`, `jurisdiction-status` | M1-10C: Companies, administrators and jurisdictions; see [Company Registration §4](company-registration.md#4-operator-commands-m1-10c) |
 
 - The issuer must be exactly what the provider puts in `iss` (Auth0 keeps a
   trailing slash). A wrong issuer simply never matches (fail closed).
@@ -247,6 +248,7 @@ Read this before anyone is given an operator login
 | Do the same with plain SQL instead of the CLI | Delete or truncate Users, bindings, Memberships or audit events |
 | Attach any well-formed issue key as `--reference`, including one that does not exist | Disable the audit triggers or change `db_role` (`SET ROLE`/`SET SESSION AUTHORIZATION` are refused) |
 | Suspend or revoke anyone, or reactivate what another operator revoked | Become the API runtime role |
+| (M1-10C) Register a Company with any identity it can sign in with as administrator, make any Member of any Company its administrator, and confirm or clear any Company's jurisdiction | Read Company names or the Blueprint business profile, edit a customer's licensing answer, or call the API's registration function |
 
 Under the approved business policy
 ([policy §2](identity-operator-access-policy-proposal.md#2-approved-decisions)):
@@ -264,6 +266,11 @@ Under the approved business policy
 - Residual risks and their status: [policy §5](identity-operator-access-policy-proposal.md#5-residual-security-risks).
 
 ## 8. Manual audit reports (D4, R2)
+
+From M1-10C the report also covers `company_events` and self-service
+`company_registrations` ([Company Registration §5](company-registration.md#5-audit-additions-to-the-identity-runbook-8-report)).
+Self-registrations are attributed to the API login with a `registration:<id>`
+reference, not an issue key.
 
 > **Activation prerequisite, not a merge blocker.** Only the migration owner
 > can read `identity_events` and `membership_events`, and ADR-008 scopes that

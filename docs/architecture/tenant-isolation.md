@@ -129,10 +129,11 @@ Migration `97d4200fe7a2_add_tenant_row_level_security.py`.
 - `memberships` also carries a RESTRICTIVE `lifecycle_active` policy for the
   runtime role (`status = 'active'`): it can only narrow the tenant policy, never
   widen it. Revoked Memberships are invisible to the API whatever code runs.
-- `membership_events` (tenant-owned audit) has the standard `tenant_isolation`
-  policy; `identity_events` (global audit) has RLS with no policy at all.
-  Neither is granted to the runtime or operator role: only the owner-run audit
-  triggers write them.
+- `membership_events`, `company_events` and `company_registrations`
+  (tenant-owned audit and registration records, M1-10B/M1-10C) have the
+  standard `tenant_isolation` policy; `identity_events` (global audit) has RLS
+  with no policy at all. None is granted to the runtime or operator role: only
+  owner-run triggers and the registration function write them.
 - `TRUNCATE` is not subject to RLS and is never granted to the runtime role.
 - RLS is not `FORCE`d. The runtime role never owns tables, and the owner
   (migration/admin) role must still be able to run data migrations without a
@@ -156,8 +157,8 @@ There is no default tenant and no fallback to all tenants.
 | Role | Kind | Used by | Privileges |
 | --- | --- | --- | --- |
 | `heroos` (local) / RDS migration role | migration/admin, schema owner | Alembic (`MIGRATION_DATABASE_URL`) | DDL, owns tables and policies. Never used by the API |
-| `heroos_app_runtime` | `NOLOGIN` privilege role, created by the migration | — | SELECT/INSERT/UPDATE/DELETE on `companies`, `company_blueprints`, `case_subjects`, `cases`; SELECT only on `memberships`, `users`, `user_identities` (ADR-008). Nothing on the audit tables or `alembic_version`. No TRUNCATE |
-| `heroos_identity_operator` | `NOLOGIN` group, created by migration B1a | identity operator CLI (ADR-008) | From B1b: SELECT/INSERT and column-level UPDATE (`status`, `revoked_at`/`suspended_at`, `updated_at`) on `users`, `user_identities`, `memberships` (RLS); SELECT (`id`) on `companies`. Nothing on HR tables, audit tables or `alembic_version`. No DELETE, no TRUNCATE. Never a member of `heroos_app_runtime` |
+| `heroos_app_runtime` | `NOLOGIN` privilege role, created by the migration | — | SELECT/INSERT/UPDATE/DELETE on `case_subjects`, `cases`; SELECT/UPDATE on `companies` (no INSERT/DELETE since C1: Companies are created only through registration); SELECT/DELETE and column-level INSERT/UPDATE on `company_blueprints` (every column except the four jurisdiction-confirmation columns); SELECT only on `memberships`, `users`, `user_identities` (ADR-008); EXECUTE on `heroos_register_company` and `heroos_identity_companies` (ADR-010). Nothing on the audit or registration tables or `alembic_version`. No TRUNCATE |
+| `heroos_identity_operator` | `NOLOGIN` group, created by migration B1a | identity operator CLI (ADR-008) | From B1b: SELECT/INSERT and column-level UPDATE (`status`, `revoked_at`/`suspended_at`, `updated_at`) on `users`, `user_identities`, `memberships` (RLS); SELECT (`id`) on `companies`. From C1: INSERT (`id`, `name`) on `companies`, INSERT (`id`, `company_id`), SELECT of the licensing and confirmation columns and UPDATE of the confirmation columns on `company_blueprints`, UPDATE (`role`) on `memberships` (all under RLS). Nothing on case data, the Blueprint business profile, audit tables or `alembic_version`. No DELETE, no TRUNCATE. Never a member of `heroos_app_runtime` |
 | `heroos_app` | login role, member of `heroos_app_runtime` | the API (`DATABASE_URL`) | inherits the above. `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, owns nothing |
 
 - Superusers, `BYPASSRLS` roles and table owners skip RLS. The API therefore
@@ -269,6 +270,7 @@ It refuses any database name other than `*_tenant_isolation_test`.
 | --- | --- |
 | `test_runtime_role.py` | From the catalog: the runtime role is not superuser, BYPASSRLS, CREATEROLE or CREATEDB, cannot reach such a role, owns no table, and has exactly the expected grants (no TRUNCATE). It cannot create tables, disable RLS, drop or add policies, replace the context function, `SET ROLE` admin or read `alembic_version`. `row_security=off` errors. Every table except `alembic_version` has RLS. One permissive `FOR ALL` policy per tenant table; the only other policies are the listed lifecycle policies (ADR-008). The startup guard accepts the runtime role and rejects admin and identity-operator logins |
 | `test_role_separation.py`, `test_identity_provisioning.py`, `test_identity_migration.py`, `test_operator_cli.py` | M1-10B (ADR-008): the runtime role cannot provision, bind, reassign, suspend, revoke or read audit; the operator cannot read HR data, delete, rewrite bindings or forge audit; lifecycle is denied on the next request; B1a/B1b compatibility with the previous API and history-based downgrade refusal |
+| `test_company_registration.py`, `test_founder_registration.py`, `test_company_roles.py`, `test_company_blueprint.py`, `test_company_migration.py` | M1-10C (ADR-010): operator and founder registration are atomic, idempotent and concurrency-safe, never reach an existing Company and are audited; only `company_admin` updates the Blueprint, roles never come from claims or bodies and are re-checked in the write transaction; licensing answers never resolve a jurisdiction; the API role cannot create Companies, change roles or write the confirmation; C1 keeps the M1-10B API working and refuses to roll back once history exists |
 | `test_tenant_context.py` | Missing, stale, malformed and invalid context fail closed. Context is transaction-local across commit and rollback. A transaction cannot switch Company. A plain commit drops context even for ORM refreshes |
 | `test_cross_tenant_reads.py` | A↔B direct lookups, lists and guessed IDs, each proven three ways: repositories with RLS, RLS alone (unfiltered queries) and the repository filter alone (admin session that bypasses RLS) |
 | `test_cross_tenant_writes.py` | Cross-Company create (all 5 tables), update, delete and re-parenting are blocked by repositories and by RLS, each on its own. `WITH CHECK` is also proven alone, using INSERT without `RETURNING` and UPDATE without `WHERE`; otherwise PostgreSQL applies `USING` to the new row as well. Same-Company writes succeed |
@@ -321,7 +323,8 @@ columns, cascades from Cases) is not a technical default. It follows the
   rows only. A future document-metadata table must follow section 9.
 - Workflow entities and workflow authorization are **M2**. They adopt section 9
   without redesign.
-- Roles and fine-grained permissions inside a Company are not part of V1 M1.
+- Company roles are minimal (`company_admin`, `member`; M1-10C, ADR-010).
+  Fine-grained permissions inside a Company are not part of V1.
 - Amazon RDS, Terraform and deployed runtime-role provisioning are not part of
   M1-06. Nothing here has contacted AWS, and the design has not yet been
   exercised on RDS (where the master user is not a superuser, so grants and
