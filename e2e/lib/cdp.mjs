@@ -29,7 +29,8 @@ export async function launchBrowser({ port, caCertificateSpki }) {
     "about:blank",
   ];
   if (process.env.CI) args.unshift("--no-sandbox");
-  const chrome = spawn(CHROME, args, { stdio: "ignore" });
+  // Own process group: Chrome's helper processes are stopped with it.
+  const chrome = spawn(CHROME, args, { stdio: "ignore", detached: true });
   let version;
   for (let attempt = 0; attempt < 150 && !version; attempt += 1) {
     try {
@@ -75,16 +76,22 @@ export async function launchBrowser({ port, caCertificateSpki }) {
       return createPage({ send, listeners, sessionId, targetId, browserContextId });
     },
     async close() {
+      const exited = new Promise((done) => (chrome.exitCode !== null ? done() : chrome.once("exit", done)));
       try {
         await send("Browser.close");
       } catch {
         // already gone
       }
       ws.close();
-      const exited = new Promise((done) => (chrome.exitCode !== null ? done() : chrome.once("exit", done)));
-      chrome.kill("SIGKILL");
       await Promise.race([exited, sleep(5000)]);
-      rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      // Whatever is left of the group (helpers, a hung browser) goes too.
+      try {
+        process.kill(-chrome.pid, "SIGKILL");
+      } catch {
+        // group already gone
+      }
+      await sleep(500);
+      rmSync(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     },
   };
   return browser;
