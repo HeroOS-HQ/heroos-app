@@ -189,6 +189,60 @@ jobs:
         if: always()
         run: docker compose down --volumes
 
+  e2e:
+    name: End-to-End
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # The real web build, API and PostgreSQL 16 together, signed in through a
+    # local OpenID Provider and driven by Chrome (scripts/verify-e2e.sh). The
+    # database is a throwaway container on tmpfs; every credential and key is
+    # generated for the run. No AWS, no external identity provider, no secrets.
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # The migration suite runs the older API revisions the staging
+          # runbook deploys (git archive of 371dd50 and 169261d).
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.32.1
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install uv
+        run: pipx install uv==0.12.2
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Sync API dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      - name: End-to-end suites
+        run: make e2e-check
+
+      - name: Keep results and screenshots (synthetic data only)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results
+          path: e2e/.output/
+          retention-days: 14
+          if-no-files-found: ignore
+
   privacy-decisions:
     name: Privacy Decisions
     runs-on: ubuntu-latest
