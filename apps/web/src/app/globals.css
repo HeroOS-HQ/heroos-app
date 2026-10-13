@@ -1,26 +1,196 @@
 @import "tailwindcss";
 
+/*
+ * HeroOS brand tokens. The five brand values are fixed by JJ; the neutrals
+ * below only support cards, borders and muted text.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --hero-background: #f5f4f2;
+  --hero-yellow: #ffd401;
+  --hero-navy: #0e1e3d;
+  --hero-blue: #3d6bc4;
+  --hero-light-blue: #5888e8;
+
+  --hero-surface: #ffffff;
+  --hero-muted: #4b5a78;
+  --hero-border: rgb(14 30 61 / 0.1);
+  --hero-blue-tint: #eaf1fd;
+  --hero-yellow-tint: #fff8d1;
+  --hero-blue-ink: #2f57a8;
+
+  color-scheme: light;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background: var(--hero-background);
+  --color-foreground: var(--hero-navy);
+  --color-hero-bg: var(--hero-background);
+  --color-hero-yellow: var(--hero-yellow);
+  --color-hero-navy: var(--hero-navy);
+  --color-hero-blue: var(--hero-blue);
+  --color-hero-light-blue: var(--hero-light-blue);
+  --color-hero-surface: var(--hero-surface);
+  --color-hero-muted: var(--hero-muted);
+  --color-hero-border: var(--hero-border);
+  --color-hero-blue-tint: var(--hero-blue-tint);
+  --color-hero-yellow-tint: var(--hero-yellow-tint);
+  --color-hero-blue-ink: var(--hero-blue-ink);
+  --font-sans: var(--font-heroos-sans);
+  --shadow-hero-card: 0 1px 2px rgb(14 30 61 / 0.04), 0 8px 24px -12px rgb(14 30 61 / 0.12);
+  --shadow-hero-card-hover: 0 2px 4px rgb(14 30 61 / 0.05), 0 16px 32px -14px rgb(14 30 61 / 0.2);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--hero-background);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--hero-background);
+  color: var(--hero-navy);
+  font-family: var(--font-heroos-sans), system-ui, sans-serif;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+:focus-visible {
+  outline: 3px solid var(--hero-blue);
+  outline-offset: 3px;
+}
+
+/*
+ * Motion. Everything runs once except the gentle illustration float. The CSP
+ * forbids inline style attributes, so delays are expressed as classes.
+ */
+@keyframes hero-rise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hero-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes hero-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes hero-sun-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes hero-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.enter {
+  animation: hero-rise 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.enter-1 {
+  animation-delay: 80ms;
+}
+.enter-2 {
+  animation-delay: 240ms;
+}
+.enter-3 {
+  animation-delay: 380ms;
+}
+.enter-4 {
+  animation-delay: 480ms;
+}
+
+.fade-swap {
+  animation: hero-fade 220ms ease-out both;
+}
+
+.float-slow {
+  animation: hero-float 6s ease-in-out infinite;
+  transform-box: fill-box;
+}
+
+.sun-in {
+  animation: hero-sun-in 900ms cubic-bezier(0.22, 1, 0.36, 1) 200ms both;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.path-draw {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: hero-draw 1800ms cubic-bezier(0.4, 0, 0.2, 1) 500ms forwards;
+}
+
+/*
+ * Scroll reveal. Content is visible by default (no JavaScript, no problem):
+ * the Reveal component only hides elements that start below the fold.
+ */
+[data-reveal] {
+  transition:
+    opacity 550ms ease-out,
+    transform 550ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+[data-reveal="hidden"] {
+  opacity: 0;
+  transform: translateY(16px);
+}
+[data-reveal="shown"] {
+  opacity: 1;
+  transform: none;
+}
+[data-reveal-index="1"] {
+  transition-delay: 80ms;
+}
+[data-reveal-index="2"] {
+  transition-delay: 160ms;
+}
+[data-reveal-index="3"] {
+  transition-delay: 240ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
+  [data-reveal="hidden"] {
+    opacity: 1;
+    transform: none;
+  }
+  .float-slow {
+    animation: none;
+  }
 }

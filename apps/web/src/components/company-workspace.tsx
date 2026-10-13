@@ -19,6 +19,13 @@ const AUTH_MESSAGES: Record<string, string> = {
   unavailable: "Sign-in is temporarily unavailable. Please try again later.",
 };
 
+/** Fixed message for a known sign-in outcome; unknown values yield null. */
+export function authOutcomeMessage(outcome: string | null): string | null {
+  return outcome !== null && Object.hasOwn(AUTH_MESSAGES, outcome) ? AUTH_MESSAGES[outcome] : null;
+}
+
+export const NOT_CONFIGURED_MESSAGE = "Sign-in is not configured for this deployment.";
+
 const FAILURE_MESSAGES: Record<ApiFailure, string> = {
   unauthenticated: "Your session has expired. Please sign in again.",
   forbidden: "Your account does not have access to the demo company.",
@@ -69,7 +76,7 @@ function CompanyChoices({ choices, currentId }: { choices: Company[]; currentId:
 export function CompanyWorkspace({ view }: { view: WorkspaceView }) {
   switch (view.kind) {
     case "not_configured":
-      return <p role="status">Sign-in is not configured for this deployment.</p>;
+      return <p role="status">{NOT_CONFIGURED_MESSAGE}</p>;
     case "signed_out":
       return (
         <section className="flex flex-col items-start gap-4">
