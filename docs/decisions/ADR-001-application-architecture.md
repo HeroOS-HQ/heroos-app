@@ -75,3 +75,4 @@ Application / Domain Services
    PostgreSQL    Private S3      External Services
                                   via controlled
                                   application gateways
+```

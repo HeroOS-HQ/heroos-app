@@ -148,7 +148,8 @@ AWS administrative access
 CI/CD deployment identity
 Production secrets
 Database administration
-Infrastructure configuration```
+Infrastructure configuration
+```
 
 ---
 
