@@ -306,10 +306,26 @@ describe("logout", () => {
     expect((await logout(post({ "sec-fetch-site": "same-origin" }), CONFIG, deps())).status).toBe(303);
   });
 
+  it("accepts Origin null with Sec-Fetch-Site same-origin (form post under no-referrer)", async () => {
+    const response = await logout(post({ origin: "null", "sec-fetch-site": "same-origin" }), CONFIG, deps());
+    expect(response.status).toBe(303);
+    expect(setCookies(response).find((c) => c.startsWith(`${SESSION_COOKIE}=;`))).toContain("Max-Age=0");
+  });
+
+  it("accepts a matching Origin with Sec-Fetch-Site same-origin", async () => {
+    const headers = { origin: WEB_ORIGIN, "sec-fetch-site": "same-origin" };
+    expect((await logout(post(headers), CONFIG, deps())).status).toBe(303);
+  });
+
   it.each([
     [{ origin: "https://evil.example" }],
+    [{ origin: "https://evil.example", "sec-fetch-site": "same-origin" }],
     [{ origin: "null" }],
+    [{ origin: "null", "sec-fetch-site": "cross-site" }],
+    [{ origin: "null", "sec-fetch-site": "same-site" }],
+    [{ origin: "null", "sec-fetch-site": "none" }],
     [{ "sec-fetch-site": "cross-site" }],
+    [{ "sec-fetch-site": "same-site" }],
     [{}],
   ])("refuses cross-site or unverifiable requests: %o", async (headers) => {
     const response = await logout(post(headers), CONFIG, deps());

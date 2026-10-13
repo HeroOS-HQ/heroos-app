@@ -24,8 +24,11 @@ export type AuthConfig = {
   clientId: string;
   /** HeroOS API base URL (Render), without trailing slash. */
   apiBaseUrl: string;
-  /** The demo Company; access is still decided by the API's Membership check. */
-  demoCompanyId: string;
+  /**
+   * Candidate demo Companies (trusted server-side configuration). Only a
+   * candidate-list: access is still decided per Company by the API's Membership check.
+   */
+  demoCompanyIds: string[];
   /** 32-byte key material for sealing cookies. */
   sessionSecret: Buffer;
 };
@@ -35,6 +38,20 @@ export type ConfigResult =
   | { ok: false; invalid: string[] };
 
 type Env = Record<string, string | undefined>;
+
+const MAX_DEMO_COMPANIES = 5;
+
+/** `HEROOS_DEMO_COMPANY_IDS` (comma-separated), else the single `HEROOS_DEMO_COMPANY_ID`. */
+function parseCompanyIds(env: Env): string[] | null {
+  const list = env.HEROOS_DEMO_COMPANY_IDS;
+  if (list === undefined || list === "") {
+    const single = env.HEROOS_DEMO_COMPANY_ID ?? "";
+    return UUID.test(single) ? [single] : null;
+  }
+  const ids = list.split(",");
+  const valid = ids.every((id) => UUID.test(id)) && new Set(ids).size === ids.length;
+  return valid && ids.length <= MAX_DEMO_COMPANIES ? ids : null;
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const COGNITO_CLIENT_ID = /^[A-Za-z0-9]{1,128}$/;
@@ -135,8 +152,10 @@ export function readAuthConfig(env: Env = process.env): ConfigResult {
   const identity = readProvider(env, invalid);
   const apiBaseUrl = parseBaseUrl(env.HEROOS_API_BASE_URL, allowLocalHttp);
   if (apiBaseUrl === null) invalid.push("HEROOS_API_BASE_URL");
-  const demoCompanyId = env.HEROOS_DEMO_COMPANY_ID ?? "";
-  if (!UUID.test(demoCompanyId)) invalid.push("HEROOS_DEMO_COMPANY_ID");
+  const demoCompanyIds = parseCompanyIds(env);
+  if (demoCompanyIds === null) {
+    invalid.push(env.HEROOS_DEMO_COMPANY_IDS ? "HEROOS_DEMO_COMPANY_IDS" : "HEROOS_DEMO_COMPANY_ID");
+  }
   const secret = env.HEROOS_WEB_SESSION_SECRET ?? "";
   if (!SESSION_SECRET.test(secret)) invalid.push("HEROOS_WEB_SESSION_SECRET");
   // Node disables TLS certificate verification process-wide when this is "0";
@@ -151,7 +170,7 @@ export function readAuthConfig(env: Env = process.env): ConfigResult {
       provider: identity.provider,
       clientId: identity.clientId,
       apiBaseUrl: apiBaseUrl!,
-      demoCompanyId,
+      demoCompanyIds: demoCompanyIds!,
       sessionSecret: Buffer.from(secret, "hex"),
     },
   };

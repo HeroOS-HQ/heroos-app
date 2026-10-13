@@ -21,7 +21,7 @@ credential or data needs explicit approval first. Nothing here has been run.
 | Tokens | RFC 9068 JWT access tokens for the HeroOS API audience; ID tokens are never accepted by the API |
 | Users | Admin-created only (public sign-up disabled): the two synthetic demo users |
 | Callback | One stable Vercel **production** domain; previews are not registered |
-| Company | `HEROOS_DEMO_COMPANY_ID`; the API's Membership check decides access |
+| Company | `HEROOS_DEMO_COMPANY_IDS` (candidate list; legacy single `HEROOS_DEMO_COMPANY_ID` still works). The web asks the API about each candidate and lists only those the API's Membership check authorizes |
 | CORS | Not needed (`HEROOS_CORS_ALLOWED_ORIGINS` unset): the browser never calls the API |
 
 ## 2. Provider requirements (checklist for selection)
@@ -159,7 +159,7 @@ Project root `apps/web`, Next.js, pnpm workspace install. Variables for the
 | `HEROOS_OIDC_CLIENT_ID` | the web client ID | no |
 | `HEROOS_OIDC_AUDIENCE` | same as the API | no |
 | `HEROOS_API_BASE_URL` | `https://<render-service>.onrender.com` | no |
-| `HEROOS_DEMO_COMPANY_ID` | `d3e0a000-0000-4000-8000-000000000001` (synthetic Company A) | no |
+| `HEROOS_DEMO_COMPANY_IDS` | `d3e0a000-0000-4000-8000-000000000001,d3e0b000-0000-4000-8000-000000000001` (synthetic Companies A and B; max 5, comma-separated, no spaces). Candidates only: the API still authorizes each one. Falls back to `HEROOS_DEMO_COMPANY_ID` when unset | no |
 | `HEROOS_WEB_SESSION_SECRET` | `openssl rand -hex 32` | **yes** (Sensitive) |
 
 ## 7. Smoke test after deployment

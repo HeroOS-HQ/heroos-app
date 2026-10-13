@@ -9,7 +9,8 @@ export type WorkspaceView =
   | { kind: "not_configured" }
   | { kind: "signed_out"; authOutcome: string | null }
   | { kind: "error"; failure: ApiFailure }
-  | { kind: "signed_in"; company: Company; cases: CaseSummary[] };
+  | { kind: "signed_in"; company: Company; cases: CaseSummary[]; choices?: Company[] }
+  | { kind: "choose"; choices: Company[] };
 
 const AUTH_MESSAGES: Record<string, string> = {
   failed: "Sign-in could not be completed. Please try again.",
@@ -17,6 +18,13 @@ const AUTH_MESSAGES: Record<string, string> = {
   expired: "The sign-in attempt expired. Please try again.",
   unavailable: "Sign-in is temporarily unavailable. Please try again later.",
 };
+
+/** Fixed message for a known sign-in outcome; unknown values yield null. */
+export function authOutcomeMessage(outcome: string | null): string | null {
+  return outcome !== null && Object.hasOwn(AUTH_MESSAGES, outcome) ? AUTH_MESSAGES[outcome] : null;
+}
+
+export const NOT_CONFIGURED_MESSAGE = "Sign-in is not configured for this deployment.";
 
 const FAILURE_MESSAGES: Record<ApiFailure, string> = {
   unauthenticated: "Your session has expired. Please sign in again.",
@@ -47,10 +55,28 @@ function SignOutForm() {
   );
 }
 
+/** Switcher among the Companies the API authorized; ids come from API responses only. */
+function CompanyChoices({ choices, currentId }: { choices: Company[]; currentId: string | null }) {
+  return (
+    <nav aria-label="Companies" className="flex flex-wrap gap-2">
+      {choices.map((choice) => (
+        <a
+          key={choice.id}
+          className="rounded-full border border-zinc-300 px-4 py-1 text-sm hover:bg-zinc-100"
+          href={`/?company=${encodeURIComponent(choice.id)}`}
+          aria-current={choice.id === currentId ? "page" : undefined}
+        >
+          {choice.name}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
 export function CompanyWorkspace({ view }: { view: WorkspaceView }) {
   switch (view.kind) {
     case "not_configured":
-      return <p role="status">Sign-in is not configured for this deployment.</p>;
+      return <p role="status">{NOT_CONFIGURED_MESSAGE}</p>;
     case "signed_out":
       return (
         <section className="flex flex-col items-start gap-4">
@@ -67,9 +93,20 @@ export function CompanyWorkspace({ view }: { view: WorkspaceView }) {
           {view.failure === "unauthenticated" ? <SignInLink /> : <SignOutForm />}
         </section>
       );
+    case "choose":
+      return (
+        <section className="flex flex-col items-start gap-4">
+          <p>Choose a company.</p>
+          <CompanyChoices choices={view.choices} currentId={null} />
+          <SignOutForm />
+        </section>
+      );
     case "signed_in":
       return (
         <section className="flex flex-col gap-6">
+          {view.choices && view.choices.length > 1 ? (
+            <CompanyChoices choices={view.choices} currentId={view.company.id} />
+          ) : null}
           <div className="flex items-center justify-between gap-4">
             <h2 className="text-xl font-semibold">{view.company.name}</h2>
             <SignOutForm />
