@@ -94,9 +94,37 @@ unset HEROOS_SUBJECT
 
 ## 3. Deploying the identity migrations (approval required)
 
+### Pre-merge safety gate (Render)
+
+Merging this work into `main` must not deploy anything. Before the merge, every
+row below is checked and recorded with evidence (no secrets) in the pull
+request. A row without evidence means: do not merge.
+
+| # | Check | How | Why |
+| --- | --- | --- | --- |
+| G1 | Render API service **Auto-Deploy = Off** | Render dashboard → the API service → Settings → Auto-Deploy | Render's options are *On Commit* (deploys on every push or merge to the linked branch; the default for new services), *After CI Checks Pass* (still deploys after the merge, once CI is green) and *Off*. Only *Off* keeps the merge from becoming a deployment |
+| G2 | Nothing else deploys the API on a push to `main` | Render → the service's deploy hook is not called by any automation; GitHub → organization Settings → GitHub Apps → Render → repository access | The Render GitHub App is installed on the organization (selected repositories). This repository has no deploy workflow (`.github/workflows/ci.yml` only builds and tests), no repository webhooks and no deploy-hook call |
+| G3 | The service's linked branch and the commit it currently serves are recorded | Render → the service's settings and deploy history | Must be a commit from before this work (no `user_identities` code); B1a is compatible with it |
+| G4 | `HEROOS_OIDC_ISSUER` copied verbatim from the service environment | Render → the service → Environment (not a secret) | Needed for the B1a `-x legacy_identity_issuer`; a mismatch makes every sign-in fail closed |
+| G5 | `HEROOS_OPERATOR_DATABASE_URL` and `MIGRATION_DATABASE_URL` absent from the service environment | Render → the service → Environment | The new API refuses to start with either outside development |
+| G6 | All six CI jobs green on the merge commit (Web, API, Containers, Tenant Isolation, Backup & Restore, Privacy Decisions) | Pull request checks | The `main` ruleset requires only Web and API, so a failing security gate would not block the merge on its own |
+| G7 | No Supabase migration is applied by the merge | Repository has no `supabase/` directory; the Supabase GitHub integration reports "skipped" on this pull request | Alembic migrations are applied only by hand (step 3 below) |
+
+If G1 cannot be confirmed, do not merge. What would happen otherwise: before
+B1a, the new API exits at startup because `heroos_schema_contract()` is missing
+and never serves its port (verified on a disposable PostgreSQL 17, 2026-10-13;
+`/health` itself does not touch the database). Render's documentation says a
+deploy that fails to start is abandoned and the previous deploy keeps serving;
+that has not been tested against this service. After B1a, the merge would
+deploy the new API without its own approval. Neither is acceptable as a plan.
+
+Merging also triggers a Vercel production build of the web; `apps/web` is
+unchanged by this work, so that build serves the same web code.
+
 Order, for a database that already has users:
 
-1. Confirm the API host does **not** auto-deploy from `main`.
+1. The pre-merge safety gate above is recorded as satisfied, and the API host
+   still does **not** auto-deploy from `main`.
 2. Take a logical backup ([Backup and Recovery](../architecture/backup-and-recovery.md)).
 3. Count users and read the exact configured issuer (`HEROOS_OIDC_ISSUER`, not
    secret). Then, as the migration owner, from a clean checkout:
@@ -166,3 +194,26 @@ lifecycle state. Therefore:
    restored database.
 
 There is no external journaling service in M1-10B; this gate is procedural.
+
+## 7. Operator trust boundary: what one operator login can do alone
+
+Read this before anyone is given an operator login
+([ADR-008 §4](../decisions/ADR-008-external-identity-and-provisioning.md#operator-trust-boundary-self-grant-residual-risk-not-mitigated)).
+
+| An operator login alone **can** | An operator login **cannot** |
+| --- | --- |
+| Give any identity it can sign in with, including the operator's own IdP account, an active Membership in any Company (only the Company's UUID is needed; UUIDs are not secret), then read that Company's data through the API | Read `cases`, `case_subjects`, `company_blueprints` or the audit tables directly |
+| Do the same with plain SQL instead of the CLI | Delete or truncate Users, bindings, Memberships or audit events |
+| Attach any well-formed issue key as `--reference`, including one that does not exist | Disable the audit triggers or change `db_role` (`SET ROLE`/`SET SESSION AUTHORIZATION` are refused) |
+| Suspend or revoke anyone, or reactivate what another operator revoked | Become the API runtime role |
+
+Consequences until the [access policy proposal](identity-operator-access-policy-proposal.md)
+is decided by JJ:
+
+- A self-grant cannot be detected in the database: no table links an operator
+  login to a HeroOS User. Only a reviewer who knows whose identity a `user_id`
+  is can spot it, and nobody reviews the audit yet.
+- Operator logins are limited to the synthetic demo. None is created on any
+  database holding real customer data.
+- Every change still needs its own issue that names the requester and the
+  Company; the reference is the operator's claim, not proof of approval.

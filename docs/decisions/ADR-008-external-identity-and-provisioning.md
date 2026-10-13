@@ -84,6 +84,37 @@ transaction. Every command is idempotent. Subjects are read from standard input
 and never printed. The first member of a Company is created the same way; the
 first *administrator* needs the M1-10C role model.
 
+#### Operator trust boundary: self-grant (residual risk, not mitigated)
+
+An identity-operator login can, **alone and without any second person**, give any
+external identity it can sign in with (including the operator's own IdP account)
+an active Membership in **any** Company, and then read that Company's data
+through the API like any member. Verified on a disposable PostgreSQL 17
+(2026-10-13): provisioning the operator's own identity into one Company and
+granting it two more succeeded, and its token was then authorized for all three.
+
+- Nothing in the database ties an operator login to a HeroOS User, so a
+  self-grant is technically indistinguishable from any other grant.
+- The only control is detective: each change is audited with the operator's
+  login (`db_role`, the authenticated `session_user`, which `SET ROLE` cannot
+  change). The change reference is only format-checked: any well-formed issue
+  key is accepted (for example a key that does not exist), so it records a
+  claim, not an approval.
+- The CLI is a convenience, not a boundary: the same login can make the same
+  changes with plain SQL (still audited, still requiring a reference).
+- Nobody reviews the audit trail yet, and no role other than the migration owner
+  can read it.
+- What does hold: the operator login cannot read HR tables or the audit tables,
+  cannot delete anything, cannot disable the audit triggers, and cannot become
+  the API runtime role or another login.
+
+The same login can also suspend or revoke anyone (an availability risk). Until a
+policy is decided, operator logins must not exist on any database holding real
+customer data. The proposed approval and permission policy is in
+[Identity Operator Access Policy (proposal)](../operations/identity-operator-access-policy-proposal.md)
+(runbook [§7](../operations/identity-provisioning.md#7-operator-trust-boundary-what-one-operator-login-can-do-alone));
+it is **not approved**.
+
 ### 5. Audit
 
 `identity_events` (global; owner-only, RLS without policies) and
@@ -154,6 +185,8 @@ simply provisioned with Cognito bindings.
 | --- | --- |
 | Lifecycle terminology (`active`/`suspended`, `active`/`revoked`) | JJ |
 | Operator attribution: opaque handles (`heroos_op_01`) vs. named logins; where the handle-to-person mapping is kept | JJ (operator personal data) |
+| Operator access and approval policy: who may hold an operator login, which changes need a second person, self-grant, audit review ([proposal](../operations/identity-operator-access-policy-proposal.md), not approved) | JJ; Technical Lead for the technical controls |
+| Merging this ADR's implementation: the Render pre-merge safety gate must be recorded as satisfied ([runbook §3, pre-merge safety gate](../operations/identity-provisioning.md#pre-merge-safety-gate-render)) | Technical Lead |
 | Audit-event retention | PRIV-005 (Legal Review Required) |
 | User / Company deletion and the treatment of their audit events | PRIV-008, PRIV-020 |
 | Role and permission model, Company administrators, approval authority, external experts | JJ, M1-10C |
