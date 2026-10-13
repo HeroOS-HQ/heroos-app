@@ -9,7 +9,8 @@ export type WorkspaceView =
   | { kind: "not_configured" }
   | { kind: "signed_out"; authOutcome: string | null }
   | { kind: "error"; failure: ApiFailure }
-  | { kind: "signed_in"; company: Company; cases: CaseSummary[] };
+  | { kind: "signed_in"; company: Company; cases: CaseSummary[]; choices?: Company[] }
+  | { kind: "choose"; choices: Company[] };
 
 const AUTH_MESSAGES: Record<string, string> = {
   failed: "Sign-in could not be completed. Please try again.",
@@ -47,6 +48,24 @@ function SignOutForm() {
   );
 }
 
+/** Switcher among the Companies the API authorized; ids come from API responses only. */
+function CompanyChoices({ choices, currentId }: { choices: Company[]; currentId: string | null }) {
+  return (
+    <nav aria-label="Companies" className="flex flex-wrap gap-2">
+      {choices.map((choice) => (
+        <a
+          key={choice.id}
+          className="rounded-full border border-zinc-300 px-4 py-1 text-sm hover:bg-zinc-100"
+          href={`/?company=${encodeURIComponent(choice.id)}`}
+          aria-current={choice.id === currentId ? "page" : undefined}
+        >
+          {choice.name}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
 export function CompanyWorkspace({ view }: { view: WorkspaceView }) {
   switch (view.kind) {
     case "not_configured":
@@ -67,9 +86,20 @@ export function CompanyWorkspace({ view }: { view: WorkspaceView }) {
           {view.failure === "unauthenticated" ? <SignInLink /> : <SignOutForm />}
         </section>
       );
+    case "choose":
+      return (
+        <section className="flex flex-col items-start gap-4">
+          <p>Choose a company.</p>
+          <CompanyChoices choices={view.choices} currentId={null} />
+          <SignOutForm />
+        </section>
+      );
     case "signed_in":
       return (
         <section className="flex flex-col gap-6">
+          {view.choices && view.choices.length > 1 ? (
+            <CompanyChoices choices={view.choices} currentId={view.company.id} />
+          ) : null}
           <div className="flex items-center justify-between gap-4">
             <h2 className="text-xl font-semibold">{view.company.name}</h2>
             <SignOutForm />

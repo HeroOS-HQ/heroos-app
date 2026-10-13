@@ -57,12 +57,26 @@ describe("readAuthConfig", () => {
     ["HEROOS_API_BASE_URL", "https://heroos-api.example.com?x=1"],
     ["HEROOS_DEMO_COMPANY_ID", "not-a-uuid"],
     ["HEROOS_DEMO_COMPANY_ID", "D3E0A000-0000-4000-8000-000000000001"],
+    ["HEROOS_DEMO_COMPANY_IDS", "d3e0a000-0000-4000-8000-000000000001,not-a-uuid"],
+    ["HEROOS_DEMO_COMPANY_IDS", "d3e0a000-0000-4000-8000-000000000001,d3e0a000-0000-4000-8000-000000000001"],
+    ["HEROOS_DEMO_COMPANY_IDS", "d3e0a000-0000-4000-8000-000000000001, d3e0b000-0000-4000-8000-000000000001"],
     ["HEROOS_WEB_SESSION_SECRET", "too-short"],
     ["HEROOS_WEB_SESSION_SECRET", "0F".repeat(32)],
   ])("rejects %s=%s and names only the variable", (name, value) => {
     const result = readAuthConfig({ ...ENV, [name]: value });
     expect(result).toEqual({ ok: false, invalid: [name] });
     expect(JSON.stringify(result)).not.toContain(value);
+  });
+
+  it("reads a candidate list from HEROOS_DEMO_COMPANY_IDS, which wins over the single id", () => {
+    const ids = "d3e0a000-0000-4000-8000-000000000001,d3e0b000-0000-4000-8000-000000000001";
+    const result = readAuthConfig({ ...ENV, HEROOS_DEMO_COMPANY_IDS: ids });
+    expect(result.ok && result.config.demoCompanyIds).toEqual(ids.split(","));
+  });
+
+  it("falls back to the single HEROOS_DEMO_COMPANY_ID", () => {
+    const result = readAuthConfig(ENV);
+    expect(result.ok && result.config.demoCompanyIds).toEqual([ENV.HEROOS_DEMO_COMPANY_ID]);
   });
 
   it("allows plain-http localhost only outside production", () => {
