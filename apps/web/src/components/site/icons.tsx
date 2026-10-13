@@ -1,3 +1,12 @@
+"use client";
+
+// A client module on purpose (M1-10E): when a server component renders an
+// <svg>, React may stream its children in a later chunk and park them in a
+// hidden <svg style="display:none"> container. The nonce CSP blocks that inline
+// style, so the container showed as an empty 150px box until React removed it
+// (seen on the workspace home). Built here, each icon's markup is created in one
+// piece during server rendering and never split; server components pass only
+// `className`.
 import type { ReactNode } from "react";
 
 /** Small outline icons (24px grid). Decorative: always hidden from assistive tech. */

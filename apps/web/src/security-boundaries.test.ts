@@ -25,9 +25,11 @@ const clientFiles = files.filter(({ text }) => /^["']use client["'];?/m.test(tex
 describe("browser/server boundary", () => {
   it("finds the client components it checks", () => {
     expect(clientFiles.map(({ path }) => path).sort()).toEqual([
+      "components/app/back-forward-cache-guard.tsx",
       "components/app/company-switcher.tsx",
       "components/onboarding/onboarding-wizard.tsx",
       "components/settings/company-settings-form.tsx",
+      "components/site/icons.tsx",
       "components/site/reveal.tsx",
       "components/site/site-header.tsx",
       "components/site/workflow-journey.tsx",

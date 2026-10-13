@@ -463,3 +463,13 @@ keeps tokens out of reach of page JavaScript.
   `Permissions-Policy` and HSTS from `next.config.ts`. Nonces are incompatible
   with a prerendered static shell, so the root layout renders per request
   (`instant = false`).
+- **Caching of signed-in pages**:
+  - Self-hosted, Next.js marks dynamic pages
+    `private, no-cache, no-store, max-age=0, must-revalidate`.
+  - The live Vercel deployment serves them as
+    `public, max-age=0, must-revalidate`, with Vercel's CDN holding only the
+    prerendered shell. The HTML is still rendered per request: each response
+    has a fresh CSP nonce.
+  - Because `no-store` is missing there, signed-in pages carry
+    `BackForwardCacheGuard` (M1-10E). A page never comes back from the browser's
+    back/forward cache after sign-out; it reloads instead.

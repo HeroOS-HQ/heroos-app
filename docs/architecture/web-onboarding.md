@@ -164,13 +164,27 @@ ready page then loads that Company through the API like any other workspace.
   check rejects the `Origin: null` that `no-referrer` produces.
 - **CORS is unchanged** (the browser never calls the API). The nonce CSP is
   unchanged. All styling is in classes (no inline `style` attributes).
-- **Known CSP notice:** when React streams a late chunk that lands inside an
-  SVG, it emits a hidden `<svg style="display:none">` container. CSP blocks
-  that `style` attribute and the browser logs a violation. The nonce'd script
-  that follows immediately moves the content and removes the container, so
-  nothing renders differently. Allowing it would need `'unsafe-hashes'` plus
-  the hash of `display:none` in `style-src`; that was deliberately not changed
-  here.
+- **CSP and streamed SVGs (resolved in M1-10E).**
+  - **What happened:** React sometimes streams an `<svg>`'s children in a later
+    chunk. It then parks them in a hidden `<svg style="display:none">`
+    container, which the nonce CSP blocks.
+  - **How often:** M1-10E reproduced it on every load of a workspace home with
+    a full setup checklist (30 of 30 loads).
+  - **Effect:** in one load the container was painted for a frame as an empty
+    150 px box.
+  - **Fix:** the icon module (`components/site/icons.tsx`) is a client
+    component, so each icon's markup is built in one piece and is never split.
+    After the fix there were 0 blocked styles in 100 loads across workspace,
+    settings, ready and homepage. The CSP is unchanged: no `'unsafe-hashes'`
+    and no `'unsafe-inline'`.
+- **Back after sign-out.** Signed-in pages include `BackForwardCacheGuard`: a
+  page hides itself when it enters the browser's back/forward cache and reloads
+  if it is ever restored. The server then checks the session again.
+  - Self-hosted, Next.js already sends `no-store`, which keeps these pages out
+    of that cache.
+  - The live Vercel deployment sends `public, max-age=0, must-revalidate`
+    instead (observed read-only, M1-10E). Under that header, Back after
+    sign-out showed the previous user's workspace until the guard was added.
 
 ## 8. Compatibility while deploying
 
@@ -197,6 +211,12 @@ None of these is done, and each needs its own approval:
    criteria and the privacy follow-ups in ADR-010 §8. None blocks this code.
 
 ## 10. Verification
+
+Since M1-10E, `make e2e-check` runs these flows on the real web, API and
+PostgreSQL together, with a local OpenID Provider and Chrome
+([Local end-to-end validation](../operations/local-end-to-end-validation.md)).
+The notes below are the M1-10D state.
+
 
 - **Unit and component tests** (Vitest, React Testing Library):
   - validation;
