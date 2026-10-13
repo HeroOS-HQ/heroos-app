@@ -175,12 +175,17 @@ Order, for a database that already has users:
    Any mismatch aborts with nothing changed. The previous API keeps working.
 4. Verify: `SELECT DISTINCT issuer FROM user_identities` equals the configured
    issuer; one binding per user.
-5. Deploy the new API (it refuses to start on a schema older than B1a).
+5. Deploy the M1-10B API, commit `169261d` (it refuses to start on a schema
+   older than B1a). Not `main`: since M1-10C, the API on `main` needs migration
+   C1 and refuses to start on B1a or B1b (verified in the M1-10E rehearsal,
+   [staging activation runbook](staging-activation.md)).
 6. Smoke test sign-in for every user and cross-Company denial. The web lists
    only the candidate Companies the API authorizes, so a user must see exactly
    their own Companies (and, with none, the "no access" message).
-7. `uv run alembic upgrade head` (B1b). The previous API can no longer resolve
-   anyone (fail closed).
+7. `uv run alembic upgrade 09cb5ec569b9` (B1b, by revision). Not `upgrade head`:
+   since M1-10C, `head` is migration C1, which is a separate step with its own
+   approval ([Company Registration §2](company-registration.md#2-deployment-order-approval-required-at-each-step)).
+   The previous API can no longer resolve anyone (fail closed: it answers 500).
 8. Only when the operator activation checklist (§8) is complete: create the
    Technical Lead's operator login (§1, policy D1). Without it, operator changes
    on that database could not get the independent review policy D4 requires.
