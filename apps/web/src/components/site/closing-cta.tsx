@@ -21,7 +21,7 @@ export function ClosingCta() {
           </div>
           <svg
             aria-hidden="true"
-            className="pointer-events-none absolute -right-10 top-1/2 hidden h-[130%] w-auto -translate-y-1/2 text-hero-light-blue lg:block"
+            className="pointer-events-none absolute -right-10 top-1/2 hidden h-[130%] w-auto -translate-y-1/2 text-hero-light-blue xl:block"
             fill="none"
             viewBox="0 0 400 400"
           >

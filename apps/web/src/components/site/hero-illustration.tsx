@@ -1,38 +1,29 @@
 /**
- * Hero artwork. TEMPORARY: sun, pathway, hills and signpost are plain SVG, and
- * the mascot slot holds a neutral "H" badge, not a character. When JJ's
- * original mascot arrives, replace <MascotSlot /> (or this whole component);
- * the hero layout around it does not change. Decorative, so hidden from
- * assistive technology.
+ * Hero artwork. The mascot is a TEMPORARY screenshot extraction
+ * (public/branding/heroos-mascot-temporary.png, 285 x 470, transparent) shown
+ * at its native aspect ratio; replace the file, or <MascotSlot />, when JJ
+ * provides the original. Sun, pathway, hills and signpost are plain SVG.
+ * Decorative, so hidden from assistive technology.
  */
 
-/** Badge standing on the path: about 120 x 170, origin at bottom centre. */
+const MASCOT_WIDTH = 285;
+const MASCOT_HEIGHT = 470;
+const MASCOT_SCALE = 0.78;
+
+/** Mascot standing near (210, 400) in the 560 x 520 artwork space. */
 function MascotSlot() {
+  const width = MASCOT_WIDTH * MASCOT_SCALE;
+  const height = MASCOT_HEIGHT * MASCOT_SCALE;
   return (
-    <g className="float-slow">
-      <path
-        d="M-60 -150Q-60 -170 -40 -170H40Q60 -170 60 -150V-70C60 -30 30 -8 0 0C-30 -8 -60 -30 -60 -70Z"
-        fill="#0e1e3d"
-      />
-      <path
-        d="M-46 -150Q-46 -158 -38 -158H38Q46 -158 46 -150V-72C46 -42 24 -22 0 -14C-24 -22 -46 -42 -46 -72Z"
-        fill="none"
-        stroke="#5888e8"
-        strokeOpacity="0.55"
-        strokeWidth="2"
-      />
-      <text
-        fill="#ffd401"
-        fontFamily="inherit"
-        fontSize="84"
-        fontWeight="800"
-        textAnchor="middle"
-        x="0"
-        y="-62"
-      >
-        H
-      </text>
-    </g>
+    <image
+      className="float-slow"
+      height={height}
+      href="/branding/heroos-mascot-temporary.png"
+      preserveAspectRatio="xMidYMax meet"
+      width={width}
+      x={210 - width / 2}
+      y={402 - height}
+    />
   );
 }
 
@@ -80,23 +71,23 @@ export function HeroIllustration({ className }: { className?: string }) {
 
       {/* Sun */}
       <g className="sun-in">
-        <circle cx="130" cy="82" r="78" fill="url(#hero-sun-glow)" />
-        <circle cx="130" cy="82" r="24" fill="#ffd401" />
+        <circle cx="470" cy="76" r="78" fill="url(#hero-sun-glow)" />
+        <circle cx="470" cy="76" r="24" fill="#ffd401" />
         <g stroke="#ffd401" strokeLinecap="round" strokeWidth="5">
-          <path d="M130 34v-12M130 130v12M82 82H70M178 82h12M96 48l-9-9M164 116l9 9M164 48l9-9M96 116l-9 9" />
+          <path d="M470 28v-12M470 124v12M422 76h-12M518 76h12M436 42l-9-9M504 110l9 9M504 42l9-9M436 110l-9 9" />
         </g>
       </g>
 
       {/* Clouds and hills */}
-      <ellipse cx="110" cy="392" fill="#5888e8" fillOpacity="0.14" rx="86" ry="46" />
-      <ellipse cx="76" cy="414" fill="#5888e8" fillOpacity="0.12" rx="70" ry="38" />
+      <ellipse cx="116" cy="410" fill="#5888e8" fillOpacity="0.14" rx="86" ry="46" />
+      <ellipse cx="86" cy="430" fill="#5888e8" fillOpacity="0.12" rx="70" ry="38" />
       <ellipse cx="300" cy="468" fill="url(#hero-hill)" rx="255" ry="56" />
       <ellipse cx="250" cy="486" fill="url(#hero-hill)" rx="210" ry="40" />
 
       {/* Pathway, drawn once on entry */}
       <path
         className="path-draw"
-        d="M20 330C130 300 150 190 290 170S470 110 548 60"
+        d="M20 360C130 330 160 230 300 205S400 150 445 125"
         fill="none"
         pathLength="1"
         stroke="#5888e8"
@@ -135,10 +126,7 @@ export function HeroIllustration({ className }: { className?: string }) {
       </g>
 
       {/* Mascot slot */}
-      <g transform="translate(200 372)">
-        <ellipse cx="0" cy="8" fill="#0e1e3d" fillOpacity="0.12" rx="58" ry="9" />
-        <MascotSlot />
-      </g>
+      <MascotSlot />
     </svg>
   );
 }

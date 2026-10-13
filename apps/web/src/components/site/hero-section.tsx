@@ -29,9 +29,6 @@ export function HeroSection() {
             <p>No HR expertise required.</p>
             <p>Just describe your situation.</p>
           </div>
-          <p className="enter enter-2 mt-4 text-base text-hero-muted">
-            Practical guidance for better workplace decisions.
-          </p>
           <div className="enter enter-3 mt-10 flex flex-col gap-4 sm:flex-row">
             {/* A plain link, not next/link: the login route must not be prefetched. */}
             <a className={primaryCta} href="/auth/login">

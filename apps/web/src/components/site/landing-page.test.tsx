@@ -14,6 +14,16 @@ describe("LandingPage", () => {
     expect(screen.getByText(ENVIRONMENT_NOTICE)).toBeInTheDocument();
   });
 
+  it("shows the supplied logo symbol beside live wordmark text, and no extra hero sentence", () => {
+    const { container } = render(<LandingPage />);
+
+    const symbol = container.querySelector("header img");
+    expect(symbol).toHaveAttribute("src", "/branding/heroos-logo-symbol.svg");
+    expect(symbol).toHaveAttribute("alt", "");
+    expect(screen.getByRole("link", { name: "HeroOS home" })).toHaveTextContent("HeroOS");
+    expect(screen.queryByText(/Practical guidance/)).toBeNull();
+  });
+
   it("sends every sign-in call to action to the login route as a plain link", () => {
     render(<LandingPage />);
 
