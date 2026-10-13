@@ -44,6 +44,32 @@ describe("CompanyWorkspace", () => {
     expect(form).toHaveAttribute("method", "post");
   });
 
+  it("lists only the given choices and links by id when a choice is needed", () => {
+    render(
+      <CompanyWorkspace
+        view={{
+          kind: "choose",
+          choices: [
+            { id: "a", name: "Alpha" },
+            { id: "b", name: "Beta" },
+          ],
+        }}
+      />,
+    );
+    const nav = screen.getByRole("navigation", { name: "Companies" });
+    expect(nav).toHaveTextContent("AlphaBeta");
+    expect(screen.getByRole("link", { name: "Beta" })).toHaveAttribute("href", "/?company=b");
+  });
+
+  it("shows no switcher when only one company is authorized", () => {
+    render(
+      <CompanyWorkspace
+        view={{ kind: "signed_in", company: { id: "a", name: "Alpha" }, cases: [], choices: [{ id: "a", name: "Alpha" }] }}
+      />,
+    );
+    expect(screen.queryByRole("navigation", { name: "Companies" })).toBeNull();
+  });
+
   it.each([
     ["unauthenticated", "Your session has expired. Please sign in again.", "Sign in"],
     ["forbidden", "Your account does not have access to the demo company.", "Sign out"],

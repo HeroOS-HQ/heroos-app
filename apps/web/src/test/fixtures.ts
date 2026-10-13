@@ -39,7 +39,7 @@ export const OIDC_ENV = {
 const COMMON_CONFIG = {
   webOrigin: WEB_ORIGIN,
   apiBaseUrl: API_BASE_URL,
-  demoCompanyId: COMPANY_ID,
+  demoCompanyIds: [COMPANY_ID],
   sessionSecret: Buffer.from(SESSION_SECRET_HEX, "hex"),
 };
 

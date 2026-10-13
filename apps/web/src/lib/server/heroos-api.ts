@@ -77,24 +77,57 @@ export function parseCases(body: unknown): CaseSummary[] | null {
   return cases;
 }
 
-export type CompanyOverview = { company: Company; cases: CaseSummary[] };
+export type CompanyOverview = {
+  /** Only Companies whose API request succeeded (Membership + RLS decided by the API). */
+  companies: Company[];
+  /** The Company shown: the single authorized one, or the validated choice. Otherwise null. */
+  selected: { company: Company; cases: CaseSummary[] } | null;
+};
 
-/** The configured demo Company and its cases; the API decides whether the user may see them. */
+/**
+ * Demo-only Company discovery. Each configured candidate is requested through the
+ * protected API; a candidate is listed only when the API authorizes it. A
+ * requested Company outside that authorized list is ignored, never fetched.
+ */
 export async function getCompanyOverview(
   accessToken: string,
   config: AuthConfig,
+  requestedCompanyId: string | null = null,
   fetcher: Fetch = fetch,
 ): Promise<ApiResult<CompanyOverview>> {
-  const base = `/companies/${encodeURIComponent(config.demoCompanyId)}`;
-  const [company, cases] = await Promise.all([
-    apiGet(base, accessToken, config, fetcher, parseCompany),
-    apiGet(`${base}/cases`, accessToken, config, fetcher, parseCases),
-  ]);
-  for (const failure of ["unauthenticated", "forbidden", "not_found", "unavailable"] as const) {
-    if ((!company.ok && company.failure === failure) || (!cases.ok && cases.failure === failure)) {
+  const lookups = await Promise.all(
+    config.demoCompanyIds.map((id) =>
+      apiGet(`/companies/${encodeURIComponent(id)}`, accessToken, config, fetcher, parseCompany),
+    ),
+  );
+  // Fail closed: an expired token or an unreachable API never degrades to a partial list.
+  for (const failure of ["unauthenticated", "unavailable"] as const) {
+    if (lookups.some((lookup) => !lookup.ok && lookup.failure === failure)) {
       return { ok: false, failure };
     }
   }
-  if (!company.ok || !cases.ok) return { ok: false, failure: "unavailable" };
-  return { ok: true, data: { company: company.data, cases: cases.data } };
+  const companies: Company[] = [];
+  config.demoCompanyIds.forEach((id, index) => {
+    const lookup = lookups[index];
+    // The API echoes the requested id; anything else is not trusted.
+    if (lookup.ok && lookup.data.id === id) companies.push(lookup.data);
+  });
+  if (companies.length === 0) {
+    const notFound = lookups.every((lookup) => !lookup.ok && lookup.failure === "not_found");
+    return { ok: false, failure: notFound ? "not_found" : "forbidden" };
+  }
+
+  const selectedCompany =
+    companies.length === 1 ? companies[0] : (companies.find((c) => c.id === requestedCompanyId) ?? null);
+  if (selectedCompany === null) return { ok: true, data: { companies, selected: null } };
+
+  const cases = await apiGet(
+    `/companies/${encodeURIComponent(selectedCompany.id)}/cases`,
+    accessToken,
+    config,
+    fetcher,
+    parseCases,
+  );
+  if (!cases.ok) return { ok: false, failure: cases.failure };
+  return { ok: true, data: { companies, selected: { company: selectedCompany, cases: cases.data } } };
 }
