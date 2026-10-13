@@ -72,7 +72,9 @@ recommendation.
   `.dockerignore`, and the API image copies only dependency manifests and
   `apps/api/app`.
 - **Least privilege**: each task role can read only its own secrets. The API
-  task cannot read the migration credential.
+  task cannot read the migration credential or any identity-operator credential
+  (ADR-008); the API refuses to start with either, and operator logins are
+  per-person and never stored with a service.
 - **Rotation** for database credentials where RDS integration supports it. The
   strategy is chosen at M5.
 - No plaintext secret logging: configuration secrets are `SecretStr`, validation

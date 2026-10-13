@@ -13,15 +13,42 @@ EXPECTED_TABLES=(
   cases
   companies
   company_blueprints
+  identity_events
+  membership_events
   memberships
+  user_identities
   users
 )
 
 EXPECTED_CONSTRAINTS=(
   companies_pkey
   users_pkey
-  users_identity_subject_key
+  ck_users_status
+  ck_users_suspended_at
+  user_identities_pkey
+  fk_user_identities_user_id_users
+  uq_user_identities_issuer_subject
+  ck_user_identities_status
+  ck_user_identities_revoked_at
+  ck_user_identities_issuer_not_empty
+  ck_user_identities_subject_not_empty
   memberships_pkey
+  uq_memberships_company_id_id
+  ck_memberships_status
+  ck_memberships_revoked_at
+  identity_events_pkey
+  fk_identity_events_user_id_users
+  fk_identity_events_identity_id_user_identities
+  ck_identity_events_event_type
+  ck_identity_events_actor_kind
+  ck_identity_events_actor_reference
+  membership_events_pkey
+  fk_membership_events_company_id_companies
+  fk_membership_events_company_id_membership_id_memberships
+  fk_membership_events_user_id_users
+  ck_membership_events_event_type
+  ck_membership_events_actor_kind
+  ck_membership_events_actor_reference
   memberships_company_id_fkey
   memberships_user_id_fkey
   uq_memberships_company_user
@@ -38,16 +65,39 @@ EXPECTED_CONSTRAINTS=(
   fk_cases_company_id_subject_id_case_subjects
 )
 
-# Tenant-owned tables protected by Row-Level Security. `users` is a global
-# identity table and deliberately has no tenant policy.
+# Tenant-owned tables: one tenant_isolation policy each.
+TENANT_RLS_TABLES=(
+  case_subjects
+  cases
+  companies
+  company_blueprints
+  membership_events
+  memberships
+)
+# Every table with Row-Level Security (sorted). `users` and `user_identities`
+# are global identity tables with per-role lifecycle policies instead of a
+# tenant policy; `identity_events` is owner-only (RLS, no policy) (ADR-008).
 RLS_TABLES=(
   case_subjects
   cases
   companies
   company_blueprints
+  identity_events
+  membership_events
   memberships
+  user_identities
+  users
+)
+# Every other policy, as table:policy:permissive:command:roles.
+LIFECYCLE_POLICIES=(
+  "memberships:lifecycle_active:RESTRICTIVE:SELECT:{heroos_app_runtime}"
+  "user_identities:identities_operator:PERMISSIVE:ALL:{heroos_identity_operator}"
+  "user_identities:identities_runtime_read:PERMISSIVE:SELECT:{heroos_app_runtime}"
+  "users:users_operator:PERMISSIVE:ALL:{heroos_identity_operator}"
+  "users:users_runtime_read:PERMISSIVE:SELECT:{heroos_app_runtime}"
 )
 RUNTIME_ROLE=heroos_app_runtime
+OPERATOR_ROLE=heroos_identity_operator
 
 psql_db() {
   docker compose exec -T db psql -v ON_ERROR_STOP=1 -U "${DB_USER}" -d "$1" -qtAc "$2"
@@ -100,19 +150,28 @@ assert_schema() {
     echo "  actual:   ${actual}" >&2
     return 1
   fi
-  # Exactly one permissive FOR ALL policy per table, with USING and WITH CHECK.
-  if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_policies WHERE schemaname = 'public'
+  # Exactly one permissive FOR ALL tenant policy per tenant table, with USING
+  # and WITH CHECK, plus exactly the listed lifecycle policies and nothing else.
+  actual="$(psql_db "${db}" "SELECT string_agg(tablename, ' ' ORDER BY tablename)
+    FROM pg_policies WHERE schemaname = 'public'
       AND policyname = 'tenant_isolation' AND permissive = 'PERMISSIVE' AND cmd = 'ALL'
+      AND roles = '{public}'
       AND qual LIKE '%heroos_current_company_id()%'
-      AND with_check LIKE '%heroos_current_company_id()%';")" != "${#RLS_TABLES[@]}" \
-      || "$(psql_db "${db}" "SELECT count(*) FROM pg_policies WHERE schemaname = 'public';")" \
-      != "${#RLS_TABLES[@]}" ]]; then
-    echo "Unexpected tenant isolation policies." >&2
-    psql_db "${db}" "SELECT tablename, policyname, permissive, cmd, qual, with_check
+      AND with_check LIKE '%heroos_current_company_id()%';")"
+  expected="${TENANT_RLS_TABLES[*]}"
+  local lifecycle_actual lifecycle_expected
+  lifecycle_actual="$(psql_db "${db}" "SELECT string_agg(
+      tablename || ':' || policyname || ':' || permissive || ':' || cmd || ':' || roles::text,
+      ' ' ORDER BY tablename, policyname)
+    FROM pg_policies WHERE schemaname = 'public' AND policyname <> 'tenant_isolation';")"
+  lifecycle_expected="${LIFECYCLE_POLICIES[*]}"
+  if [[ "${actual}" != "${expected}" || "${lifecycle_actual}" != "${lifecycle_expected}" ]]; then
+    echo "Unexpected Row-Level Security policies." >&2
+    psql_db "${db}" "SELECT tablename, policyname, permissive, roles, cmd, qual, with_check
       FROM pg_policies WHERE schemaname = 'public';" >&2
     return 1
   fi
-  echo "RLS OK: ${actual} (one tenant_isolation policy each)"
+  echo "RLS OK: tenant_isolation on ${actual}; lifecycle policies: ${lifecycle_actual}"
 
   if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_roles WHERE rolname = '${RUNTIME_ROLE}'
       AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcanlogin;")" != "1" ]]; then
@@ -120,4 +179,44 @@ assert_schema() {
     return 1
   fi
   echo "Runtime privilege role ${RUNTIME_ROLE} OK (NOLOGIN, no SUPERUSER, no BYPASSRLS)"
+
+  if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_roles WHERE rolname = '${OPERATOR_ROLE}'
+      AND NOT rolsuper AND NOT rolbypassrls AND NOT rolcreaterole AND NOT rolcanlogin
+      AND NOT pg_has_role(rolname, '${RUNTIME_ROLE}', 'MEMBER');")" != "1" ]]; then
+    echo "Identity operator role ${OPERATOR_ROLE} is missing, privileged or an API runtime role." >&2
+    return 1
+  fi
+  # The audit writers are SECURITY DEFINER with a pinned, empty search_path and
+  # no EXECUTE for PUBLIC.
+  if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_proc
+      WHERE pronamespace = 'public'::regnamespace
+        AND proname IN ('heroos_audit_identity_change', 'heroos_audit_membership_change')
+        AND prosecdef AND proconfig = ARRAY['search_path=\"\"']
+        AND NOT has_function_privilege('public', oid, 'EXECUTE');")" != "2" ]]; then
+    echo "Audit trigger functions are not pinned SECURITY DEFINER functions." >&2
+    return 1
+  fi
+  echo "Identity operator role ${OPERATOR_ROLE} OK; audit trigger functions pinned"
+
+  # No role other than the owner and the two HeroOS groups holds any table
+  # privilege (portable: also catches Supabase default privileges for anon,
+  # authenticated and service_role, which never exist locally).
+  local outsiders
+  outsiders="$(psql_db "${db}" "SELECT count(*) FROM pg_class c, aclexplode(c.relacl) a
+    WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+      AND a.grantee <> c.relowner
+      AND a.grantee NOT IN (SELECT oid FROM pg_roles
+                            WHERE rolname IN ('${RUNTIME_ROLE}', '${OPERATOR_ROLE}'));")"
+  if [[ "${outsiders}" != "0" ]]; then
+    echo "Unexpected table privileges for roles outside HeroOS (${outsiders})." >&2
+    return 1
+  fi
+  # Audit tables refuse TRUNCATE (statement-level append-only trigger).
+  if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_trigger
+      WHERE tgname = 'heroos_append_only_truncate'
+        AND tgrelid IN ('public.identity_events'::regclass, 'public.membership_events'::regclass);")" != "2" ]]; then
+    echo "Audit tables are missing their TRUNCATE guard." >&2
+    return 1
+  fi
+  echo "Table ACLs OK (owner and HeroOS groups only); audit TRUNCATE guards present"
 }

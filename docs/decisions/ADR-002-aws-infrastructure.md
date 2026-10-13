@@ -148,3 +148,4 @@ FastAPI
    +----------> Approved external AI provider
    |
    +----------> SES when required
+```

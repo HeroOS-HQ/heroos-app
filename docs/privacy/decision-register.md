@@ -905,11 +905,18 @@ what happens when an individual User account is removed?
 
 **Technical facts.** No Company or User deletion workflow exists. Database
 foreign keys cascade from `companies` to memberships, Company Blueprints, Case
-Subjects and Cases, and from `users` to memberships. The `users` table holds
-only an opaque `identity_subject` and timestamps; identity data such as email
+Subjects and Cases, and from `users` to memberships. Identity data such as email
 lives in the identity provider (Cognito at M5). Objects under
 `companies/<company uuid>/`, log entries and backups are not touched by a
 database cascade. See Appendix A.
+
+With M1-10B ([ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md))
+the `users` table holds only a status and timestamps; the provider's opaque
+subject moves to `user_identities` as an exact `(issuer, subject)` pair. The
+identity bindings and the identity and Membership audit events reference Users,
+Companies and Memberships with `RESTRICT`, so a User or Company that has a
+binding or any audit event cannot be removed by a cascade at all. Suspension and
+revocation replace deletion until this decision and PRIV-005/PRIV-020 settle it.
 
 **Options (Company).**
 

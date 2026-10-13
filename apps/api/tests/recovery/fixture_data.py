@@ -14,11 +14,19 @@ import re
 import sys
 from uuid import UUID
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
-from app.db.models import Case, CaseSubject, Company, CompanyBlueprint, Membership, User
+from app.db.models import (
+    Case,
+    CaseSubject,
+    Company,
+    CompanyBlueprint,
+    Membership,
+    User,
+    UserIdentity,
+)
 
 SOURCE_URL_ENV = "RECOVERY_TEST_SOURCE_URL"
 SAFE_SOURCE_DATABASE = re.compile(r"[a-z0-9_]+_backup_source_test")
@@ -35,6 +43,11 @@ SUBJECT_A = UUID("a4000000-0000-4000-8000-00000000000a")
 SUBJECT_B = UUID("b4000000-0000-4000-8000-00000000000b")
 CASE_A = UUID("a5000000-0000-4000-8000-00000000000a")
 CASE_B = UUID("b5000000-0000-4000-8000-00000000000b")
+IDENTITY_A = UUID("a6000000-0000-4000-8000-00000000000a")
+IDENTITY_B = UUID("b6000000-0000-4000-8000-00000000000b")
+ISSUER = "urn:heroos:recovery-test"
+# Seeding is attributed like any change (the audit triggers require it).
+REFERENCE = "HER-230"
 
 # Expected tenant-owned rows per Company after restore: {table: {company: ids}}.
 EXPECTED_ROWS: dict[str, dict[UUID, set[UUID]]] = {
@@ -48,12 +61,20 @@ EXPECTED_ROWS: dict[str, dict[UUID, set[UUID]]] = {
 
 def build() -> list[object]:
     rows: list[object] = []
-    for label, company, user, membership, blueprint, subject, case in (
-        ("A", COMPANY_A, USER_A, MEMBERSHIP_A, BLUEPRINT_A, SUBJECT_A, CASE_A),
-        ("B", COMPANY_B, USER_B, MEMBERSHIP_B, BLUEPRINT_B, SUBJECT_B, CASE_B),
+    for label, company, user, identity, membership, blueprint, subject, case in (
+        ("A", COMPANY_A, USER_A, IDENTITY_A, MEMBERSHIP_A, BLUEPRINT_A, SUBJECT_A, CASE_A),
+        ("B", COMPANY_B, USER_B, IDENTITY_B, MEMBERSHIP_B, BLUEPRINT_B, SUBJECT_B, CASE_B),
     ):
         rows.append(Company(id=company, name=f"Recovery Synthetic Company {label}"))
-        rows.append(User(id=user, identity_subject=f"recovery-synthetic-subject-{label.lower()}"))
+        rows.append(User(id=user))
+        rows.append(
+            UserIdentity(
+                id=identity,
+                user_id=user,
+                issuer=ISSUER,
+                subject=f"recovery-synthetic-subject-{label.lower()}",
+            )
+        )
         rows.append(Membership(id=membership, company_id=company, user_id=user))
         rows.append(
             CompanyBlueprint(
@@ -91,6 +112,9 @@ def seed(admin_url: str) -> None:
     engine = create_engine(admin_url)
     try:
         with Session(engine) as session:
+            session.execute(
+                text("SELECT set_config('heroos.actor_reference', :ref, true)"), {"ref": REFERENCE}
+            )
             # Parents first: flush in dependency order.
             for row in build():
                 session.add(row)

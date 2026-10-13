@@ -16,7 +16,7 @@ they may act in. They are separate code paths with separate failure modes:
 | Concern | Decided by | Failure |
 | --- | --- | --- |
 | Authentication | An `AuthenticationProvider` verifying the Bearer JWT | `401 Not authenticated` |
-| Authorization | HeroOS data: `users.identity_subject` and `memberships` | `403 Forbidden` |
+| Authorization | HeroOS data: `user_identities`, `users` and `memberships` ([ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md)) | `403 Forbidden` |
 
 A verified token never grants Company access by itself.
 
@@ -32,16 +32,17 @@ AuthenticationProvider.authenticate()      app/auth/providers/
 VerifiedIdentity(subject, issuer)          app/auth/models.py
         |
         v
-users.identity_subject == subject          app/auth/service.py: resolve_user
-        |  403 if no User (no just-in-time provisioning)
+user_identities (issuer, subject) exact,  app/auth/service.py: resolve_user
+  binding and User both active             (ADR-008; RLS hides inactive rows)
+        |  403 if no active binding/User (no just-in-time provisioning)
         v
-memberships(user_id, company_id)           app/auth/service.py: authorize_company
+memberships(user_id, company_id), active  app/auth/service.py: authorize_company
         |  (RLS: looked up under a transaction-local candidate
         |   scope that is discarded before returning)
-        |  403 if no Membership
+        |  403 if no active Membership
         v
 AuthenticatedCompanyContext                app/auth/models.py
-(user_id, company_id, membership_id, identity_subject)
+(user_id, company_id, membership_id, identity_id)
 ```
 
 Protected routes declare a `{company_id}` path parameter and depend on
@@ -70,16 +71,26 @@ context. See [Tenant Isolation §6](tenant-isolation.md#6-membership-authorizati
 ## 3. Security Invariants
 
 - **Company is the tenant boundary.** Access is granted only by a `memberships`
-  row for the authenticated User and the requested Company. Under the current
-  schema the existence of the Membership is the authorization relationship;
-  there are no roles or membership states yet.
+  row for the authenticated User and the requested Company. An *active*
+  Membership is the authorization relationship; there are no roles yet
+  (M1-10C). Lifecycle: [ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md).
 - **A client-supplied Company ID is a resource identifier, not evidence.** Path,
   query, header, body and token claims (e.g. `custom:company_id`) never authorize.
   Changing `company_id` re-runs the Membership lookup.
-- **`identity_subject` is the stable identity key.** It stores the provider's `sub`.
-  Email is never used for identity mapping or authorization.
-- **Unknown identities are not provisioned.** A verified identity without a User row
-  is denied (403). Onboarding that creates Users and Memberships is separate work.
+- **`users.id` is the stable identity; `(issuer, subject)` is the external key.**
+  A verified identity maps to a User only through an exact, active
+  `user_identities` binding (issuer and `sub`, never normalized). Email and every
+  other claim are never used for identity mapping or authorization. Bindings are
+  immutable and unique for all time; changing provider adds a binding, it never
+  rewrites one (ADR-008).
+- **Unknown identities are not provisioned.** A verified identity without an active
+  binding is denied (403). Users, bindings and Memberships are created only by a
+  platform operator with the audited operator CLI
+  ([Identity Provisioning](../operations/identity-provisioning.md)); no HTTP route
+  can provision.
+- **Lifecycle is checked on every request.** A suspended User, revoked binding or
+  revoked Membership is denied on the next request, also while an access token is
+  still valid, by the application and by Row-Level Security for the API role.
 - **Generic failures.** Every authentication failure returns the same 401 body with
   `WWW-Authenticate: Bearer`. Unknown User, missing Membership and non-existent
   Company all return the same 403 body, so callers cannot probe which records
@@ -205,12 +216,13 @@ into the API container image.
 #   HEROOS_AUTH_PROVIDER=development
 #   HEROOS_DEV_AUTH_SECRET=<local value, 32+ characters>
 
-make dev-token SUBJECT=<users.identity_subject>
+make dev-token SUBJECT=<subject bound under urn:heroos:local-development>
 curl -H "Authorization: Bearer <token>" http://localhost:8000/companies/<company-id>/...
 ```
 
-The subject must already exist as `users.identity_subject` and have a Membership
-in the requested Company. The helper never creates Users or Memberships.
+The subject must already be bound (active) under the development issuer
+`urn:heroos:local-development` and have an active Membership in the requested
+Company. The helper never creates Users, bindings or Memberships.
 
 ## 6. Configuration Contract
 
@@ -306,10 +318,15 @@ demo signs in with a provider-neutral OpenID Provider (section 4.3) under
 - real Staging authentication with end-to-end proof
 
 At M5 the web app switches to `HEROOS_WEB_AUTH_PROVIDER=cognito` and the API to
-`HEROOS_AUTH_PROVIDER=cognito`; Users are re-mapped to Cognito `sub` values.
+`HEROOS_AUTH_PROVIDER=cognito`. Users keep their `users.id`: each gets an
+additional Cognito binding, then the old binding is revoked (ADR-008 §Cognito).
 
-**Not in scope:** roles, fine-grained permissions, membership lifecycle states,
-user provisioning and onboarding.
+**M1-10B — identity and provisioning** (implemented): issuer-qualified bindings,
+User/binding/Membership lifecycle, operator-only provisioning and trigger-written
+security audit. See [ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md).
+
+**Not in scope:** roles and fine-grained permissions (M1-10C), invitations,
+onboarding and Company selection (M1-10D).
 
 ## 10. Browser Access (B4)
 
@@ -375,9 +392,13 @@ Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Author
 - **No prerendering of auth routes**: every auth route handler awaits
   `connection()`, so state and verifiers are generated per request (with Cache
   Components a GET handler that reads no request data would be built once).
-- **Company choice**: the web app shows one configured Company
-  (`HEROOS_DEMO_COMPANY_ID`). That ID is only a resource identifier: the API's
-  Membership check decides access, exactly as for any client-supplied ID.
+- **Company choice**: the web app lists only those configured candidate
+  Companies (`HEROOS_DEMO_COMPANY_IDS`; the legacy single `HEROOS_DEMO_COMPANY_ID`
+  still works) that the API authorizes for the signed-in user. The IDs are only
+  resource identifiers: the API's identity-binding and Membership checks decide
+  access, exactly as for any client-supplied ID. A user without an active
+  binding, or whose User is suspended, gets the same 403 for every candidate, so
+  the web lists nothing and shows the "no access" message.
 
 Why not tokens in the browser: HeroOS handles HR data, and a script injection
 could read tokens kept in `localStorage`/`sessionStorage`. The session design

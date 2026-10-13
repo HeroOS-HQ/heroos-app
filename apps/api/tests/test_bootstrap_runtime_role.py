@@ -91,6 +91,9 @@ class _RecordingConnection:
     def __exit__(self, *_: object) -> None:
         return None
 
+    def transaction(self) -> "_RecordingConnection":
+        return self
+
     def execute(self, query: object, params: object = None) -> _Result:
         rendered = query.as_string() if isinstance(query, sql.Composable) else str(query)
         self.statements.append(rendered)
@@ -121,7 +124,9 @@ def test_password_is_sent_only_as_scram_verifier(
     sent = "\n".join(connection.statements)
     assert RUNTIME_PASSWORD not in sent
     assert ADMIN_PASSWORD not in sent
-    role_statement = next(s for s in connection.statements if s.startswith("CREATE ROLE"))
+    role_statement = next(
+        s for s in connection.statements if s.startswith("CREATE ROLE") and " LOGIN " in s
+    )
     assert "PASSWORD 'SCRAM-SHA-256$4096:" in role_statement
     assert "NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE" in role_statement
 

@@ -20,11 +20,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.auth.exceptions import AuthenticationError, AuthorizationError
-from app.auth.models import AuthenticatedCompanyContext, VerifiedIdentity
+from app.auth.models import AuthenticatedCompanyContext, ResolvedUser, VerifiedIdentity
 from app.auth.providers import AuthenticationProvider, build_authentication_provider
 from app.auth.service import authorize_company, resolve_user
 from app.core.config import settings
-from app.db.models import User
 from app.db.session import get_db
 from app.observability.context import record_authorized_company
 
@@ -69,7 +68,7 @@ def get_verified_identity(
 def get_current_user(
     identity: Annotated[VerifiedIdentity, Depends(get_verified_identity)],
     db: Annotated[Session, Depends(get_db)],
-) -> User:
+) -> ResolvedUser:
     try:
         return resolve_user(db, identity)
     except AuthorizationError as exc:
@@ -79,7 +78,7 @@ def get_current_user(
 
 def get_authenticated_company_context(
     company_id: UUID,
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[ResolvedUser, Depends(get_current_user)],
     db: Annotated[Session, Depends(get_db)],
 ) -> AuthenticatedCompanyContext:
     try:

@@ -7,11 +7,22 @@ class VerifiedIdentity:
     """An external identity whose credential has been cryptographically verified.
 
     Authentication output only: it carries no HeroOS User or Company access.
+    ``(issuer, subject)`` is matched exactly against ``user_identities``.
     """
 
-    # Stable external subject; maps to ``users.identity_subject``.
     subject: str
     issuer: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedUser:
+    """An active HeroOS User reached through an active identity binding.
+
+    Carries internal IDs only; never the external subject.
+    """
+
+    user_id: UUID
+    identity_id: UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,4 +37,4 @@ class AuthenticatedCompanyContext:
     user_id: UUID
     company_id: UUID
     membership_id: UUID
-    identity_subject: str
+    identity_id: UUID

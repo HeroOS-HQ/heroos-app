@@ -22,7 +22,7 @@ OpenID Provider (docs/architecture/authentication.md §4.3). Validation:
 - ID tokens are rejected: their ``aud`` is a client ID (never the API
   audience, enforced by settings validation), they lack ``typ: at+jwt``, and
   tokens carrying ID-token-only claims (``nonce``, ``at_hash``, ``c_hash``) are refused
-- non-empty ``sub``, mapped to ``users.identity_subject``
+- non-empty ``sub``; ``(issuer, sub)`` is matched exactly in ``user_identities``
 
 Discovery and keys are fetched lazily on first use, so startup never contacts
 the provider. Any discovery or key failure fails closed with 401.

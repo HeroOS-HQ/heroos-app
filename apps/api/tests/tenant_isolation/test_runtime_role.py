@@ -16,19 +16,29 @@ from sqlalchemy.pool import NullPool
 from app.db.runtime_role import UnsafeDatabaseRoleError, check_runtime_role
 from tests.tenant_isolation.conftest import (
     DISPOSABLE_RUNTIME_ROLE,
+    RUNTIME_WRITABLE_TABLES,
+    TENANT_AUDIT_TABLES,
     TENANT_TABLES,
     TenantDatabase,
 )
 
 RUNTIME_GROUP_ROLE = "heroos_app_runtime"
+OPERATOR_GROUP_ROLE = "heroos_identity_operator"
 
-# Tables without tenant RLS, each for a documented reason. Every other table in
+# Tables without RLS, each for a documented reason. Every other table in
 # `public` must have RLS: a new private table (e.g. an M2 workflow entity) that
 # forgets its policy fails test_every_table_has_rls_unless_explicitly_exempt.
 RLS_EXEMPT_TABLES = {
-    "users": "global identity reference; no company_id; runtime role may only SELECT",
     "alembic_version": "migration bookkeeping; runtime role has no privileges",
 }
+# Global identity tables (no company_id; ADR-008): RLS with lifecycle policies
+# per role instead of a tenant policy.
+LIFECYCLE_TABLES = {
+    "users": ("users_operator", "users_runtime_read"),
+    "user_identities": ("identities_operator", "identities_runtime_read"),
+}
+# Owner-only: RLS enabled with no policy at all (nobody else may read or write).
+OWNER_ONLY_TABLES = {"identity_events"}
 
 
 def test_runtime_engine_connects_as_runtime_role(
@@ -146,8 +156,15 @@ def test_startup_guard_accepts_runtime_role_and_rejects_admin(
 @pytest.mark.parametrize(
     ("table", "allowed"),
     [
-        *[(table, {"SELECT", "INSERT", "UPDATE", "DELETE"}) for table in TENANT_TABLES],
+        *[(table, {"SELECT", "INSERT", "UPDATE", "DELETE"}) for table in RUNTIME_WRITABLE_TABLES],
+        # Granting Company access is provisioning: operator-only (ADR-008).
+        ("memberships", {"SELECT"}),
+        # Identity lookup only: no binding, reassignment or suspension.
         ("users", {"SELECT"}),
+        ("user_identities", {"SELECT"}),
+        # Audit is written only by owner-run triggers.
+        ("identity_events", set()),
+        ("membership_events", set()),
         ("alembic_version", set()),
     ],
 )
@@ -186,7 +203,6 @@ def test_runtime_role_has_only_required_table_privileges(
             "LANGUAGE sql AS $$ SELECT NULL::uuid $$",
             id="replace-context-function",
         ),
-        pytest.param("SET ROLE heroos", id="set-role-admin"),
         pytest.param("CREATE ROLE intruder BYPASSRLS", id="create-role"),
     ],
 )
@@ -197,6 +213,30 @@ def test_runtime_role_cannot_change_schema_or_security(
         conn.execute(text(statement))
 
     # 42501 insufficient_privilege / must be owner.
+    assert getattr(exc_info.value.orig, "sqlstate", None) == "42501"
+
+
+def test_runtime_role_cannot_assume_the_admin_role(
+    runtime_engine: Engine, admin_engine: Engine, tenant_database: TenantDatabase
+) -> None:
+    # The migration/admin role is whatever the suite connects as: `heroos` locally
+    # and in CI, `supabase_admin` on the Supabase image. Hardcoding the name made
+    # PostgreSQL answer 22023 (undefined role) instead of 42501 on other clusters,
+    # which proves nothing about privileges.
+    admin_role = make_url(tenant_database.admin_url).username
+    assert admin_role
+    with admin_engine.connect() as conn:
+        # Ground truth: the role exists, is the one connected, and owns the schema.
+        assert conn.scalar(text("SELECT current_user")) == admin_role
+        assert conn.scalar(text("SELECT tableowner FROM pg_tables WHERE tablename = 'cases'")) == (
+            admin_role
+        )
+
+    quoted = runtime_engine.dialect.identifier_preparer.quote(admin_role)
+    with runtime_engine.connect() as conn, pytest.raises(DBAPIError) as exc_info:
+        conn.execute(text(f"SET ROLE {quoted}"))
+
+    # 42501 insufficient_privilege: the role exists and the runtime role may not become it.
     assert getattr(exc_info.value.orig, "sqlstate", None) == "42501"
 
 
@@ -227,7 +267,9 @@ def test_every_table_has_rls_unless_explicitly_exempt(admin_engine: Engine) -> N
 
     without_rls = {name for name, enabled in tables.items() if not enabled}
     assert without_rls == set(RLS_EXEMPT_TABLES)
-    assert {name for name, enabled in tables.items() if enabled} == set(TENANT_TABLES)
+    assert {name for name, enabled in tables.items() if enabled} == (
+        set(TENANT_TABLES) | set(TENANT_AUDIT_TABLES) | set(LIFECYCLE_TABLES) | OWNER_ONLY_TABLES
+    )
 
 
 def test_each_tenant_table_has_exactly_one_permissive_policy_for_all_commands(
@@ -241,17 +283,49 @@ def test_each_tenant_table_has_exactly_one_permissive_policy_for_all_commands(
             )
         ).all()
 
+    tenant_tables = {**TENANT_TABLES, **TENANT_AUDIT_TABLES}
+    permissive_tenant = [p for p in policies if p.tablename in tenant_tables]
+    permissive_tenant = [p for p in permissive_tenant if p.permissive == "PERMISSIVE"]
     # A second permissive policy would be OR-ed in and could only widen access.
-    assert sorted(p.tablename for p in policies) == sorted(TENANT_TABLES)
-    for policy in policies:
-        column = TENANT_TABLES[policy.tablename]
+    assert sorted(p.tablename for p in permissive_tenant) == sorted(tenant_tables)
+    for policy in permissive_tenant:
+        column = tenant_tables[policy.tablename]
         expected = f"({column} = heroos_current_company_id())"
         assert policy.policyname == "tenant_isolation"
-        assert policy.permissive == "PERMISSIVE"
         assert policy.cmd == "ALL"
         assert list(policy.roles) == ["public"]
         assert policy.qual == expected
         assert policy.with_check == expected
+
+    # The only other tenant-table policy narrows the API role: a RESTRICTIVE
+    # lifecycle filter, so it can never widen access.
+    restrictive = [p for p in policies if p.permissive == "RESTRICTIVE"]
+    assert [(p.tablename, p.policyname, p.cmd, list(p.roles), p.qual) for p in restrictive] == [
+        (
+            "memberships",
+            "lifecycle_active",
+            "SELECT",
+            [RUNTIME_GROUP_ROLE],
+            "((status)::text = 'active'::text)",
+        )
+    ]
+
+    # Global identity tables: the API role reads active rows only; the operator
+    # group manages lifecycle. No PUBLIC policy, nothing for any other role.
+    lifecycle = {
+        (p.tablename, p.policyname): p for p in policies if p.tablename in LIFECYCLE_TABLES
+    }
+    assert set(lifecycle) == {
+        (table, name) for table, names in LIFECYCLE_TABLES.items() for name in names
+    }
+    for (_table, name), policy in lifecycle.items():
+        assert policy.permissive == "PERMISSIVE"
+        if name.endswith("_runtime_read"):
+            assert (policy.cmd, list(policy.roles)) == ("SELECT", [RUNTIME_GROUP_ROLE])
+            assert policy.qual == "((status)::text = 'active'::text)"
+        else:
+            assert (policy.cmd, list(policy.roles)) == ("ALL", [OPERATOR_GROUP_ROLE])
+    assert {p.tablename for p in policies} == set(tenant_tables) | set(LIFECYCLE_TABLES)
 
 
 def test_tenant_context_function_is_not_security_definer(admin_engine: Engine) -> None:

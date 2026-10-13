@@ -38,6 +38,9 @@ def _isolate_environment(monkeypatch: pytest.MonkeyPatch) -> None:
             monkeypatch.delenv(name)
 
 
+OPERATOR_URL = f"postgresql+psycopg://heroos_op_a:{PASSWORD_CANARY}@db.test.invalid/heroos"
+
+
 def make_settings(**values: Any) -> Settings:
     values.setdefault("heroos_env", "development")
     return Settings(_env_file=None, **values)  # type: ignore[call-arg]
@@ -98,6 +101,32 @@ def test_api_never_receives_migration_credential_outside_development(environment
         )
 
     assert PASSWORD_CANARY not in str(e.value)
+
+
+@pytest.mark.parametrize("environment", ["staging", "production"])
+def test_api_never_receives_operator_credential_outside_development(
+    environment: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ADR-008: the identity-operator credential belongs to the operator's shell
+    # only. A deployed API refuses to start if it is configured.
+    monkeypatch.setenv("HEROOS_OPERATOR_DATABASE_URL", OPERATOR_URL)
+    with pytest.raises(ValidationError, match="HEROOS_OPERATOR_DATABASE_URL must not") as e:
+        make_settings(heroos_env=environment, database_url=RUNTIME_URL, **COGNITO)
+
+    assert PASSWORD_CANARY not in str(e.value)
+
+
+def test_operator_credential_is_never_rendered_in_development() -> None:
+    settings = make_settings(database_url=RUNTIME_URL, heroos_operator_database_url=OPERATOR_URL)
+    assert PASSWORD_CANARY not in repr(settings)
+    assert PASSWORD_CANARY not in str(settings.model_dump())
+
+
+@pytest.mark.parametrize("field", ["heroos_cognito_issuer", "heroos_oidc_issuer"])
+def test_identity_provider_issuers_fit_the_binding_column(field: str) -> None:
+    too_long = "https://idp.test.invalid/" + "x" * 500
+    with pytest.raises(ValidationError, match="at most 512 characters"):
+        make_settings(database_url=RUNTIME_URL, **{field: too_long})
 
 
 @pytest.mark.parametrize("environment", ["staging", "production"])

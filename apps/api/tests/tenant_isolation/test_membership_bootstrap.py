@@ -2,7 +2,7 @@
 
 ``memberships`` is tenant-protected, so ``authorize_company`` looks up this User's
 Membership with the requested Company as a transaction-local candidate scope and
-discards that scope before returning. Membership existence is the authorization.
+discards that scope before returning. An active Membership is the authorization.
 """
 
 import uuid
@@ -16,11 +16,17 @@ from app.auth.models import VerifiedIdentity
 from app.auth.service import authorize_company, resolve_user
 from app.db.models import Membership
 from app.tenancy.context import get_tenant_context, set_tenant_context
-from tests.tenant_isolation.conftest import TENANT_TABLES, Tenants, count_rows, owners
+from tests.tenant_isolation.conftest import (
+    SERVICE_TEST_ISSUER,
+    TENANT_TABLES,
+    Tenants,
+    count_rows,
+    owners,
+)
 
 
 def identity(subject: str) -> VerifiedIdentity:
-    return VerifiedIdentity(subject=subject, issuer="urn:heroos:test")
+    return VerifiedIdentity(subject=subject, issuer=SERVICE_TEST_ISSUER)
 
 
 def _assert_no_tenant_data_left_visible(db: Session) -> None:
@@ -39,7 +45,7 @@ def test_member_is_authorized_with_trusted_context(
         assert context.user_id == tenants.a.user
         assert context.company_id == tenants.a.company
         assert context.membership_id == tenants.a.membership
-        assert context.identity_subject == "alice-subject"
+        assert context.identity_id == tenants.a.identity
         # The candidate scope ended with the lookup.
         _assert_no_tenant_data_left_visible(db)
 

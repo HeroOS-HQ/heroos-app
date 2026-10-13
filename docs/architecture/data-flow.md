@@ -174,3 +174,4 @@ Boundary                 Service Boundary
       +--> Private S3
       +--> Secrets Manager
       +--> Technical Orchestration
+```

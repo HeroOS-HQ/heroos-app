@@ -12,7 +12,7 @@ docs/architecture/authentication.md). Validation:
   and match. Otherwise ``aud`` is ignored; it is never used to tell access
   tokens from ID tokens (``token_use`` does that), because resource-bound
   access tokens legitimately carry ``aud``
-- non-empty ``sub``, the stable identity mapped to ``users.identity_subject``
+- non-empty ``sub``; ``(issuer, sub)`` is matched exactly in ``user_identities``
 
 No Cognito resource exists yet; live activation is outside this code (see
 docs/architecture/authentication.md).

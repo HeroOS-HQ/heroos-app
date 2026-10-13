@@ -1,19 +1,45 @@
-"""Startup check that the API's database role is subject to Row-Level Security.
+"""Startup checks for the database roles HeroOS connects as, and the schema contract.
 
 Superusers, BYPASSRLS roles and table owners skip RLS. Connecting the API as any
 of them would silently remove the database tenant-isolation layer, so the API
-refuses to start instead.
+refuses to start instead. The API also refuses an identity-operator login: the
+operator credential never belongs in a running service (ADR-008).
+
+The identity operator CLI runs the mirror-image check (``check_operator_role``):
+an unprivileged member of ``heroos_identity_operator`` that is *not* an API
+runtime role, so it can provision identities but cannot read HR data.
+
+``heroos_schema_contract()`` tells code which identity schema is live (the
+runtime role cannot read ``alembic_version``): 1 after migration B1a, 2 after
+B1b. The API needs at least 1; the operator needs exactly 2.
 """
 
-from sqlalchemy import Connection, Engine, text
+from typing import Final
+
+from sqlalchemy import Connection, Engine, Row, text
+from sqlalchemy.exc import DBAPIError
+
+RUNTIME_GROUP_ROLE: Final = "heroos_app_runtime"
+OPERATOR_GROUP_ROLE: Final = "heroos_identity_operator"
+
+# Identity schema the API needs (B1a provides user_identities and lifecycle).
+API_MINIMUM_SCHEMA_CONTRACT: Final = 1
+# Identity schema the operator needs (B1b: legacy column gone, operator grants on).
+OPERATOR_SCHEMA_CONTRACT: Final = 2
 
 
 class UnsafeDatabaseRoleError(RuntimeError):
-    """The API database role could bypass Row-Level Security."""
+    """The database role could bypass Row-Level Security or holds the wrong capability."""
+
+
+class IncompatibleSchemaError(RuntimeError):
+    """The database schema is not the identity schema this code requires."""
 
 
 # pg_has_role(..., 'MEMBER') is true for the role itself and for every role it
 # can SET ROLE to, so privileges reachable through membership are included.
+# Group roles are looked up by name so the check also runs on schemas where a
+# group does not exist yet.
 _ROLE_CHECK = text(
     """
     SELECT
@@ -28,14 +54,28 @@ _ROLE_CHECK = text(
             WHERE n.nspname = 'public'
               AND c.relkind IN ('r', 'p')
               AND pg_has_role(current_user, c.relowner, 'MEMBER')
-        ) AS owns_tables
+        ) AS owns_tables,
+        EXISTS (
+            SELECT FROM pg_roles r
+            WHERE r.rolname = :operator_group
+              AND pg_has_role(current_user, r.oid, 'MEMBER')
+        ) AS operator,
+        EXISTS (
+            SELECT FROM pg_roles r
+            WHERE r.rolname = :runtime_group
+              AND pg_has_role(current_user, r.oid, 'MEMBER')
+        ) AS runtime
     """
-)
+).bindparams(operator_group=OPERATOR_GROUP_ROLE, runtime_group=RUNTIME_GROUP_ROLE)
+
+
+def _role_facts(connection: Connection) -> Row[tuple[bool, bool, bool, bool]]:
+    return connection.execute(_ROLE_CHECK).one()
 
 
 def check_runtime_role(connection: Connection) -> None:
-    """Raise unless the connected role is unprivileged and owns no tables."""
-    row = connection.execute(_ROLE_CHECK).one()
+    """Raise unless the connected role is an unprivileged, non-owner, non-operator role."""
+    row = _role_facts(connection)
     if row.privileged:
         raise UnsafeDatabaseRoleError(
             "DATABASE_URL role is (or can become) SUPERUSER, BYPASSRLS or CREATEROLE; "
@@ -46,8 +86,63 @@ def check_runtime_role(connection: Connection) -> None:
             "DATABASE_URL role owns (or can become the owner of) application tables; "
             "the API must connect as the RLS-restricted runtime role"
         )
+    if row.operator:
+        raise UnsafeDatabaseRoleError(
+            "DATABASE_URL role is an identity operator; the API must never hold the "
+            "operator credential"
+        )
+
+
+def check_operator_role(connection: Connection) -> None:
+    """Raise unless the connected role is a plain identity-operator login.
+
+    Refuses the migration owner, superusers, BYPASSRLS/CREATEROLE roles and any
+    role that is also an API runtime role (which would add HR data access).
+    """
+    row = _role_facts(connection)
+    if row.privileged:
+        raise UnsafeDatabaseRoleError(
+            "operator role is (or can become) SUPERUSER, BYPASSRLS or CREATEROLE"
+        )
+    if row.owns_tables:
+        raise UnsafeDatabaseRoleError(
+            "operator role owns application tables; never use the migration owner"
+        )
+    if not row.operator:
+        raise UnsafeDatabaseRoleError(f"operator login is not a member of {OPERATOR_GROUP_ROLE}")
+    if row.runtime:
+        raise UnsafeDatabaseRoleError(
+            f"operator login must not be a member of {RUNTIME_GROUP_ROLE} (HR data access)"
+        )
+
+
+def schema_contract(connection: Connection) -> int:
+    """The live identity schema contract; raises if the database has none."""
+    try:
+        with connection.begin_nested():
+            value = connection.scalar(text("SELECT heroos_schema_contract()"))
+    except DBAPIError:
+        # Undefined function (pre-B1a schema) or no EXECUTE privilege.
+        raise IncompatibleSchemaError(
+            "heroos_schema_contract() is unavailable; apply the identity migrations"
+        ) from None
+    if not isinstance(value, int):
+        raise IncompatibleSchemaError("heroos_schema_contract() returned no contract")
+    return value
+
+
+def check_schema_contract(connection: Connection, *, minimum: int, exact: bool = False) -> int:
+    value = schema_contract(connection)
+    if value < minimum or (exact and value != minimum):
+        expected = f"exactly {minimum}" if exact else f"at least {minimum}"
+        raise IncompatibleSchemaError(
+            f"database identity schema contract is {value}; this code requires {expected}"
+        )
+    return value
 
 
 def verify_runtime_role(engine: Engine) -> None:
+    """API startup: a safe runtime role and a compatible identity schema."""
     with engine.connect() as connection:
         check_runtime_role(connection)
+        check_schema_contract(connection, minimum=API_MINIMUM_SCHEMA_CONTRACT)

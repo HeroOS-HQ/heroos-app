@@ -6,7 +6,8 @@ Usage (from apps/api, or ``make dev-token SUBJECT=...`` from the repo root):
 
 Requires HEROOS_ENV=development, HEROOS_AUTH_PROVIDER=development and
 HEROOS_DEV_AUTH_SECRET. The token only authenticates ``identity-subject``: Company
-access still needs a matching ``users.identity_subject`` row and a Membership.
+access still needs an active ``user_identities`` binding for the development
+issuer and subject, and an active Membership.
 This script is not shipped in the API image and no endpoint mints tokens.
 """
 
@@ -25,7 +26,9 @@ from app.core.config import Settings
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
-    parser.add_argument("subject", help="identity subject (users.identity_subject)")
+    parser.add_argument(
+        "subject", help="identity subject (bound in user_identities under the development issuer)"
+    )
     parser.add_argument(
         "--minutes",
         type=int,

@@ -31,3 +31,4 @@ GitHub Actions deployment jobs will require:
 permissions:
   contents: read
   id-token: write
+```

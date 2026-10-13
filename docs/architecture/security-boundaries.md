@@ -148,7 +148,8 @@ AWS administrative access
 CI/CD deployment identity
 Production secrets
 Database administration
-Infrastructure configuration```
+Infrastructure configuration
+```
 
 ---
 
@@ -160,9 +161,11 @@ Implemented in M1-05; see
 Invariants enforced by the FastAPI authentication boundary:
 
 - A verified credential establishes identity only. It never grants Company access.
-- Identity maps to a HeroOS User solely through `users.identity_subject`.
-- Company access requires a server-side Membership lookup for that User and the
-  requested Company. Client-supplied Company IDs, headers and token claims are
+- Identity maps to a HeroOS User solely through an exact, active
+  `(issuer, subject)` binding in `user_identities`, never by email or any other
+  claim, and only for an active User (ADR-008).
+- Company access requires a server-side lookup of an active Membership for that
+  User and the requested Company. Client-supplied Company IDs, headers and token claims are
   never authorization evidence.
 - Missing, malformed, unsigned, expired or invalid credentials return 401.
   Unknown Users and missing Memberships return an identical 403.

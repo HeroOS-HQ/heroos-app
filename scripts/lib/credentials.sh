@@ -15,6 +15,7 @@
 
 LIVE_RUNTIME_ROLE=heroos_app
 DISPOSABLE_ROLE_PATTERN='^heroos_app_t_[0-9a-f]{8}$'
+DISPOSABLE_OPERATOR_PATTERN='^heroos_op_t_[0-9a-f]{8}$'
 
 # env_file_value KEY: last KEY=value in the root .env (no shell evaluation).
 env_file_value() {
@@ -46,6 +47,13 @@ new_disposable_runtime_role() {
   RUNTIME_PASSWORD="$(random_hex 32)"
 }
 
+# Sets OPERATOR_LOGIN / OPERATOR_PASSWORD to a fresh disposable identity
+# operator login (ADR-008); never a real operator's login.
+new_disposable_operator_role() {
+  OPERATOR_LOGIN="heroos_op_t_$(random_hex 4)"
+  OPERATOR_PASSWORD="$(random_hex 32)"
+}
+
 _psql_postgres() {
   docker compose exec -T -e PGOPTIONS=--client-min-messages=warning db \
     psql -X -v ON_ERROR_STOP=1 -U "${DB_USER}" -d postgres -qtAc "$1"
@@ -56,6 +64,16 @@ drop_disposable_runtime_role() {
   local role="$1"
   if [[ ! "${role}" =~ ${DISPOSABLE_ROLE_PATTERN} ]]; then
     echo "Refusing to drop role '${role}': not a disposable test role." >&2
+    return 1
+  fi
+  _psql_postgres "DROP ROLE IF EXISTS ${role};" >/dev/null
+}
+
+# drop_disposable_operator_role <role>: only ever drops heroos_op_t_<8 hex>.
+drop_disposable_operator_role() {
+  local role="$1"
+  if [[ ! "${role}" =~ ${DISPOSABLE_OPERATOR_PATTERN} ]]; then
+    echo "Refusing to drop role '${role}': not a disposable operator test role." >&2
     return 1
   fi
   _psql_postgres "DROP ROLE IF EXISTS ${role};" >/dev/null

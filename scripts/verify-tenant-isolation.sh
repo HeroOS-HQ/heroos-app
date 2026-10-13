@@ -45,6 +45,7 @@ cleanup() {
   local status=$?
   drop_test_db || echo "WARNING: failed to drop ${TEST_DB}" >&2
   drop_disposable_runtime_role "${RUNTIME_LOGIN}" || { echo "WARNING: failed to drop ${RUNTIME_LOGIN}" >&2; status=1; }
+  drop_disposable_operator_role "${OPERATOR_LOGIN}" || { echo "WARNING: failed to drop ${OPERATOR_LOGIN}" >&2; status=1; }
   assert_live_runtime_role_unchanged || status=1
   if [[ ${status} -eq 0 ]]; then
     log "Tenant isolation verification PASSED"
@@ -64,6 +65,7 @@ done
 docker compose exec -T db pg_isready -U "${DB_USER}" -d postgres
 
 new_disposable_runtime_role
+new_disposable_operator_role
 record_live_runtime_role
 trap cleanup EXIT
 
@@ -73,5 +75,7 @@ TENANT_TEST_ADMIN_URL="postgresql+psycopg://${DB_USER}:${DB_PASSWORD}@${DB_HOST}
 TENANT_TEST_DATABASE="${TEST_DB}" \
 TENANT_TEST_RUNTIME_ROLE="${RUNTIME_LOGIN}" \
 TENANT_TEST_RUNTIME_PASSWORD="${RUNTIME_PASSWORD}" \
+TENANT_TEST_OPERATOR_ROLE="${OPERATOR_LOGIN}" \
+TENANT_TEST_OPERATOR_PASSWORD="${OPERATOR_PASSWORD}" \
 TENANT_TEST_REQUIRED=1 \
   uv run pytest tests/tenant_isolation -v -p no:cacheprovider "$@"

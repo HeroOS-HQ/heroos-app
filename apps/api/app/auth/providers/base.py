@@ -4,7 +4,7 @@ from typing import Any, Protocol
 from app.auth.exceptions import AuthenticationError
 from app.auth.models import VerifiedIdentity
 
-# Matches the ``users.identity_subject`` column length.
+# Matches the ``user_identities.subject`` column length.
 MAX_SUBJECT_LENGTH = 255
 
 

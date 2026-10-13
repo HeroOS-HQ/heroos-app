@@ -161,7 +161,7 @@ def test_member_allowed_with_trusted_context(
         "user_id": str(seed.alice),
         "company_id": str(seed.company_a),
         "membership_id": str(seed.alice_membership_a),
-        "identity_subject": "alice-subject",
+        "identity_id": str(seed.alice_identity),
     }
 
 

@@ -79,7 +79,7 @@ privacy-decision-check:
 
 .PHONY: dev-token
 
-# Local development bearer token for an existing users.identity_subject.
+# Local development bearer token for a subject bound under urn:heroos:local-development.
 # Authentication only: grants no Company access by itself. Development only.
 dev-token:
 	@test -n "$(SUBJECT)" || { echo "usage: make dev-token SUBJECT=<identity-subject>" >&2; exit 2; }

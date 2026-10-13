@@ -49,7 +49,8 @@ def test_users_are_global_identity_rows_not_tenant_rows(
     runtime_sessions: sessionmaker[Session], tenants: Tenants
 ) -> None:
     # users has no company_id and no tenant policy: identity resolution needs it
-    # before any Company is known. It holds only ids and identity subjects.
+    # before any Company is known. It holds only ids and lifecycle status; the
+    # API role sees active Users only (ADR-008).
     with runtime_sessions() as db:
         assert count_rows(db, "users") == 3
 
@@ -75,11 +76,9 @@ def test_no_context_insert_is_rejected(
     [
         "UPDATE cases SET title = 'tampered'",
         "UPDATE companies SET name = 'tampered'",
-        "UPDATE memberships SET user_id = user_id",
         "DELETE FROM cases",
         "DELETE FROM case_subjects",
         "DELETE FROM company_blueprints",
-        "DELETE FROM memberships",
         "DELETE FROM companies",
     ],
 )
@@ -97,6 +96,38 @@ def test_no_context_update_and_delete_affect_nothing(
         for table in TENANT_TABLES:
             assert count_rows(admin, table) == 2
         assert admin.scalar(text("SELECT count(*) FROM cases WHERE title = 'tampered'")) == 0
+
+
+def test_runtime_role_cannot_write_memberships_at_all(
+    runtime_sessions: sessionmaker[Session], tenants: Tenants
+) -> None:
+    # Granting or changing Company access is provisioning: operator-only. The API
+    # role is refused by privilege before RLS is even consulted.
+    for statement in (
+        "UPDATE memberships SET status = status",
+        "DELETE FROM memberships",
+        "INSERT INTO memberships (id, company_id, user_id) "
+        "VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid())",
+    ):
+        with runtime_sessions() as db, pytest.raises(DBAPIError) as exc_info:
+            db.execute(text(statement))
+        assert _sqlstate(exc_info.value) == "42501"
+        assert "permission denied" in str(exc_info.value.orig)
+
+
+def test_operator_without_context_changes_no_membership(
+    operator_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+) -> None:
+    with operator_sessions() as db:
+        db.execute(text("SELECT set_config('heroos.actor_reference', 'HER-230', true)"))
+        result = db.execute(text("UPDATE memberships SET status = 'revoked', revoked_at = now()"))
+        assert result.rowcount == 0  # type: ignore[attr-defined]
+        db.commit()
+
+    with admin_sessions() as admin:
+        assert admin.scalar(text("SELECT count(*) FROM memberships WHERE status = 'active'")) == 2
 
 
 # --- Valid context -----------------------------------------------------------

@@ -18,10 +18,20 @@ from app.repositories import ResourceNotFoundError, case_subjects, cases, compan
 from app.repositories import company_blueprints as blueprints
 from app.repositories.company_blueprints import CompanyBlueprintFields
 from app.tenancy.scope import CompanyScope
-from tests.tenant_isolation.conftest import TENANT_TABLES, Tenant, Tenants, count_rows, scope_for
+from tests.tenant_isolation.conftest import (
+    RUNTIME_WRITABLE_TABLES,
+    Tenant,
+    Tenants,
+    attribute_changes,
+    count_rows,
+    scope_for,
+)
 
 RLS_VIOLATION = "42501"
 FOREIGN_KEY_VIOLATION = "23503"
+# Same SQLSTATE as an RLS violation; tests also check the message so a missing
+# privilege can never pass as proof that RLS works (or the reverse).
+INSUFFICIENT_PRIVILEGE = "42501"
 
 
 def _sqlstate(exc: DBAPIError) -> str | None:
@@ -87,7 +97,7 @@ def _new_rows_owned_by(tenants: Tenants, owner: Tenant) -> dict[str, Callable[[]
     }
 
 
-@pytest.mark.parametrize("table", TENANT_TABLES)
+@pytest.mark.parametrize("table", RUNTIME_WRITABLE_TABLES)
 def test_rls_rejects_rows_created_for_another_company(
     runtime_sessions: sessionmaker[Session],
     admin_sessions: sessionmaker[Session],
@@ -106,6 +116,29 @@ def test_rls_rejects_rows_created_for_another_company(
     assert "row-level security" in str(exc_info.value.orig)
     with admin_sessions() as db:
         assert count_rows(db, table) == 2
+
+
+def test_rls_rejects_operator_membership_for_another_company(
+    operator_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+) -> None:
+    # Memberships are written only by the identity operator, under the same
+    # tenant_isolation policy: Company A context cannot grant access to Company B.
+    with operator_sessions() as db:
+        attribute_changes(db)
+        db.execute(
+            text("SELECT set_config('heroos.company_id', :company, true)"),
+            {"company": str(tenants.a.company)},
+        )
+        db.add(_new_rows_owned_by(tenants, tenants.b)["memberships"]())
+        with pytest.raises(DBAPIError) as exc_info:
+            db.flush()
+
+    assert _sqlstate(exc_info.value) == RLS_VIOLATION
+    assert "row-level security" in str(exc_info.value.orig)
+    with admin_sessions() as db:
+        assert count_rows(db, "memberships") == 2
 
 
 def test_case_cannot_reference_another_companys_subject(
@@ -174,14 +207,12 @@ def test_repository_filter_alone_blocks_cross_company_mutations(
 
 CROSS_COMPANY_STATEMENTS = [
     "UPDATE companies SET name = 'tampered' WHERE id = :company",
-    "UPDATE memberships SET user_id = user_id WHERE id = :membership",
     "UPDATE company_blueprints SET legal_name = 'tampered' WHERE id = :blueprint",
     "UPDATE case_subjects SET display_name = 'tampered' WHERE id = :subject",
     "UPDATE cases SET title = 'tampered' WHERE id = :case",
     "DELETE FROM cases WHERE id = :case",
     "DELETE FROM case_subjects WHERE id = :subject",
     "DELETE FROM company_blueprints WHERE id = :blueprint",
-    "DELETE FROM memberships WHERE id = :membership",
     "DELETE FROM companies WHERE id = :company",
 ]
 
@@ -212,6 +243,67 @@ def test_rls_alone_blocks_update_and_delete_of_guessed_ids(
     assert _snapshot(admin_sessions, b) == before
 
 
+def test_operator_rls_alone_blocks_status_change_of_guessed_membership_ids(
+    operator_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+) -> None:
+    before = _snapshot(admin_sessions, tenants.b)
+    with operator_sessions() as db:
+        attribute_changes(db)
+        db.execute(
+            text("SELECT set_config('heroos.company_id', :company, true)"),
+            {"company": str(tenants.a.company)},
+        )
+        result = db.execute(
+            text(
+                "UPDATE memberships SET status = 'revoked', revoked_at = now() "
+                "WHERE id = :membership"
+            ),
+            {"membership": tenants.b.membership},
+        )
+        assert result.rowcount == 0  # type: ignore[attr-defined]
+        db.commit()
+
+    assert _snapshot(admin_sessions, tenants.b) == before
+    with admin_sessions() as db:
+        status = db.scalar(
+            text("SELECT status FROM memberships WHERE id = :id"), {"id": tenants.b.membership}
+        )
+    assert status == "active"
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE memberships SET user_id = user_id WHERE id = :membership",
+        "UPDATE memberships SET company_id = :target WHERE id = :membership",
+        "DELETE FROM memberships WHERE id = :membership",
+    ],
+)
+@pytest.mark.parametrize("role", ["runtime", "operator"])
+def test_membership_ownership_and_deletion_are_not_writable_by_any_app_role(
+    runtime_sessions: sessionmaker[Session],
+    operator_sessions: sessionmaker[Session],
+    tenants: Tenants,
+    statement: str,
+    role: str,
+) -> None:
+    # Neither role holds UPDATE on user_id/company_id or DELETE: a Membership can
+    # be revoked (status) but never moved, reassigned or deleted (PRIV-020).
+    sessions = runtime_sessions if role == "runtime" else operator_sessions
+    with sessions() as db:
+        scope_for(db, tenants.a)
+        with pytest.raises(DBAPIError) as exc_info:
+            db.execute(
+                text(statement),
+                {"membership": tenants.a.membership, "target": tenants.b.company},
+            )
+
+    assert _sqlstate(exc_info.value) == INSUFFICIENT_PRIVILEGE
+    assert "permission denied" in str(exc_info.value.orig)
+
+
 # --- Re-parenting ------------------------------------------------------------
 
 REPARENT_STATEMENTS = [
@@ -219,9 +311,6 @@ REPARENT_STATEMENTS = [
     pytest.param("UPDATE case_subjects SET company_id = :target WHERE id = :subject", id="subject"),
     pytest.param(
         "UPDATE company_blueprints SET company_id = :target WHERE id = :blueprint", id="blueprint"
-    ),
-    pytest.param(
-        "UPDATE memberships SET company_id = :target WHERE id = :membership", id="membership"
     ),
     pytest.param("UPDATE companies SET id = :target WHERE id = :company", id="company"),
 ]
@@ -251,6 +340,7 @@ def test_rls_with_check_blocks_moving_rows_to_another_company(
             db.execute(text(statement), params)
 
     assert _sqlstate(exc_info.value) == RLS_VIOLATION
+    assert "row-level security" in str(exc_info.value.orig)
     assert _snapshot(admin_sessions, a) == before
 
 
@@ -359,14 +449,13 @@ PLAIN_INSERTS = {
 
 UNQUALIFIED_REPARENTS = {
     "companies": "UPDATE companies SET id = gen_random_uuid()",
-    "memberships": "UPDATE memberships SET company_id = :target",
     "company_blueprints": "UPDATE company_blueprints SET company_id = :target",
     "case_subjects": "UPDATE case_subjects SET company_id = :target",
     "cases": "UPDATE cases SET company_id = :target",
 }
 
 
-@pytest.mark.parametrize("table", TENANT_TABLES)
+@pytest.mark.parametrize("table", RUNTIME_WRITABLE_TABLES)
 @pytest.mark.parametrize("kind", ["insert-without-returning", "update-without-where"])
 def test_with_check_alone_blocks_other_company_rows(
     runtime_sessions: sessionmaker[Session],
@@ -389,3 +478,29 @@ def test_with_check_alone_blocks_other_company_rows(
     assert _snapshot(admin_sessions, tenants.a) == before
     with admin_sessions() as db:
         assert count_rows(db, table) == 2
+    assert "row-level security" in str(exc_info.value.orig)
+
+
+def test_with_check_alone_blocks_operator_membership_for_another_company(
+    operator_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+) -> None:
+    before = _snapshot(admin_sessions, tenants.a)
+    with operator_sessions() as db:
+        attribute_changes(db)
+        db.execute(
+            text("SELECT set_config('heroos.company_id', :company, true)"),
+            {"company": str(tenants.a.company)},
+        )
+        with pytest.raises(DBAPIError) as exc_info:
+            db.execute(
+                text(PLAIN_INSERTS["memberships"]),
+                {"target": tenants.b.company, "carol": tenants.carol},
+            )
+
+    assert _sqlstate(exc_info.value) == RLS_VIOLATION
+    assert "row-level security" in str(exc_info.value.orig)
+    assert _snapshot(admin_sessions, tenants.a) == before
+    with admin_sessions() as db:
+        assert count_rows(db, "memberships") == 2

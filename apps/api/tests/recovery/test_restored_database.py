@@ -28,6 +28,7 @@ from tests.recovery.conftest import RecoveryDatabases
 
 API_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_GROUP_ROLE = "heroos_app_runtime"
+OPERATOR_GROUP_ROLE = "heroos_identity_operator"
 RLS_VIOLATION = "42501"
 TENANT_TABLES = {
     "companies": "id",
@@ -36,7 +37,13 @@ TENANT_TABLES = {
     "case_subjects": "company_id",
     "cases": "company_id",
 }
-APPLICATION_TABLES = (*TENANT_TABLES, "users")
+APPLICATION_TABLES = (
+    *TENANT_TABLES,
+    "users",
+    "user_identities",
+    "identity_events",
+    "membership_events",
+)
 
 # Catalog views of everything a restore must reproduce exactly.
 CATALOG_QUERIES = {
@@ -70,6 +77,24 @@ CATALOG_QUERIES = {
         SELECT table_name, privilege_type FROM information_schema.role_table_grants
         WHERE grantee = '{RUNTIME_GROUP_ROLE}' ORDER BY 1, 2
     """,
+    "column_grants": f"""
+        SELECT grantee, table_name, column_name, privilege_type
+        FROM information_schema.column_privileges
+        WHERE grantee IN ('{RUNTIME_GROUP_ROLE}', '{OPERATOR_GROUP_ROLE}') ORDER BY 1, 2, 3, 4
+    """,
+    "operator_grants": f"""
+        SELECT table_name, privilege_type FROM information_schema.role_table_grants
+        WHERE grantee = '{OPERATOR_GROUP_ROLE}' ORDER BY 1, 2
+    """,
+    "triggers": """
+        SELECT event_object_table, trigger_name, event_manipulation, action_timing,
+               action_statement
+        FROM information_schema.triggers WHERE trigger_schema = 'public' ORDER BY 1, 2, 3
+    """,
+    "function_acl": """
+        SELECT proname, proacl::text, prosecdef, proconfig::text FROM pg_proc
+        WHERE pronamespace = 'public'::regnamespace ORDER BY 1
+    """,
     "alembic_version": "SELECT version_num FROM alembic_version",
 }
 
@@ -87,17 +112,17 @@ def table_rows(engine: Engine, table: str) -> list[str]:
         )
 
 
-def context(company: uuid.UUID, user: uuid.UUID, membership: uuid.UUID) -> Any:
+def context(company: uuid.UUID, user: uuid.UUID, membership: uuid.UUID, identity: uuid.UUID) -> Any:
     return AuthenticatedCompanyContext(
         user_id=user,
         company_id=company,
         membership_id=membership,
-        identity_subject="recovery-synthetic-subject",
+        identity_id=identity,
     )
 
 
-CONTEXT_A = context(data.COMPANY_A, data.USER_A, data.MEMBERSHIP_A)
-CONTEXT_B = context(data.COMPANY_B, data.USER_B, data.MEMBERSHIP_B)
+CONTEXT_A = context(data.COMPANY_A, data.USER_A, data.MEMBERSHIP_A, data.IDENTITY_A)
+CONTEXT_B = context(data.COMPANY_B, data.USER_B, data.MEMBERSHIP_B, data.IDENTITY_B)
 
 
 # Completeness ------------------------------------------------------------------
@@ -145,15 +170,42 @@ def test_restored_rls_and_policies(restored_admin: Engine) -> None:
     rls = {
         name for name, enabled, _ in snapshot(restored_admin, CATALOG_QUERIES["tables"]) if enabled
     }
-    assert rls == set(TENANT_TABLES)
-    policies = snapshot(restored_admin, CATALOG_QUERIES["policies"])
-    assert {(table, policy) for table, policy, *_ in policies} == {
-        (table, "tenant_isolation") for table in TENANT_TABLES
+    assert rls == set(TENANT_TABLES) | {
+        "membership_events",
+        "users",
+        "user_identities",
+        "identity_events",
     }
-    for table, _, permissive, _, command, qual, with_check in policies:
-        column = TENANT_TABLES[table]
-        expected = f"({column} = heroos_current_company_id())"
-        assert (permissive, command, qual, with_check) == ("PERMISSIVE", "ALL", expected, expected)
+    policies = snapshot(restored_admin, CATALOG_QUERIES["policies"])
+    tenant = {**TENANT_TABLES, "membership_events": "company_id"}
+    assert {(table, policy) for table, policy, *_ in policies} == {
+        *((table, "tenant_isolation") for table in tenant),
+        ("memberships", "lifecycle_active"),
+        ("users", "users_runtime_read"),
+        ("users", "users_operator"),
+        ("user_identities", "identities_runtime_read"),
+        ("user_identities", "identities_operator"),
+    }
+    for table, name, permissive, roles, command, qual, with_check in policies:
+        if name == "tenant_isolation":
+            expected = f"({tenant[table]} = heroos_current_company_id())"
+            assert (permissive, roles, command, qual, with_check) == (
+                "PERMISSIVE",
+                "{public}",
+                "ALL",
+                expected,
+                expected,
+            )
+        elif name == "lifecycle_active":
+            assert (permissive, roles, command) == ("RESTRICTIVE", "{heroos_app_runtime}", "SELECT")
+        elif name.endswith("_runtime_read"):
+            assert (permissive, roles, command) == ("PERMISSIVE", "{heroos_app_runtime}", "SELECT")
+        else:
+            assert (permissive, roles, command) == (
+                "PERMISSIVE",
+                "{heroos_identity_operator}",
+                "ALL",
+            )
 
 
 def test_restored_tenant_context_function(restored_admin: Engine) -> None:
@@ -180,9 +232,19 @@ def test_restored_ownership_and_runtime_grants(
     expected = {
         (table, privilege)
         for table in TENANT_TABLES
+        if table != "memberships"
         for privilege in ("DELETE", "INSERT", "SELECT", "UPDATE")
-    } | {("users", "SELECT")}
+    } | {("memberships", "SELECT"), ("users", "SELECT"), ("user_identities", "SELECT")}
     assert set(grants) == expected
+    # The identity operator's table and column grants survive the restore too.
+    assert set(snapshot(restored_admin, CATALOG_QUERIES["operator_grants"])) == {
+        ("users", "SELECT"),
+        ("users", "INSERT"),
+        ("user_identities", "SELECT"),
+        ("user_identities", "INSERT"),
+        ("memberships", "SELECT"),
+        ("memberships", "INSERT"),
+    }
 
 
 def test_runtime_role_passes_startup_guard_on_restored_database(restored_runtime: Engine) -> None:
