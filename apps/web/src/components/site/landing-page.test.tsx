@@ -32,6 +32,14 @@ describe("LandingPage", () => {
     for (const link of links) expect(link).toHaveAttribute("href", "/auth/login");
   });
 
+  it("sends every Get started call to action to hosted sign-up as a plain link", () => {
+    render(<LandingPage />);
+
+    const links = screen.getAllByRole("link", { name: /^Get started/ });
+    expect(links.length).toBeGreaterThanOrEqual(3);
+    for (const link of links) expect(link).toHaveAttribute("href", "/auth/signup");
+  });
+
   it("links only to sections that exist on the page", () => {
     const { container } = render(<LandingPage />);
 
@@ -112,6 +120,14 @@ describe("SiteHeader", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("navigation", { name: "Mobile" })).toBeNull();
     expect(screen.getByRole("button", { name: "Open menu" })).toHaveFocus();
+  });
+
+  it("offers sign-in inside the mobile menu, where the header has room only for Get started", () => {
+    render(<SiteHeader variant="landing" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    const menu = screen.getByRole("navigation", { name: "Mobile" });
+    expect(within(menu).getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/auth/login");
   });
 
   it("shows no navigation or sign-in link in the workspace variant", () => {

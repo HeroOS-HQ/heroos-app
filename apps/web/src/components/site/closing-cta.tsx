@@ -10,14 +10,20 @@ export function ClosingCta() {
             <h2 className="text-3xl font-extrabold tracking-[-0.02em] sm:text-4xl lg:text-[2.75rem] lg:leading-[1.15]" id="closing-heading">
               Ready to explore Hero<span className="text-hero-blue">OS</span>?
             </h2>
-            <p className="mt-5 text-lg text-hero-muted">Sign in to see the platform in action.</p>
+            <p className="mt-5 text-lg text-hero-muted">Set up your company workspace in a few minutes.</p>
             <a
               className="group mt-10 inline-flex h-14 items-center justify-center gap-2 rounded-full bg-hero-yellow px-8 text-base font-bold text-hero-navy shadow-[0_8px_20px_-8px_rgb(255_212_1/0.9)] transition-[box-shadow,transform] duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_24px_-8px_rgb(255_212_1/1)]"
-              href="/auth/login"
+              href="/auth/signup"
             >
-              Sign in to HeroOS
+              Get started
               <ArrowRightIcon className="size-4 transition-transform duration-200 group-hover:translate-x-0.5" />
             </a>
+            <p className="mt-5 text-base text-hero-muted">
+              Already have an account?{" "}
+              <a className="font-bold text-hero-blue-ink underline-offset-4 hover:underline" href="/auth/login">
+                Sign in
+              </a>
+            </p>
           </div>
           <svg
             aria-hidden="true"
