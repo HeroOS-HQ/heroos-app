@@ -9,9 +9,10 @@ The identity operator CLI runs the mirror-image check (``check_operator_role``):
 an unprivileged member of ``heroos_identity_operator`` that is *not* an API
 runtime role, so it can provision identities but cannot read HR data.
 
-``heroos_schema_contract()`` tells code which identity schema is live (the
-runtime role cannot read ``alembic_version``): 1 after migration B1a, 2 after
-B1b. The API needs at least 1; the operator needs exactly 2.
+``heroos_schema_contract()`` tells code which schema is live (the runtime role
+cannot read ``alembic_version``): 1 after migration B1a, 2 after B1b, 3 after
+C1 (M1-10C: Company roles, registration and jurisdiction readiness). The API
+needs at least 3; the operator needs exactly 3.
 """
 
 from typing import Final
@@ -22,10 +23,12 @@ from sqlalchemy.exc import DBAPIError
 RUNTIME_GROUP_ROLE: Final = "heroos_app_runtime"
 OPERATOR_GROUP_ROLE: Final = "heroos_identity_operator"
 
-# Identity schema the API needs (B1a provides user_identities and lifecycle).
-API_MINIMUM_SCHEMA_CONTRACT: Final = 1
-# Identity schema the operator needs (B1b: legacy column gone, operator grants on).
-OPERATOR_SCHEMA_CONTRACT: Final = 2
+# Schema the API needs (C1: memberships.role and the Blueprint licensing and
+# confirmation columns, on top of B1a/B1b identities and lifecycle).
+API_MINIMUM_SCHEMA_CONTRACT: Final = 3
+# Schema the operator CLI needs exactly (C1: registration, role and jurisdiction
+# confirmation grants on top of B1b provisioning).
+OPERATOR_SCHEMA_CONTRACT: Final = 3
 
 
 class UnsafeDatabaseRoleError(RuntimeError):

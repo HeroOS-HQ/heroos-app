@@ -12,6 +12,7 @@ Seeds the disposable source database (``make backup-restore-check``)::
 import os
 import re
 import sys
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import create_engine, text
@@ -23,6 +24,7 @@ from app.db.models import (
     CaseSubject,
     Company,
     CompanyBlueprint,
+    CompanyRegistration,
     Membership,
     User,
     UserIdentity,
@@ -45,7 +47,12 @@ CASE_A = UUID("a5000000-0000-4000-8000-00000000000a")
 CASE_B = UUID("b5000000-0000-4000-8000-00000000000b")
 IDENTITY_A = UUID("a6000000-0000-4000-8000-00000000000a")
 IDENTITY_B = UUID("b6000000-0000-4000-8000-00000000000b")
+REGISTRATION_A = UUID("a7000000-0000-4000-8000-00000000000a")
 ISSUER = "urn:heroos:recovery-test"
+# M1-10C state a restore must keep: A has an administrator and a current DIFC
+# confirmation; B is a member-only Company with an unconfirmed "Other" answer.
+CONFIRMED_AT = datetime(2026, 10, 13, 9, 30, tzinfo=UTC)
+AUTHORITY_B = "Synthetic Free Zone Authority"
 # Seeding is attributed like any change (the audit triggers require it).
 REFERENCE = "HER-230"
 
@@ -75,13 +82,42 @@ def build() -> list[object]:
                 subject=f"recovery-synthetic-subject-{label.lower()}",
             )
         )
-        rows.append(Membership(id=membership, company_id=company, user_id=user))
+        rows.append(
+            Membership(
+                id=membership,
+                company_id=company,
+                user_id=user,
+                role="company_admin" if label == "A" else "member",
+            )
+        )
+        if label == "A":
+            # Company A was self-registered by its founder.
+            rows.append(
+                CompanyRegistration(
+                    id=REGISTRATION_A,
+                    identity_id=identity,
+                    user_id=user,
+                    company_id=company,
+                    membership_id=membership,
+                )
+            )
+        licensing: dict[str, object] = (
+            {
+                "licensing_location": "difc",
+                "employment_jurisdiction": "difc",
+                "confirmed_licensing_location": "difc",
+                "jurisdiction_confirmed_at": CONFIRMED_AT,
+            }
+            if label == "A"
+            else {"licensing_location": "other", "licensing_authority": AUTHORITY_B}
+        )
         rows.append(
             CompanyBlueprint(
                 id=blueprint,
                 company_id=company,
                 legal_name=f"Recovery Synthetic {label} LLC",
                 primary_jurisdiction="DIFC",
+                **licensing,
             )
         )
         rows.append(

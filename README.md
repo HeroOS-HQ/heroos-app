@@ -132,6 +132,13 @@ created with the operator CLI, [Identity Provisioning](docs/operations/identity-
 make dev-token SUBJECT=<identity-subject>
 ```
 
+A token for a subject that is not bound yet can register a new Company with
+itself as administrator when `HEROOS_SELF_REGISTRATION_ENABLED=true`
+(`POST /company-registrations`; off by default). Company roles, registration
+and jurisdiction readiness:
+[ADR-010](docs/decisions/ADR-010-company-registration-and-administrators.md),
+[Company Registration](docs/operations/company-registration.md).
+
 `HEROOS_ENV` is required and has no default; the API will not start without it.
 Docker Compose sets it for the `api` service. To run the API directly, load the
 root `.env`: `cd apps/api && uv run --env-file ../../.env uvicorn app.main:app --no-access-log`

@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import companies
+from app.api import companies, onboarding
 from app.auth.dependencies import get_authentication_provider
 from app.core.config import Settings, settings
 from app.core.http_security import install_http_security
@@ -54,8 +54,11 @@ def create_app(config: Settings) -> FastAPI:
     install_http_security(application, config)
     install_observability(application)
 
+    # Founder self-registration is off unless explicitly enabled (activation step).
+    application.state.self_registration_enabled = config.heroos_self_registration_enabled
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)
+    application.include_router(onboarding.router)
     return application
 
 

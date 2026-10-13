@@ -1,18 +1,35 @@
-"""Structural boundaries of M1-10B (ADR-008), checked on the source and the app.
+"""Structural boundaries of M1-10B (ADR-008) and M1-10C, checked on the source and the app.
 
-- Only the operator CLI may reach the identity provisioning code.
-- The application exposes no mutating HTTP route at all in M1-10B, so no
-  request can provision, grant, suspend or revoke anything.
+- Only the operator CLI may reach the identity provisioning and Company
+  registration code.
+- The application exposes exactly two mutating HTTP routes: the administrator-
+  only Blueprint update and founder self-registration. No request can grant
+  access to an existing Company, provision anyone into one, assign a role,
+  suspend, revoke or confirm a jurisdiction.
+- Founder self-registration is the only route an authenticated identity that
+  HeroOS has not provisioned can reach; every other API route resolves an
+  active HeroOS User first.
 """
 
 import ast
 from pathlib import Path
 
+from fastapi.dependencies.models import Dependant
+from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
+
+from app.api.onboarding import require_self_registration
+from app.auth.dependencies import get_current_user, get_verified_identity, require_company_admin
 from app.core.config import Settings
 from app.main import create_app
+from app.tenancy.dependencies import get_company_admin_scope
 
 API_ROOT = Path(__file__).resolve().parents[1]
 APP = API_ROOT / "app"
+
+# (method, path) of every route that may change state.
+ADMIN_BLUEPRINT_UPDATE = ("PATCH", "/companies/{company_id}/blueprint")
+FOUNDER_REGISTRATION = ("POST", "/company-registrations")
+MUTATING_ROUTES = {ADMIN_BLUEPRINT_UPDATE, FOUNDER_REGISTRATION}
 
 
 def _imports(path: Path) -> set[str]:
@@ -26,6 +43,32 @@ def _imports(path: Path) -> set[str]:
     return modules
 
 
+def _app_routes() -> list[RouteContext]:
+    """Every API route, including those of included routers.
+
+    FastAPI wraps an included router in one opaque entry of ``app.routes``, so
+    iterating ``app.routes`` alone would never see the Company routes.
+    """
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        heroos_env="development",
+        database_url="postgresql+psycopg://heroos_app@db.test.invalid/heroos",
+    )
+    return [
+        route
+        for route in iter_route_contexts(create_app(settings).routes)
+        if isinstance(route.original_route, APIRoute)
+    ]
+
+
+def _dependency_calls(dependant: Dependant) -> set[object]:
+    calls: set[object] = set()
+    for sub in dependant.dependencies:
+        calls.add(sub.call)
+        calls |= _dependency_calls(sub)
+    return calls
+
+
 def test_only_the_identity_package_and_cli_reach_provisioning_code() -> None:
     offenders = {
         str(path.relative_to(API_ROOT))
@@ -36,24 +79,57 @@ def test_only_the_identity_package_and_cli_reach_provisioning_code() -> None:
     assert offenders == set()
 
 
-def test_operator_scope_is_used_only_by_the_identity_service_and_cli() -> None:
+def test_operator_scope_is_used_only_by_the_operator_services_and_cli() -> None:
     users = {
         str(path.relative_to(API_ROOT))
         for path in (*APP.rglob("*.py"), *(API_ROOT / "scripts").rglob("*.py"))
         if "app.identity.operator" in _imports(path)
     }
-    assert users == {"app/identity/service.py", "scripts/manage_identities.py"}
-
-
-def test_application_has_no_mutating_routes() -> None:
-    settings = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        heroos_env="development",
-        database_url="postgresql+psycopg://heroos_app@db.test.invalid/heroos",
-    )
-    methods = {
-        method
-        for route in create_app(settings).routes
-        for method in (getattr(route, "methods", None) or set())
+    assert users == {
+        "app/identity/service.py",
+        "app/identity/companies.py",
+        "scripts/manage_identities.py",
     }
-    assert methods <= {"GET", "HEAD"}
+
+
+def test_the_only_mutating_routes_are_admin_update_and_founder_registration() -> None:
+    mutating = {
+        (method, route.path): route
+        for route in _app_routes()
+        for method in route.methods or set()
+        if method not in ("GET", "HEAD")
+    }
+    assert set(mutating) == MUTATING_ROUTES
+
+    admin = _dependency_calls(mutating[ADMIN_BLUEPRINT_UPDATE].dependant)
+    # Role check at authorization and again inside the write transaction.
+    assert require_company_admin in admin
+    assert get_company_admin_scope in admin
+
+    registration = _dependency_calls(mutating[FOUNDER_REGISTRATION].dependant)
+    # A verified credential and the activation switch; never a client claim.
+    assert get_verified_identity in registration
+    assert require_self_registration in registration
+
+
+def test_only_founder_registration_accepts_an_unprovisioned_identity() -> None:
+    without_user = {
+        route.path
+        for route in _app_routes()
+        if get_current_user not in _dependency_calls(route.dependant)
+    }
+    assert without_user == {"/health", "/company-registrations"}
+
+
+def test_no_route_manages_access_to_existing_companies() -> None:
+    paths = {route.path for route in _app_routes()}
+    assert paths == {
+        "/health",
+        "/company-registrations",
+        "/me/companies",
+        "/companies/{company_id}",
+        "/companies/{company_id}/membership",
+        "/companies/{company_id}/blueprint",
+        "/companies/{company_id}/cases",
+        "/companies/{company_id}/cases/{case_id}",
+    }

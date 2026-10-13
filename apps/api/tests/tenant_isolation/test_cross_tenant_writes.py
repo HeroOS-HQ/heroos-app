@@ -19,6 +19,7 @@ from app.repositories import company_blueprints as blueprints
 from app.repositories.company_blueprints import CompanyBlueprintFields
 from app.tenancy.scope import CompanyScope
 from tests.tenant_isolation.conftest import (
+    RUNTIME_INSERTABLE_TABLES,
     RUNTIME_WRITABLE_TABLES,
     Tenant,
     Tenants,
@@ -97,7 +98,7 @@ def _new_rows_owned_by(tenants: Tenants, owner: Tenant) -> dict[str, Callable[[]
     }
 
 
-@pytest.mark.parametrize("table", RUNTIME_WRITABLE_TABLES)
+@pytest.mark.parametrize("table", RUNTIME_INSERTABLE_TABLES)
 def test_rls_rejects_rows_created_for_another_company(
     runtime_sessions: sessionmaker[Session],
     admin_sessions: sessionmaker[Session],
@@ -116,6 +117,57 @@ def test_rls_rejects_rows_created_for_another_company(
     assert "row-level security" in str(exc_info.value.orig)
     with admin_sessions() as db:
         assert count_rows(db, table) == 2
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "INSERT INTO companies (id, name) VALUES (:own, 'Forged')",
+        "INSERT INTO companies (id, name) VALUES (gen_random_uuid(), 'Forged')",
+        "DELETE FROM companies WHERE id = :own",
+        "DELETE FROM companies",
+    ],
+)
+def test_api_role_can_neither_create_nor_delete_companies(
+    runtime_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+    statement: str,
+) -> None:
+    # Company registration is a trusted operator operation (M1-10C): the API
+    # role holds no INSERT or DELETE on companies, even inside its own scope.
+    with runtime_sessions() as db:
+        scope_for(db, tenants.a)
+        with pytest.raises(DBAPIError) as exc_info:
+            db.execute(text(statement), {"own": tenants.a.company})
+
+    assert _sqlstate(exc_info.value) == INSUFFICIENT_PRIVILEGE
+    assert "permission denied" in str(exc_info.value.orig)
+    with admin_sessions() as db:
+        assert count_rows(db, "companies") == 2
+
+
+def test_with_check_alone_blocks_operator_company_for_another_id(
+    operator_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+) -> None:
+    # The operator registers Companies under the tenant policy: a transaction
+    # bound to one Company id cannot create a Company with any other id.
+    # INSERT without RETURNING leaves WITH CHECK as the only barrier.
+    with operator_sessions() as db:
+        attribute_changes(db)
+        db.execute(
+            text("SELECT set_config('heroos.company_id', :company, true)"),
+            {"company": str(uuid.uuid4())},
+        )
+        with pytest.raises(DBAPIError) as exc_info:
+            db.execute(text("INSERT INTO companies (id, name) VALUES (gen_random_uuid(), 'x')"))
+
+    assert _sqlstate(exc_info.value) == RLS_VIOLATION
+    assert "row-level security" in str(exc_info.value.orig)
+    with admin_sessions() as db:
+        assert count_rows(db, "companies") == 2
 
 
 def test_rls_rejects_operator_membership_for_another_company(
@@ -213,7 +265,6 @@ CROSS_COMPANY_STATEMENTS = [
     "DELETE FROM cases WHERE id = :case",
     "DELETE FROM case_subjects WHERE id = :subject",
     "DELETE FROM company_blueprints WHERE id = :blueprint",
-    "DELETE FROM companies WHERE id = :company",
 ]
 
 
@@ -429,7 +480,6 @@ def test_same_company_create_update_delete_succeed(
 # mutation testing with WITH CHECK (true)).
 
 PLAIN_INSERTS = {
-    "companies": "INSERT INTO companies (id, name) VALUES (gen_random_uuid(), 'Forged')",
     "memberships": (
         "INSERT INTO memberships (id, company_id, user_id) "
         "VALUES (gen_random_uuid(), :target, :carol)"
@@ -455,8 +505,13 @@ UNQUALIFIED_REPARENTS = {
 }
 
 
-@pytest.mark.parametrize("table", RUNTIME_WRITABLE_TABLES)
-@pytest.mark.parametrize("kind", ["insert-without-returning", "update-without-where"])
+@pytest.mark.parametrize(
+    ("kind", "table"),
+    [
+        *[("insert-without-returning", table) for table in RUNTIME_INSERTABLE_TABLES],
+        *[("update-without-where", table) for table in RUNTIME_WRITABLE_TABLES],
+    ],
+)
 def test_with_check_alone_blocks_other_company_rows(
     runtime_sessions: sessionmaker[Session],
     admin_sessions: sessionmaker[Session],

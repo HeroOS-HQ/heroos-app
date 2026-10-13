@@ -171,6 +171,14 @@ Invariants enforced by the FastAPI authentication boundary:
   Unknown Users and missing Memberships return an identical 403.
 - Protected handlers receive an `AuthenticatedCompanyContext`, which exists only
   after all of the above succeed.
+- The Company role (`member`, `company_admin`) is read from the Membership row
+  only; administrator-only writes re-check it inside the write transaction.
+  Roles are assigned only by the audited operator CLI or, for a founder's own
+  new Company, by registration (M1-10C, ADR-010).
+- An identity HeroOS does not know can reach exactly one route, founder
+  self-registration, which creates a new Company through one narrow
+  `SECURITY DEFINER` function and can never grant access to an existing
+  Company. It is off unless `HEROOS_SELF_REGISTRATION_ENABLED` is set.
 - Development authentication is impossible outside `HEROOS_ENV=development`:
   staging and production require Cognito and refuse to start otherwise.
 - Authorization headers, bearer tokens and authentication secrets are never

@@ -6,6 +6,8 @@ Protected routes take a ``{company_id}`` path parameter and depend on
     @router.get("/companies/{company_id}/cases")
     def list_cases(context: CompanyContext) -> ...: ...
 
+Administrator-only routes depend on ``CompanyAdminContext`` instead (M1-10C).
+
 Failures are deliberately generic: 401 for any authentication failure, 403 for
 any authorization failure. Credentials are never logged or echoed.
 """
@@ -24,6 +26,7 @@ from app.auth.models import AuthenticatedCompanyContext, ResolvedUser, VerifiedI
 from app.auth.providers import AuthenticationProvider, build_authentication_provider
 from app.auth.service import authorize_company, resolve_user
 from app.core.config import settings
+from app.db.models.membership import ROLE_COMPANY_ADMIN
 from app.db.session import get_db
 from app.observability.context import record_authorized_company
 
@@ -91,3 +94,26 @@ def get_authenticated_company_context(
 
 
 CompanyContext = Annotated[AuthenticatedCompanyContext, Depends(get_authenticated_company_context)]
+
+
+def require_company_admin(context: CompanyContext) -> AuthenticatedCompanyContext:
+    """Administrator-only routes (M1-10C): an active ``company_admin`` Membership.
+
+    The role is the server-side Membership fact in ``context``. A member gets
+    the same generic 403 as anyone else without access.
+    """
+    if context.role != ROLE_COMPANY_ADMIN:
+        logger.info(
+            "Authorization denied: company administrator role required (company_id=%s)",
+            context.company_id,
+        )
+        raise _forbidden()
+    return context
+
+
+CompanyAdminContext = Annotated[AuthenticatedCompanyContext, Depends(require_company_admin)]
+
+
+def forbidden() -> HTTPException:
+    """The generic 403 used for every authorization failure."""
+    return _forbidden()

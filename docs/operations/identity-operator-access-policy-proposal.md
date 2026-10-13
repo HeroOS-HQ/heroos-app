@@ -185,6 +185,29 @@ handled:
 | Set a deadline for the per-change review (D4 = C) | Any real customer data | JJ |
 | State whether a security-risk acceptance is intended for §5, and record it if so | Any real customer data (recommended) | JJ with the Technical Lead |
 
+## 7a. M1-10C: new operator capabilities (for JJ, nothing decided here)
+
+M1-10C ([ADR-010](../decisions/ADR-010-company-registration-and-administrators.md))
+gives the same operator login three further capabilities, each audited with the
+login and the issue reference like every other operator change:
+
+- registering a Company with a verified identity as its first administrator
+  (`register-company`);
+- appointing or removing Company administrators (`set-role`);
+- confirming or clearing a Company's employment jurisdiction
+  (`confirm-jurisdiction`, `clear-jurisdiction`).
+
+This record does **not** assume that D1–D6 and R1–R3 cover them. R3
+("unrestricted company-access management") plausibly covers the first two;
+jurisdiction confirmation is a legal judgement that R3 does not mention, and
+its criteria are not approved. Until JJ states otherwise: these commands are
+used on the synthetic demo only, and no jurisdiction is confirmed for real
+customer data (ADR-010 §8).
+
+Founder self-registration is **not** an operator capability: the API creates
+the founder's own new Company through a database function, attributed to the
+API login and the registration, not to an operator.
+
 ## 8. Decision record
 
 | ID | Decision | Decided by | Approval date | Evidence |

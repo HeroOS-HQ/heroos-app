@@ -6,218 +6,64 @@ migrates it with Alembic exactly as an operator would.
 
 - **Old API**: the frozen ``371dd50`` authorization code (``legacy_371dd50``),
   running as the API runtime role.
-- **New API**: the real application (``create_app``) over HTTP, authenticated by
-  the development provider, running as the API runtime role.
+- **M1-10B API**: the frozen ``169261d`` code (``legacy_169261d``), the API that
+  B1a and B1b were designed for, running as the API runtime role.
+- **Current API** (M1-10C): requires migration C1; see
+  ``test_company_migration.py`` for its compatibility matrix.
 
 Compatibility matrix (M1-10B acceptance):
 
-    old API + B1a -> works        new API + B1a -> works
-    old API + B1b -> fails closed new API + B1b -> works
+    old API + B1a -> works        M1-10B API + B1a -> works
+    old API + B1b -> fails closed M1-10B API + B1b -> works
 """
 
 import uuid
-from collections.abc import Generator, Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.engine import make_url
+from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.auth.dependencies import get_authentication_provider
 from app.auth.exceptions import AuthorizationError
 from app.auth.models import VerifiedIdentity
-from app.auth.providers.development import (
-    DEVELOPMENT_ISSUER,
-    DevelopmentAuthenticationProvider,
-    issue_development_token,
-)
 from app.auth.service import authorize_company, resolve_user
-from app.core.config import Settings
 from app.db.runtime_role import (
     API_MINIMUM_SCHEMA_CONTRACT,
     IncompatibleSchemaError,
     verify_runtime_role,
 )
-from app.db.session import get_db
-from app.identity import service
-from app.identity.operator import set_actor_reference
-from app.main import create_app
-from tests.auth.conftest import TEST_DEV_SECRET
-from tests.tenant_isolation import legacy_371dd50 as legacy
-from tests.tenant_isolation.conftest import TenantDatabase, disposable_database, run_alembic
+from tests.tenant_isolation.conftest import (
+    LegacyDatabase,
+    TenantDatabase,
+    disposable_database,
+    run_alembic,
+)
+from tests.tenant_isolation.migration_helpers import (
+    B1A,
+    B1B,
+    C1,
+    LEGACY_ISSUER,
+    PRE_B1,
+    REFERENCE,
+    admin_scalar,
+    b1a,
+    b1b,
+    engine_for,
+    m110b_api_status,
+    old_api_authorizes,
+    operator_sql,
+    revision,
+    upgrade,
+)
 
-PRE_B1 = "97d4200fe7a2"
-B1A = "b8a11c15ed91"
-B1B = "09cb5ec569b9"
-# The legacy users are bound under the development issuer, so the new API can
-# be exercised end to end with development tokens.
-LEGACY_ISSUER = DEVELOPMENT_ISSUER
-REFERENCE = "HER-230"
-
-
-@dataclass(frozen=True)
-class LegacyDatabase:
-    admin_url: str
-    runtime_url: str
-    operator_url: str
-    company_a: uuid.UUID
-    company_b: uuid.UUID
-    alice: uuid.UUID
-    bob: uuid.UUID
-    alice_membership: uuid.UUID
-    bob_membership: uuid.UUID
-
-
-def _as(url: str, database: str) -> str:
-    return make_url(url).set(database=database).render_as_string(hide_password=False)
-
-
-@pytest.fixture
-def legacy_db(tenant_database: TenantDatabase) -> Iterator[LegacyDatabase]:
-    with disposable_database(tenant_database, "b1") as admin_url:
-        migrated = run_alembic(admin_url, "upgrade", PRE_B1)
-        assert migrated.returncode == 0, migrated.stderr
-        ids = {name: uuid.uuid4() for name in ("a", "b", "alice", "bob", "ma", "mb")}
-        engine = create_engine(admin_url)
-        with engine.begin() as conn:
-            conn.execute(
-                text("INSERT INTO companies (id, name) VALUES (:a, 'Legacy A'), (:b, 'Legacy B')"),
-                ids,
-            )
-            conn.execute(
-                text(
-                    "INSERT INTO users (id, identity_subject) "
-                    "VALUES (:alice, 'alice-subject'), (:bob, 'bob-subject')"
-                ),
-                ids,
-            )
-            conn.execute(
-                text(
-                    "INSERT INTO memberships (id, company_id, user_id) "
-                    "VALUES (:ma, :a, :alice), (:mb, :b, :bob)"
-                ),
-                ids,
-            )
-            conn.execute(
-                text(
-                    "INSERT INTO cases (id, company_id, case_type, title) "
-                    "VALUES (gen_random_uuid(), :a, 'probation', 'Case A'), "
-                    "(gen_random_uuid(), :b, 'probation', 'Case B')"
-                ),
-                ids,
-            )
-        engine.dispose()
-        database = make_url(admin_url).database or ""
-        yield LegacyDatabase(
-            admin_url=admin_url,
-            runtime_url=_as(tenant_database.runtime_url, database),
-            operator_url=_as(tenant_database.operator_url, database),
-            company_a=ids["a"],
-            company_b=ids["b"],
-            alice=ids["alice"],
-            bob=ids["bob"],
-            alice_membership=ids["ma"],
-            bob_membership=ids["mb"],
-        )
-
-
-def b1a(db: LegacyDatabase, *, issuer: str = LEGACY_ISSUER, count: str = "2") -> None:
-    result = run_alembic(
-        db.admin_url,
-        "-x",
-        f"legacy_identity_issuer={issuer}",
-        "-x",
-        f"legacy_identity_user_count={count}",
-        "upgrade",
-        B1A,
-    )
-    assert result.returncode == 0, result.stderr
-
-
-def b1b(db: LegacyDatabase) -> None:
-    result = run_alembic(db.admin_url, "upgrade", B1B)
-    assert result.returncode == 0, result.stderr
-
-
-@contextmanager
-def engine_for(url: str) -> Iterator[Engine]:
-    engine = create_engine(url, pool_size=1, max_overflow=0)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
-
-
-def admin_scalar(db: LegacyDatabase, sql: str, **params: object) -> object:
-    with engine_for(db.admin_url) as engine, engine.connect() as conn:
-        return conn.execute(text(sql), params).scalar()
-
-
-def revision(db: LegacyDatabase) -> object:
-    return admin_scalar(db, "SELECT version_num FROM alembic_version")
-
-
-# --- the two APIs ----------------------------------------------------------------
-
-
-def old_api_authorizes(db: LegacyDatabase, subject: str, company: uuid.UUID) -> bool:
-    """The 371dd50 authorization path as the API runtime role."""
-    with engine_for(db.runtime_url) as engine, Session(engine) as session:
-        try:
-            user = legacy.resolve_user(
-                session, legacy.VerifiedIdentity(subject=subject, issuer=LEGACY_ISSUER)
-            )
-            legacy.authorize_company(session, user, company)
-        except legacy.AuthorizationError:
-            return False
-        return True
-
-
-@contextmanager
-def new_api(db: LegacyDatabase) -> Iterator[TestClient]:
-    """The real new application over HTTP, as the API runtime role."""
-    settings = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        heroos_env="development",
-        database_url="postgresql+psycopg://heroos_app@db.test.invalid/heroos",
-        heroos_auth_provider="development",
-        heroos_dev_auth_secret=TEST_DEV_SECRET,
-    )
-    app = create_app(settings)
-    provider = DevelopmentAuthenticationProvider(environment="development", secret=TEST_DEV_SECRET)
-    with engine_for(db.runtime_url) as engine:
-        sessions = sessionmaker(bind=engine, autoflush=False)
-
-        def _db() -> Generator[Session, None, None]:
-            with sessions() as session:
-                yield session
-
-        app.dependency_overrides[get_authentication_provider] = lambda: provider
-        app.dependency_overrides[get_db] = _db
-        yield TestClient(app)
-
-
-def new_api_status(client: TestClient, subject: str, company: uuid.UUID) -> int:
-    token = issue_development_token(
-        environment="development", secret=TEST_DEV_SECRET, subject=subject
-    )
-    response = client.get(
-        f"/companies/{company}/cases", headers={"Authorization": f"Bearer {token}"}
-    )
-    return response.status_code
-
-
-@contextmanager
-def operator_session(db: LegacyDatabase) -> Iterator[Session]:
-    """An identity-operator session with the change reference set; commits on exit."""
-    with engine_for(db.operator_url) as engine, Session(engine, autoflush=False) as session:
-        set_actor_reference(session, REFERENCE)
-        yield session
-        session.commit()
+REVOKE_MEMBERSHIP = (
+    "UPDATE memberships SET status = 'revoked', revoked_at = now() WHERE id = :membership"
+)
+REACTIVATE_MEMBERSHIP = (
+    "UPDATE memberships SET status = 'active', revoked_at = NULL WHERE id = :membership"
+)
+SUSPEND_USER = "UPDATE users SET status = 'suspended', suspended_at = now() WHERE id = :user"
+REACTIVATE_USER = "UPDATE users SET status = 'active', suspended_at = NULL WHERE id = :user"
 
 
 # --- B1a backfill contract -------------------------------------------------------
@@ -360,24 +206,22 @@ def test_old_api_keeps_working_on_b1a(legacy_db: LegacyDatabase) -> None:
     assert not old_api_authorizes(legacy_db, "alice-subject", legacy_db.company_b)
 
 
-def test_new_api_works_on_b1a(legacy_db: LegacyDatabase) -> None:
+def test_m110b_api_works_on_b1a(legacy_db: LegacyDatabase) -> None:
     b1a(legacy_db)
 
-    with new_api(legacy_db) as client:
-        assert new_api_status(client, "alice-subject", legacy_db.company_a) == 200
-        assert new_api_status(client, "bob-subject", legacy_db.company_b) == 200
-        assert new_api_status(client, "alice-subject", legacy_db.company_b) == 403
-        assert new_api_status(client, "stranger", legacy_db.company_a) == 403
+    assert m110b_api_status(legacy_db, "alice-subject", legacy_db.company_a) == 200
+    assert m110b_api_status(legacy_db, "bob-subject", legacy_db.company_b) == 200
+    assert m110b_api_status(legacy_db, "alice-subject", legacy_db.company_b) == 403
+    assert m110b_api_status(legacy_db, "stranger", legacy_db.company_a) == 403
 
 
-def test_new_api_works_on_b1b(legacy_db: LegacyDatabase) -> None:
+def test_m110b_api_works_on_b1b(legacy_db: LegacyDatabase) -> None:
     b1a(legacy_db)
     b1b(legacy_db)
 
-    with new_api(legacy_db) as client:
-        assert new_api_status(client, "alice-subject", legacy_db.company_a) == 200
-        assert new_api_status(client, "bob-subject", legacy_db.company_b) == 200
-        assert new_api_status(client, "bob-subject", legacy_db.company_a) == 403
+    assert m110b_api_status(legacy_db, "alice-subject", legacy_db.company_a) == 200
+    assert m110b_api_status(legacy_db, "bob-subject", legacy_db.company_b) == 200
+    assert m110b_api_status(legacy_db, "bob-subject", legacy_db.company_a) == 403
 
 
 def test_old_api_fails_closed_on_b1b(legacy_db: LegacyDatabase) -> None:
@@ -392,18 +236,23 @@ def test_old_api_fails_closed_on_b1b(legacy_db: LegacyDatabase) -> None:
     assert getattr(exc_info.value.orig, "sqlstate", None) == "42703"
 
 
-def test_new_api_requires_the_identity_schema_contract(legacy_db: LegacyDatabase) -> None:
+def test_current_api_requires_the_c1_schema_contract(legacy_db: LegacyDatabase) -> None:
     with engine_for(legacy_db.runtime_url) as engine:
-        # Pre-B1a schema: the new API refuses to start rather than fail per request.
+        # Pre-B1a, B1a and B1b schemas: the current API refuses to start rather
+        # than fail per request (it maps memberships.role).
         with pytest.raises(IncompatibleSchemaError):
             verify_runtime_role(engine)
         b1a(legacy_db)
-        verify_runtime_role(engine)
+        with pytest.raises(IncompatibleSchemaError, match="contract is 1"):
+            verify_runtime_role(engine)
         b1b(legacy_db)
+        with pytest.raises(IncompatibleSchemaError, match="contract is 2"):
+            verify_runtime_role(engine)
+        upgrade(legacy_db, C1)
         verify_runtime_role(engine)
         with engine.connect() as conn:
-            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 2
-    assert API_MINIMUM_SCHEMA_CONTRACT == 1
+            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 3
+    assert API_MINIMUM_SCHEMA_CONTRACT == 3
 
 
 # --- revocation and rollback --------------------------------------------------------
@@ -414,16 +263,17 @@ def test_revoked_access_stays_denied_through_the_supported_recovery_procedure(
 ) -> None:
     b1a(legacy_db)
     b1b(legacy_db)
-    with operator_session(legacy_db) as session:
-        service.revoke_membership(
-            session, company_id=legacy_db.company_b, membership_id=legacy_db.bob_membership
-        )
-        service.suspend_user(session, user_id=legacy_db.alice)
+    operator_sql(
+        legacy_db,
+        REVOKE_MEMBERSHIP,
+        company=legacy_db.company_b,
+        membership=legacy_db.bob_membership,
+    )
+    operator_sql(legacy_db, SUSPEND_USER, user=legacy_db.alice)
 
-    # New API: both denied on the next request.
-    with new_api(legacy_db) as client:
-        assert new_api_status(client, "alice-subject", legacy_db.company_a) == 403
-        assert new_api_status(client, "bob-subject", legacy_db.company_b) == 403
+    # M1-10B API: both denied on the next request.
+    assert m110b_api_status(legacy_db, "alice-subject", legacy_db.company_a) == 403
+    assert m110b_api_status(legacy_db, "bob-subject", legacy_db.company_b) == 403
     # Old API redeployed by mistake: fails closed, cannot ignore the lifecycle.
     for subject, company in (
         ("alice-subject", legacy_db.company_a),
@@ -444,11 +294,13 @@ def test_revoked_access_stays_denied_through_the_supported_recovery_procedure(
 
     # Even after everything is reactivated (all rows active again), the history
     # still refuses the rollback: the supported recovery is roll-forward.
-    with operator_session(legacy_db) as session:
-        service.reactivate_user(session, user_id=legacy_db.alice)
-        service.reactivate_membership(
-            session, company_id=legacy_db.company_b, membership_id=legacy_db.bob_membership
-        )
+    operator_sql(legacy_db, REACTIVATE_USER, user=legacy_db.alice)
+    operator_sql(
+        legacy_db,
+        REACTIVATE_MEMBERSHIP,
+        company=legacy_db.company_b,
+        membership=legacy_db.bob_membership,
+    )
     assert (
         admin_scalar(
             legacy_db,
@@ -460,18 +312,25 @@ def test_revoked_access_stays_denied_through_the_supported_recovery_procedure(
     still_refused = run_alembic(legacy_db.admin_url, "downgrade", B1A)
     assert still_refused.returncode != 0
     assert revision(legacy_db) == B1B
-    with new_api(legacy_db) as client:
-        assert new_api_status(client, "alice-subject", legacy_db.company_a) == 200
-        assert new_api_status(client, "bob-subject", legacy_db.company_b) == 200
+    assert m110b_api_status(legacy_db, "alice-subject", legacy_db.company_a) == 200
+    assert m110b_api_status(legacy_db, "bob-subject", legacy_db.company_b) == 200
 
 
 def test_post_b1_provisioning_blocks_rollback(legacy_db: LegacyDatabase) -> None:
     b1a(legacy_db)
     b1b(legacy_db)
-    with operator_session(legacy_db) as session:
-        service.provision_member(
-            session, company_id=legacy_db.company_a, issuer=LEGACY_ISSUER, subject="carol-subject"
-        )
+    # What `provision` writes: a User, its binding and a Membership.
+    operator_sql(
+        legacy_db,
+        "INSERT INTO users (id) VALUES (:carol)",
+        "INSERT INTO user_identities (id, user_id, issuer, subject) "
+        "VALUES (gen_random_uuid(), :carol, :issuer, 'carol-subject')",
+        "INSERT INTO memberships (id, company_id, user_id) VALUES (gen_random_uuid(), :a, :carol)",
+        company=legacy_db.company_a,
+        carol=uuid.uuid4(),
+        issuer=LEGACY_ISSUER,
+        a=legacy_db.company_a,
+    )
 
     refused = run_alembic(legacy_db.admin_url, "downgrade", B1A)
     assert refused.returncode != 0
@@ -545,11 +404,12 @@ def test_b1b_refuses_users_without_a_matching_binding(legacy_db: LegacyDatabase)
     )
 
 
-def test_new_api_resolves_by_issuer_and_subject_not_subject_alone(
+def test_current_api_resolves_by_issuer_and_subject_not_subject_alone(
     legacy_db: LegacyDatabase,
 ) -> None:
     b1a(legacy_db)
     b1b(legacy_db)
+    upgrade(legacy_db, C1)
     with engine_for(legacy_db.runtime_url) as engine, Session(engine) as session:
         user = resolve_user(
             session, VerifiedIdentity(subject="alice-subject", issuer=LEGACY_ISSUER)

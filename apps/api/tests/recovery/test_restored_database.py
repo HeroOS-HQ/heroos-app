@@ -20,6 +20,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.auth.models import AuthenticatedCompanyContext
+from app.companies.jurisdiction import company_jurisdiction
 from app.db.runtime_role import check_runtime_role
 from app.repositories import case_subjects, cases
 from app.tenancy.scope import open_company_scope
@@ -43,6 +44,8 @@ APPLICATION_TABLES = (
     "user_identities",
     "identity_events",
     "membership_events",
+    "company_events",
+    "company_registrations",
 )
 
 # Catalog views of everything a restore must reproduce exactly.
@@ -172,12 +175,19 @@ def test_restored_rls_and_policies(restored_admin: Engine) -> None:
     }
     assert rls == set(TENANT_TABLES) | {
         "membership_events",
+        "company_events",
+        "company_registrations",
         "users",
         "user_identities",
         "identity_events",
     }
     policies = snapshot(restored_admin, CATALOG_QUERIES["policies"])
-    tenant = {**TENANT_TABLES, "membership_events": "company_id"}
+    tenant = {
+        **TENANT_TABLES,
+        "membership_events": "company_id",
+        "company_events": "company_id",
+        "company_registrations": "company_id",
+    }
     assert {(table, policy) for table, policy, *_ in policies} == {
         *((table, "tenant_isolation") for table in tenant),
         ("memberships", "lifecycle_active"),
@@ -229,12 +239,21 @@ def test_restored_ownership_and_runtime_grants(
     # Restored with --no-owner as the migration/admin role; never the runtime role.
     assert owners == [(recovery.admin_role,)]
     grants = snapshot(restored_admin, CATALOG_QUERIES["runtime_grants"])
+    # Table-level grants. Company Blueprint INSERT/UPDATE are column-level
+    # (M1-10C) and compared in full by the column_grants catalog view.
     expected = {
         (table, privilege)
-        for table in TENANT_TABLES
-        if table != "memberships"
+        for table in ("case_subjects", "cases")
         for privilege in ("DELETE", "INSERT", "SELECT", "UPDATE")
-    } | {("memberships", "SELECT"), ("users", "SELECT"), ("user_identities", "SELECT")}
+    } | {
+        ("companies", "SELECT"),
+        ("companies", "UPDATE"),
+        ("company_blueprints", "SELECT"),
+        ("company_blueprints", "DELETE"),
+        ("memberships", "SELECT"),
+        ("users", "SELECT"),
+        ("user_identities", "SELECT"),
+    }
     assert set(grants) == expected
     # The identity operator's table and column grants survive the restore too.
     assert set(snapshot(restored_admin, CATALOG_QUERIES["operator_grants"])) == {
@@ -245,6 +264,26 @@ def test_restored_ownership_and_runtime_grants(
         ("memberships", "SELECT"),
         ("memberships", "INSERT"),
     }
+
+
+def test_restored_roles_and_jurisdiction_readiness(restored_runtime: Engine) -> None:
+    # M1-10C state survives: A's administrator and its current DIFC confirmation,
+    # B's unconfirmed "Other" answer. Read as the API role, as a workflow would.
+    expected = {
+        data.COMPANY_A: ("company_admin", "supported_confirmed", "difc"),
+        data.COMPANY_B: ("member", "unconfirmed", None),
+    }
+    for ctx in (CONTEXT_A, CONTEXT_B):
+        with Session(restored_runtime) as session:
+            scope = open_company_scope(session, ctx)
+            role = session.scalar(
+                text("SELECT role FROM memberships WHERE id = :m"), {"m": ctx.membership_id}
+            )
+            assessment = company_jurisdiction(scope)
+            assert (role, assessment.readiness.value, assessment.jurisdiction) == expected[
+                ctx.company_id
+            ]
+            session.rollback()
 
 
 def test_runtime_role_passes_startup_guard_on_restored_database(restored_runtime: Engine) -> None:

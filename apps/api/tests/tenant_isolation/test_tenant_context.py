@@ -79,7 +79,9 @@ def test_no_context_insert_is_rejected(
         "DELETE FROM cases",
         "DELETE FROM case_subjects",
         "DELETE FROM company_blueprints",
-        "DELETE FROM companies",
+        "UPDATE company_blueprints SET legal_name = 'tampered'",
+        # DELETE FROM companies is refused by privilege before RLS since M1-10C
+        # (test_cross_tenant_writes.py::test_api_role_can_neither_create_nor_delete_companies).
     ],
 )
 def test_no_context_update_and_delete_affect_nothing(

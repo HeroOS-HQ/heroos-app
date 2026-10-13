@@ -1,4 +1,5 @@
-"""Identity operator CLI: provision users, bind identities, manage lifecycle (ADR-008).
+"""Identity operator CLI: provision users, bind identities, manage lifecycle (ADR-008),
+register Companies, appoint Company administrators and confirm jurisdictions (M1-10C).
 
 Platform-operator tool. Not shipped as an API entrypoint and never reachable over
 HTTP. It connects with a personal identity-operator login, a member of
@@ -23,12 +24,22 @@ Before any change the CLI refuses unless:
   variable can redirect the connection;
 - the login is an unprivileged identity operator (not superuser, BYPASSRLS,
   CREATEROLE, table owner or API runtime role);
-- the identity schema contract is exactly 2 (migration B1b);
+- the schema contract is exactly 3 (migration C1);
 - the connected database is the one named by ``--expect-database``.
 
 Each command is one transaction: the change reference (``--reference``, an issue
 key) is attached first, and the database audit triggers write the event in the
 same transaction. There is no delete command (PRIV-008, PRIV-020).
+
+Company registration (M1-10C, docs/operations/company-registration.md)::
+
+    python -c 'import uuid; print(uuid.uuid4())'   # once; record it in the issue
+    printf '%s\\n' "$HEROOS_SUBJECT" | uv run python -m scripts.manage_identities \\
+        --expect-database <db> --reference HER-231 \\
+        register-company --company <uuid> --name '<Company name>' --issuer <exact issuer>
+
+Re-running the same command is safe: it reports ``unchanged`` once that
+identity is the Company's administrator.
 """
 
 import argparse
@@ -45,6 +56,13 @@ from sqlalchemy.exc import ArgumentError, DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
+from app.db.models.company_blueprint import (
+    EMPLOYMENT_JURISDICTIONS,
+    LICENSING_DIFC,
+    LICENSING_LOCATIONS,
+    LICENSING_OTHER,
+)
+from app.db.models.membership import MEMBERSHIP_ROLES
 from app.db.runtime_role import (
     OPERATOR_SCHEMA_CONTRACT,
     IncompatibleSchemaError,
@@ -52,8 +70,8 @@ from app.db.runtime_role import (
     check_operator_role,
     check_schema_contract,
 )
-from app.identity import service
-from app.identity.errors import IDENTITY_CONFLICT, IdentityOperationError
+from app.identity import companies, service
+from app.identity.errors import IDENTITY_CONFLICT, REGISTRATION_CONFLICT, IdentityOperationError
 from app.identity.operator import set_actor_reference
 from app.identity.validation import ACTOR_REFERENCE
 
@@ -175,6 +193,40 @@ def build_parser() -> argparse.ArgumentParser:
         commands.add_parser(name).add_argument("--identity", required=True, type=UUID)
     for name in ("suspend-user", "reactivate-user"):
         commands.add_parser(name).add_argument("--user", required=True, type=UUID)
+
+    register = commands.add_parser(
+        "register-company",
+        help="new Company + empty Blueprint + its first Company administrator (subject on stdin)",
+    )
+    register.add_argument("--company", required=True, type=UUID, help="the Company's stable UUID")
+    register.add_argument("--name", required=True)
+    register.add_argument("--issuer", required=True)
+    register.add_argument(
+        "--existing-user",
+        action="store_true",
+        help="the administrator is an existing, active HeroOS User (active binding)",
+    )
+    set_role = commands.add_parser("set-role", help="make a Membership company_admin or member")
+    set_role.add_argument("--company", required=True, type=UUID)
+    set_role.add_argument("--membership", required=True, type=UUID)
+    set_role.add_argument("--role", required=True, choices=MEMBERSHIP_ROLES)
+    confirm = commands.add_parser(
+        "confirm-jurisdiction",
+        help="record a reviewed Company-level employment jurisdiction",
+    )
+    confirm.add_argument("--company", required=True, type=UUID)
+    confirm.add_argument("--jurisdiction", required=True, choices=EMPLOYMENT_JURISDICTIONS)
+    confirm.add_argument(
+        "--licensing-location",
+        required=True,
+        choices=[
+            value for value in LICENSING_LOCATIONS if value in (LICENSING_DIFC, LICENSING_OTHER)
+        ],
+        help="the customer's licensing answer that was reviewed",
+    )
+    confirm.add_argument("--licensing-authority", help="with --licensing-location other")
+    for name in ("clear-jurisdiction", "jurisdiction-status"):
+        commands.add_parser(name).add_argument("--company", required=True, type=UUID)
     return parser
 
 
@@ -214,10 +266,36 @@ def operation(args: argparse.Namespace) -> Operation:
             return lambda s: service.suspend_user(s, user_id=args.user)
         case "reactivate-user":
             return lambda s: service.reactivate_user(s, user_id=args.user)
+        case "register-company":
+            subject = read_subject()
+            return lambda s: companies.register_company(
+                s,
+                company_id=args.company,
+                name=args.name,
+                issuer=args.issuer,
+                subject=subject,
+                existing_user=args.existing_user,
+            )
+        case "set-role":
+            return lambda s: service.set_membership_role(
+                s, company_id=args.company, membership_id=args.membership, role=args.role
+            )
+        case "confirm-jurisdiction":
+            return lambda s: companies.confirm_jurisdiction(
+                s,
+                company_id=args.company,
+                jurisdiction=args.jurisdiction,
+                licensing_location=args.licensing_location,
+                licensing_authority=args.licensing_authority,
+            )
+        case "clear-jurisdiction":
+            return lambda s: companies.clear_jurisdiction(s, company_id=args.company)
+        case "jurisdiction-status":
+            return lambda s: companies.jurisdiction_status(s, company_id=args.company)
     raise AssertionError(args.command)
 
 
-def _emit(payload: dict[str, str]) -> None:
+def _emit(payload: dict[str, str | None]) -> None:
     print(json.dumps(payload, sort_keys=True))
 
 
@@ -253,9 +331,15 @@ def run(argv: list[str] | None = None) -> int:
                 _emit({"command": args.command, "outcome": "refused", "code": exc.code})
                 return EXIT_OPERATION_REFUSED
             except IntegrityError:
-                # A concurrent operation won a uniqueness race.
+                # A concurrent operation won a uniqueness race. For registration,
+                # re-running the same command reports the winner's outcome.
                 session.rollback()
-                _emit({"command": args.command, "outcome": "refused", "code": IDENTITY_CONFLICT})
+                code = (
+                    REGISTRATION_CONFLICT
+                    if args.command == "register-company"
+                    else IDENTITY_CONFLICT
+                )
+                _emit({"command": args.command, "outcome": "refused", "code": code})
                 return EXIT_OPERATION_REFUSED
     except DBAPIError as exc:
         # Never echo driver messages: they can quote values.
@@ -270,6 +354,7 @@ def run(argv: list[str] | None = None) -> int:
             "command": args.command,
             "outcome": result.outcome,
             **{name: str(value) for name, value in result.ids.items()},
+            **result.details,
         }
     )
     return 0

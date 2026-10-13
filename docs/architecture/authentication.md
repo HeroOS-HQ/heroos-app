@@ -72,8 +72,15 @@ context. See [Tenant Isolation §6](tenant-isolation.md#6-membership-authorizati
 
 - **Company is the tenant boundary.** Access is granted only by a `memberships`
   row for the authenticated User and the requested Company. An *active*
-  Membership is the authorization relationship; there are no roles yet
-  (M1-10C). Lifecycle: [ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md).
+  Membership is the authorization relationship. Lifecycle:
+  [ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md).
+- **The Company role is a Membership fact** (M1-10C,
+  [ADR-010](../decisions/ADR-010-company-registration-and-administrators.md)):
+  `member` or `company_admin`, read from the same row and carried in
+  `AuthenticatedCompanyContext.role`. Token claims (groups, `custom:*`), email,
+  Company names and request fields never grant a role. Administrator-only
+  routes depend on `CompanyAdminDb`, which re-checks the role inside the write
+  transaction.
 - **A client-supplied Company ID is a resource identifier, not evidence.** Path,
   query, header, body and token claims (e.g. `custom:company_id`) never authorize.
   Changing `company_id` re-runs the Membership lookup.
@@ -83,11 +90,15 @@ context. See [Tenant Isolation §6](tenant-isolation.md#6-membership-authorizati
   other claim are never used for identity mapping or authorization. Bindings are
   immutable and unique for all time; changing provider adds a binding, it never
   rewrites one (ADR-008).
-- **Unknown identities are not provisioned.** A verified identity without an active
-  binding is denied (403). Users, bindings and Memberships are created only by a
-  platform operator with the audited operator CLI
-  ([Identity Provisioning](../operations/identity-provisioning.md)); no HTTP route
-  can provision.
+- **Unknown identities reach one route only.** A verified identity without an
+  active binding is denied (403) everywhere except founder self-registration
+  (`POST /company-registrations`, M1-10C), which creates a *new* Company with
+  that person as its first administrator through one narrow database function,
+  and only when `HEROOS_SELF_REGISTRATION_ENABLED` is set. No route can grant
+  access to an existing Company, assign a role or change lifecycle: that stays
+  with the audited operator CLI
+  ([Identity Provisioning](../operations/identity-provisioning.md),
+  [Company Registration](../operations/company-registration.md)).
 - **Lifecycle is checked on every request.** A suspended User, revoked binding or
   revoked Membership is denied on the next request, also while an access token is
   still valid, by the application and by Row-Level Security for the API role.
@@ -241,6 +252,7 @@ Company. The helper never creates Users, bindings or Memberships.
 | `HEROOS_OIDC_JWKS_URI` | optional | Overrides discovery (needed only when keys are not on the issuer's origin); must be https |
 | `HEROOS_OIDC_ALGORITHMS` | optional | Default `RS256,ES256`; asymmetric algorithms only |
 | `HEROOS_OIDC_REQUIRE_RFC9068` | optional | Default `true` (`typ: at+jwt`, `client_id`, `jti` required) |
+| `HEROOS_SELF_REGISTRATION_ENABLED` | optional | Default `false` in every environment. Enables `POST /company-registrations` (404 otherwise). An activation step, together with the identity provider's sign-up setting ([Company Registration §3](../operations/company-registration.md#3-activating-founder-self-registration-separate-approval)) |
 
 Secrets use `SecretStr`, and settings validation errors hide input values, so
 neither repr nor startup errors print the development secret or `DATABASE_URL`.
@@ -325,8 +337,13 @@ additional Cognito binding, then the old binding is revoked (ADR-008 §Cognito).
 User/binding/Membership lifecycle, operator-only provisioning and trigger-written
 security audit. See [ADR-008](../decisions/ADR-008-external-identity-and-provisioning.md).
 
-**Not in scope:** roles and fine-grained permissions (M1-10C), invitations,
-onboarding and Company selection (M1-10D).
+**M1-10C — Company registration and administrators** (implemented): founder
+self-registration, `company_admin`/`member` roles, Company Blueprint licensing
+and jurisdiction readiness. See
+[ADR-010](../decisions/ADR-010-company-registration-and-administrators.md).
+
+**Not in scope:** invitations and fine-grained permissions (later milestones),
+the onboarding and Company selection UI (M1-10D).
 
 ## 10. Browser Access (B4)
 
@@ -338,12 +355,19 @@ onboarding and Company selection (M1-10D).
 | Route | Success | Failures |
 | --- | --- | --- |
 | `GET /companies/{company_id}` | `{id, name}` | 401, 403 |
+| `GET /companies/{company_id}/membership` | the caller's role in that Company (M1-10C) | 401, 403 |
+| `GET /companies/{company_id}/blueprint` | Blueprint and jurisdiction readiness (M1-10C) | 401, 403 |
+| `PATCH /companies/{company_id}/blueprint` | administrators only (M1-10C) | 401, 403, 422 |
 | `GET /companies/{company_id}/cases` | cases of that Company | 401, 403 |
 | `GET /companies/{company_id}/cases/{case_id}` | one case | 401, 403, 404 |
+| `POST /company-registrations` | founder self-registration (M1-10C); any verified identity | 401, 403, 404 (disabled), 422 |
+| `GET /me/companies` | the caller's own active Memberships (M1-10C) | 401, 403 |
 
 403 is identical for another Company and a non-existent one. 404 is identical
 for another Company's case ID and an ID that exists nowhere. Malformed IDs return
-422 without echoing the input. The routes are read-only and never commit.
+422 without echoing the input. Only the Blueprint update and founder
+registration commit. Contract details for M1-10D:
+[Company Registration §6](../operations/company-registration.md#6-m1-10d-integration-contract).
 
 ### 10.2 Browser session: backend-for-frontend
 
@@ -398,7 +422,8 @@ Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Author
   resource identifiers: the API's identity-binding and Membership checks decide
   access, exactly as for any client-supplied ID. A user without an active
   binding, or whose User is suspended, gets the same 403 for every candidate, so
-  the web lists nothing and shows the "no access" message.
+  the web lists nothing and shows the "no access" message. This demo discovery
+  is superseded by `GET /me/companies` (M1-10C) once M1-10D switches to it.
 
 Why not tokens in the browser: HeroOS handles HR data, and a script injection
 could read tokens kept in `localStorage`/`sessionStorage`. The session design
