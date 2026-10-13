@@ -392,9 +392,13 @@ Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Author
 - **No prerendering of auth routes**: every auth route handler awaits
   `connection()`, so state and verifiers are generated per request (with Cache
   Components a GET handler that reads no request data would be built once).
-- **Company choice**: the web app shows one configured Company
-  (`HEROOS_DEMO_COMPANY_ID`). That ID is only a resource identifier: the API's
-  Membership check decides access, exactly as for any client-supplied ID.
+- **Company choice**: the web app lists only those configured candidate
+  Companies (`HEROOS_DEMO_COMPANY_IDS`; the legacy single `HEROOS_DEMO_COMPANY_ID`
+  still works) that the API authorizes for the signed-in user. The IDs are only
+  resource identifiers: the API's identity-binding and Membership checks decide
+  access, exactly as for any client-supplied ID. A user without an active
+  binding, or whose User is suspended, gets the same 403 for every candidate, so
+  the web lists nothing and shows the "no access" message.
 
 Why not tokens in the browser: HeroOS handles HR data, and a script injection
 could read tokens kept in `localStorage`/`sessionStorage`. The session design

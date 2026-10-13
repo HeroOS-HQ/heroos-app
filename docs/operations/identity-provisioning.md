@@ -110,7 +110,9 @@ Order, for a database that already has users:
 4. Verify: `SELECT DISTINCT issuer FROM user_identities` equals the configured
    issuer; one binding per user.
 5. Deploy the new API (it refuses to start on a schema older than B1a).
-6. Smoke test sign-in for every user and cross-Company denial.
+6. Smoke test sign-in for every user and cross-Company denial. The web lists
+   only the candidate Companies the API authorizes, so a user must see exactly
+   their own Companies (and, with none, the "no access" message).
 7. `uv run alembic upgrade head` (B1b). The previous API can no longer resolve
    anyone (fail closed). Create operator logins (§1).
 
