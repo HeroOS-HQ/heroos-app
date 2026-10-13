@@ -13,6 +13,8 @@ EXPECTED_TABLES=(
   cases
   companies
   company_blueprints
+  company_events
+  company_registrations
   identity_events
   membership_events
   memberships
@@ -36,6 +38,7 @@ EXPECTED_CONSTRAINTS=(
   uq_memberships_company_id_id
   ck_memberships_status
   ck_memberships_revoked_at
+  ck_memberships_role
   identity_events_pkey
   fk_identity_events_user_id_users
   fk_identity_events_identity_id_user_identities
@@ -49,6 +52,20 @@ EXPECTED_CONSTRAINTS=(
   ck_membership_events_event_type
   ck_membership_events_actor_kind
   ck_membership_events_actor_reference
+  ck_membership_events_role
+  company_events_pkey
+  fk_company_events_company_id_companies
+  ck_company_events_event_type
+  ck_company_events_actor_kind
+  ck_company_events_actor_reference
+  ck_company_events_jurisdiction
+  company_registrations_pkey
+  uq_company_registrations_user_id
+  uq_company_registrations_company_id
+  fk_company_registrations_identity_id_user_identities
+  fk_company_registrations_user_id_users
+  fk_company_registrations_company_id_companies
+  fk_company_registrations_company_id_membership_id_memberships
   memberships_company_id_fkey
   memberships_user_id_fkey
   uq_memberships_company_user
@@ -56,6 +73,10 @@ EXPECTED_CONSTRAINTS=(
   company_blueprints_company_id_fkey
   uq_company_blueprints_company_id
   ck_company_blueprints_employee_count_nonnegative
+  ck_company_blueprints_licensing_location
+  ck_company_blueprints_licensing_authority
+  ck_company_blueprints_employment_jurisdiction
+  ck_company_blueprints_jurisdiction_confirmation
   case_subjects_pkey
   case_subjects_company_id_fkey
   uq_case_subjects_company_id_id
@@ -71,6 +92,8 @@ TENANT_RLS_TABLES=(
   cases
   companies
   company_blueprints
+  company_events
+  company_registrations
   membership_events
   memberships
 )
@@ -82,6 +105,8 @@ RLS_TABLES=(
   cases
   companies
   company_blueprints
+  company_events
+  company_registrations
   identity_events
   membership_events
   memberships
@@ -190,10 +215,12 @@ assert_schema() {
   # no EXECUTE for PUBLIC.
   if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_proc
       WHERE pronamespace = 'public'::regnamespace
-        AND proname IN ('heroos_audit_identity_change', 'heroos_audit_membership_change')
+        AND proname IN ('heroos_audit_identity_change', 'heroos_audit_membership_change',
+                        'heroos_audit_company_change', 'heroos_register_company',
+                        'heroos_identity_companies')
         AND prosecdef AND proconfig = ARRAY['search_path=\"\"']
-        AND NOT has_function_privilege('public', oid, 'EXECUTE');")" != "2" ]]; then
-    echo "Audit trigger functions are not pinned SECURITY DEFINER functions." >&2
+        AND NOT has_function_privilege('public', oid, 'EXECUTE');")" != "5" ]]; then
+    echo "Audit and registration functions are not pinned SECURITY DEFINER functions." >&2
     return 1
   fi
   echo "Identity operator role ${OPERATOR_ROLE} OK; audit trigger functions pinned"
@@ -214,9 +241,27 @@ assert_schema() {
   # Audit tables refuse TRUNCATE (statement-level append-only trigger).
   if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_trigger
       WHERE tgname = 'heroos_append_only_truncate'
-        AND tgrelid IN ('public.identity_events'::regclass, 'public.membership_events'::regclass);")" != "2" ]]; then
+        AND tgrelid IN ('public.identity_events'::regclass, 'public.membership_events'::regclass,
+                        'public.company_events'::regclass,
+                        'public.company_registrations'::regclass);")" != "4" ]]; then
     echo "Audit tables are missing their TRUNCATE guard." >&2
     return 1
   fi
   echo "Table ACLs OK (owner and HeroOS groups only); audit TRUNCATE guards present"
+
+  # M1-10C: the API role cannot create or delete Companies, change Memberships
+  # or write the trusted jurisdiction confirmation (column-level grants).
+  if [[ "$(psql_db "${db}" "SELECT count(*) FROM unnest(ARRAY['employment_jurisdiction',
+        'confirmed_licensing_location', 'confirmed_licensing_authority',
+        'jurisdiction_confirmed_at']) AS c(name)
+      WHERE has_column_privilege('${RUNTIME_ROLE}', 'public.company_blueprints', c.name,
+                                 'INSERT, UPDATE');")" != "0" \
+     || "$(psql_db "${db}" "SELECT has_table_privilege('${RUNTIME_ROLE}', 'public.companies',
+        'INSERT, DELETE, TRUNCATE') OR has_table_privilege('${RUNTIME_ROLE}',
+        'public.memberships', 'INSERT, UPDATE, DELETE, TRUNCATE')
+        OR has_column_privilege('${RUNTIME_ROLE}', 'public.memberships', 'role', 'UPDATE');")" != "f" ]]; then
+    echo "Runtime role ${RUNTIME_ROLE} can create Companies, change Memberships or confirm jurisdictions." >&2
+    return 1
+  fi
+  echo "Runtime role write boundary OK (no Company creation, Membership or confirmation writes)"
 }

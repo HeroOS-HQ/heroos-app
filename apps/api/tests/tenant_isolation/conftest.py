@@ -74,13 +74,22 @@ TENANT_TABLES = {
     "case_subjects": "company_id",
     "cases": "company_id",
 }
-# Tenant tables the API role may also write. Memberships are written only by the
-# identity operator (ADR-008), still under the same tenant_isolation policy.
+# Tenant tables the API role may also update. Memberships are written only by
+# the identity operator (ADR-008), still under the same tenant_isolation policy.
 RUNTIME_WRITABLE_TABLES = {
     table: column for table, column in TENANT_TABLES.items() if table != "memberships"
 }
-# Tenant-owned audit table: written only by the owner-run trigger; no API grant.
-TENANT_AUDIT_TABLES = {"membership_events": "company_id"}
+# Tenant tables the API role may insert into. Companies are created only by
+# operator registration (M1-10C): the API role holds no INSERT or DELETE there.
+RUNTIME_INSERTABLE_TABLES = {
+    table: column for table, column in RUNTIME_WRITABLE_TABLES.items() if table != "companies"
+}
+# Tenant-owned audit tables: written only by owner-run triggers; no API grant.
+TENANT_AUDIT_TABLES = {
+    "membership_events": "company_id",
+    "company_events": "company_id",
+    "company_registrations": "company_id",
+}
 
 # Issuers every seeded identity is bound under: the Cognito, OIDC and
 # development providers used by the HTTP tests, and the URN used by
@@ -281,6 +290,9 @@ class Tenants:
     carol: uuid.UUID
 
 
+GLOBAL_TABLES = ("users", "user_identities", "identity_events")
+
+
 def attribute_changes(db: Session) -> None:
     """Set the change reference the audit triggers require for this transaction."""
     db.execute(
@@ -356,6 +368,86 @@ def tenants(admin_sessions: sessionmaker[Session]) -> Tenants:
         return Tenants(a=a, b=b, carol=carol.id)
 
 
+@dataclass(frozen=True)
+class LegacyDatabase:
+    """A disposable database at ``97d4200fe7a2`` with pre-M1-10B data."""
+
+    admin_url: str
+    runtime_url: str
+    operator_url: str
+    company_a: uuid.UUID
+    company_b: uuid.UUID
+    alice: uuid.UUID
+    bob: uuid.UUID
+    alice_membership: uuid.UUID
+    bob_membership: uuid.UUID
+    # Company A has a Blueprint with legacy values; Company B has none.
+    blueprint_a: uuid.UUID
+
+
+def _as(url: str, database: str) -> str:
+    return make_url(url).set(database=database).render_as_string(hide_password=False)
+
+
+@pytest.fixture
+def legacy_db(tenant_database: TenantDatabase) -> Iterator[LegacyDatabase]:
+    """Two Companies (alice in A, bob in B) as a pre-M1-10B deployment has them."""
+    with disposable_database(tenant_database, "legacy") as admin_url:
+        migrated = run_alembic(admin_url, "upgrade", "97d4200fe7a2")
+        assert migrated.returncode == 0, migrated.stderr
+        ids = {name: uuid.uuid4() for name in ("a", "b", "alice", "bob", "ma", "mb", "bpa")}
+        engine = create_engine(admin_url)
+        with engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO companies (id, name) VALUES (:a, 'Legacy A'), (:b, 'Legacy B')"),
+                ids,
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO users (id, identity_subject) "
+                    "VALUES (:alice, 'alice-subject'), (:bob, 'bob-subject')"
+                ),
+                ids,
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO memberships (id, company_id, user_id) "
+                    "VALUES (:ma, :a, :alice), (:mb, :b, :bob)"
+                ),
+                ids,
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO company_blueprints "
+                    "(id, company_id, legal_name, primary_jurisdiction, industry, employee_count) "
+                    "VALUES (:bpa, :a, 'Legacy A LLC', 'DIFC', 'Retail', 12)"
+                ),
+                ids,
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO cases (id, company_id, case_type, title) "
+                    "VALUES (gen_random_uuid(), :a, 'probation', 'Case A'), "
+                    "(gen_random_uuid(), :b, 'probation', 'Case B')"
+                ),
+                ids,
+            )
+        engine.dispose()
+        database = make_url(admin_url).database or ""
+        yield LegacyDatabase(
+            admin_url=admin_url,
+            runtime_url=_as(tenant_database.runtime_url, database),
+            operator_url=_as(tenant_database.operator_url, database),
+            company_a=ids["a"],
+            company_b=ids["b"],
+            alice=ids["alice"],
+            bob=ids["bob"],
+            alice_membership=ids["ma"],
+            bob_membership=ids["mb"],
+            blueprint_a=ids["bpa"],
+        )
+
+
 def scope_for(session: Session, tenant: Tenant) -> CompanyScope:
     """Production path: tenant context set from an AuthenticatedCompanyContext."""
     return open_company_scope(session, tenant.context)
@@ -374,16 +466,7 @@ def backend_pid(session: Session) -> int:
 
 def count_rows(session: Session, table: str) -> int:
     """Unfiltered row count: anything returned is what RLS lets through."""
-    assert (
-        table in TENANT_TABLES
-        or table in TENANT_AUDIT_TABLES
-        or table
-        in (
-            "users",
-            "user_identities",
-            "identity_events",
-        )
-    )
+    assert table in TENANT_TABLES or table in TENANT_AUDIT_TABLES or table in GLOBAL_TABLES
     count: int = session.scalar(text(f"SELECT count(*) FROM {table}"))
     return count
 

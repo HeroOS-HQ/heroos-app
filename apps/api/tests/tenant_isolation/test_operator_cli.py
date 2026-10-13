@@ -152,3 +152,153 @@ def test_cli_refuses_a_schema_before_b1b(tenant_database: TenantDatabase) -> Non
         result = cli(operator_url, "suspend-user", "--user", str(uuid.uuid4()))
     assert result.returncode == 3
     assert "schema contract is 1" in result.stderr
+
+
+def test_cli_refuses_the_b1b_schema(tenant_database: TenantDatabase) -> None:
+    # The M1-10C CLI needs C1's grants and contract 3.
+    with disposable_database(tenant_database, "clib1b") as admin_url:
+        assert run_alembic(admin_url, "upgrade", "09cb5ec569b9").returncode == 0
+        database = make_url(admin_url).database or ""
+        operator_url = (
+            make_url(tenant_database.operator_url)
+            .set(database=database)
+            .render_as_string(hide_password=False)
+        )
+        result = cli(operator_url, "jurisdiction-status", "--company", str(uuid.uuid4()))
+    assert result.returncode == 3
+    assert "schema contract is 2" in result.stderr
+
+
+# --- Company registration, roles and jurisdiction (M1-10C) ------------------------
+
+
+def test_cli_registers_a_company_idempotently_without_printing_the_subject(
+    tenant_database: TenantDatabase, tenants: Tenants
+) -> None:
+    company = str(uuid.uuid4())
+    args = (
+        "register-company",
+        "--company",
+        company,
+        "--name",
+        "Delta Logistics FZCO",
+        "--issuer",
+        SERVICE_TEST_ISSUER,
+    )
+    first = cli(tenant_database.operator_url, *args, subject="cli-founder-subject")
+    assert first.returncode == 0, first.stderr
+    created = json.loads(first.stdout)
+    assert created["outcome"] == "created"
+    assert created["company_id"] == company
+    assert set(created) == {
+        "command",
+        "outcome",
+        "company_id",
+        "blueprint_id",
+        "user_id",
+        "identity_id",
+        "membership_id",
+    }
+
+    again = cli(tenant_database.operator_url, *args, subject="cli-founder-subject")
+    assert again.returncode == 0, again.stderr
+    assert json.loads(again.stdout)["outcome"] == "unchanged"
+
+    other = cli(tenant_database.operator_url, *args, subject="cli-intruder-subject")
+    assert other.returncode == 4
+    assert json.loads(other.stdout) == {
+        "command": "register-company",
+        "outcome": "refused",
+        "code": "company_exists",
+    }
+    for output in (first.stdout, first.stderr, again.stdout, again.stderr):
+        assert "cli-founder-subject" not in output
+
+
+def test_cli_appoints_an_administrator_and_confirms_a_jurisdiction(
+    tenant_database: TenantDatabase, tenants: Tenants
+) -> None:
+    url = tenant_database.operator_url
+    company = str(tenants.a.company)
+
+    promoted = cli(
+        url,
+        "set-role",
+        "--company",
+        company,
+        "--membership",
+        str(tenants.a.membership),
+        "--role",
+        "company_admin",
+    )
+    assert promoted.returncode == 0, promoted.stderr
+    assert json.loads(promoted.stdout)["role"] == "company_admin"
+
+    status = cli(url, "jurisdiction-status", "--company", company)
+    assert status.returncode == 0, status.stderr
+    assert json.loads(status.stdout) == {
+        "command": "jurisdiction-status",
+        "outcome": "unchanged",
+        "company_id": company,
+        "licensing_location": None,
+        "licensing_authority": None,
+        "readiness": "unconfirmed",
+        "reason": "licensing_not_provided",
+        "employment_jurisdiction": None,
+    }
+    # Nothing to confirm against yet: the customer has not answered.
+    unanswered = cli(
+        url,
+        "confirm-jurisdiction",
+        "--company",
+        company,
+        "--jurisdiction",
+        "difc",
+        "--licensing-location",
+        "difc",
+    )
+    assert unanswered.returncode == 4
+    assert json.loads(unanswered.stdout)["code"] == "licensing_answer_mismatch"
+    # "not sure" can never be confirmed against.
+    unsure = cli(
+        url,
+        "confirm-jurisdiction",
+        "--company",
+        company,
+        "--jurisdiction",
+        "difc",
+        "--licensing-location",
+        "not_sure",
+    )
+    assert unsure.returncode == 2
+
+    cleared = cli(url, "clear-jurisdiction", "--company", company)
+    assert cleared.returncode == 0, cleared.stderr
+    assert json.loads(cleared.stdout)["outcome"] == "unchanged"
+
+
+def test_cli_rejects_unknown_roles_and_jurisdictions_at_parse_time(
+    tenant_database: TenantDatabase, tenants: Tenants
+) -> None:
+    for args in (
+        (
+            "set-role",
+            "--company",
+            str(tenants.a.company),
+            "--membership",
+            str(tenants.a.membership),
+            "--role",
+            "owner",
+        ),
+        (
+            "confirm-jurisdiction",
+            "--company",
+            str(tenants.a.company),
+            "--jurisdiction",
+            "mohre",
+            "--licensing-location",
+            "difc",
+        ),
+    ):
+        result = cli(tenant_database.operator_url, *args)
+        assert result.returncode == 2, args

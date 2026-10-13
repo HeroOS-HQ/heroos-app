@@ -130,6 +130,13 @@ class Settings(DatabaseSettings):
     # environments can refuse it if it is ever configured.
     heroos_operator_database_url: SecretStr | None = None
 
+    # Self-service founder registration (M1-10C, POST /company-registrations).
+    # Off unless explicitly enabled, in every environment: deploying the code
+    # does not open public Company creation. Enabling it is an activation step,
+    # together with the identity provider's sign-up setting
+    # (docs/operations/company-registration.md).
+    heroos_self_registration_enabled: bool = False
+
     @model_validator(mode="after")
     def _validate_cors(self) -> Self:
         parse_cors_origins(self.heroos_cors_allowed_origins, self.heroos_env)

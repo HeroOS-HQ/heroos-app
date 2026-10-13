@@ -16,7 +16,6 @@ from sqlalchemy.pool import NullPool
 from app.db.runtime_role import UnsafeDatabaseRoleError, check_runtime_role
 from tests.tenant_isolation.conftest import (
     DISPOSABLE_RUNTIME_ROLE,
-    RUNTIME_WRITABLE_TABLES,
     TENANT_AUDIT_TABLES,
     TENANT_TABLES,
     TenantDatabase,
@@ -156,8 +155,16 @@ def test_startup_guard_accepts_runtime_role_and_rejects_admin(
 @pytest.mark.parametrize(
     ("table", "allowed"),
     [
-        *[(table, {"SELECT", "INSERT", "UPDATE", "DELETE"}) for table in RUNTIME_WRITABLE_TABLES],
-        # Granting Company access is provisioning: operator-only (ADR-008).
+        *[
+            (table, {"SELECT", "INSERT", "UPDATE", "DELETE"})
+            for table in ("case_subjects", "cases")
+        ],
+        # Company registration is operator-only (M1-10C): no INSERT or DELETE.
+        ("companies", {"SELECT", "UPDATE"}),
+        # INSERT and UPDATE are column-level (below): never the jurisdiction
+        # confirmation.
+        ("company_blueprints", {"SELECT", "DELETE"}),
+        # Granting Company access or a role is provisioning: operator-only (ADR-008).
         ("memberships", {"SELECT"}),
         # Identity lookup only: no binding, reassignment or suspension.
         ("users", {"SELECT"}),
@@ -165,6 +172,7 @@ def test_startup_guard_accepts_runtime_role_and_rejects_admin(
         # Audit is written only by owner-run triggers.
         ("identity_events", set()),
         ("membership_events", set()),
+        ("company_events", set()),
         ("alembic_version", set()),
     ],
 )
@@ -184,6 +192,74 @@ def test_runtime_role_has_only_required_table_privileges(
 
     # TRUNCATE in particular is never granted: it is not subject to RLS.
     assert granted == allowed
+
+
+# Every Blueprint column except the trusted jurisdiction confirmation (M1-10C).
+RUNTIME_BLUEPRINT_COLUMNS = {
+    "id",
+    "company_id",
+    "legal_name",
+    "primary_jurisdiction",
+    "industry",
+    "employee_count",
+    "licensing_location",
+    "licensing_authority",
+    "created_at",
+    "updated_at",
+}
+CONFIRMATION_COLUMNS = {
+    "employment_jurisdiction",
+    "confirmed_licensing_location",
+    "confirmed_licensing_authority",
+    "jurisdiction_confirmed_at",
+}
+
+
+@pytest.mark.parametrize("privilege", ["INSERT", "UPDATE"])
+def test_runtime_role_writes_every_blueprint_column_except_the_confirmation(
+    admin_engine: Engine, tenant_database: TenantDatabase, privilege: str
+) -> None:
+    with admin_engine.connect() as conn:
+        columns = set(
+            conn.scalars(
+                text(
+                    "SELECT attname FROM pg_attribute "
+                    "WHERE attrelid = 'company_blueprints'::regclass "
+                    "AND attnum > 0 AND NOT attisdropped"
+                )
+            )
+        )
+        writable = {
+            column
+            for column in columns
+            if conn.scalar(
+                text(
+                    "SELECT has_column_privilege(:role, 'company_blueprints', :column, :privilege)"
+                ),
+                {"role": tenant_database.runtime_role, "column": column, "privilege": privilege},
+            )
+        }
+
+    assert columns == RUNTIME_BLUEPRINT_COLUMNS | CONFIRMATION_COLUMNS
+    assert writable == RUNTIME_BLUEPRINT_COLUMNS
+
+
+def test_runtime_role_holds_no_column_privilege_on_memberships(
+    admin_engine: Engine, tenant_database: TenantDatabase
+) -> None:
+    # No column-level path around the table-level SELECT-only grant: in
+    # particular no UPDATE (role), so no self-promotion.
+    with admin_engine.connect() as conn:
+        granted = conn.scalars(
+            text(
+                "SELECT attname || ':' || privilege FROM pg_attribute, "
+                "unnest(ARRAY['INSERT', 'UPDATE', 'REFERENCES']) AS privilege "
+                "WHERE attrelid = 'memberships'::regclass AND attnum > 0 AND NOT attisdropped "
+                "AND has_column_privilege(:role, 'memberships', attname, privilege)"
+            ),
+            {"role": tenant_database.runtime_role},
+        ).all()
+    assert granted == []
 
 
 @pytest.mark.parametrize(

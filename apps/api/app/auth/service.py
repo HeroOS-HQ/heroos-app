@@ -1,8 +1,9 @@
-"""HeroOS authorization: verified identity -> User -> Company Membership.
+"""HeroOS authorization: verified identity -> User -> Company Membership -> role.
 
 Authorization comes only from HeroOS data. A requested ``company_id`` is a
 resource identifier; it grants nothing until a Membership row for this User and
-that Company is found server-side.
+that Company is found server-side. The Company role (``member`` or
+``company_admin``, M1-10C) is read from the same row.
 
 Lifecycle (ADR-008) is checked here *and* by Row-Level Security for the API
 role: revoked identities, suspended Users and revoked Memberships are filtered
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session
 from app.auth.exceptions import AuthorizationError
 from app.auth.models import AuthenticatedCompanyContext, ResolvedUser, VerifiedIdentity
 from app.db.models import Membership, User, UserIdentity
-from app.db.models.membership import MEMBERSHIP_ACTIVE
+from app.db.models.membership import MEMBERSHIP_ACTIVE, ROLE_COMPANY_ADMIN
 from app.db.models.user import USER_ACTIVE
 from app.db.models.user_identity import IDENTITY_ACTIVE
 from app.tenancy.context import TenantContextError, set_tenant_context
@@ -70,7 +71,9 @@ def authorize_company(
                 Membership.status == MEMBERSHIP_ACTIVE,
             )
         )
-        authorized = None if membership is None else (membership.id, membership.company_id)
+        authorized = (
+            None if membership is None else (membership.id, membership.company_id, membership.role)
+        )
     except TenantContextError:
         # e.g. the nil UUID: the same generic denial as any unknown Company.
         raise AuthorizationError("invalid requested company") from None
@@ -79,10 +82,31 @@ def authorize_company(
 
     if authorized is None:
         raise AuthorizationError("no active membership for requested company")
-    membership_id, membership_company_id = authorized
+    membership_id, membership_company_id, role = authorized
     return AuthenticatedCompanyContext(
         user_id=user.user_id,
         company_id=membership_company_id,
         membership_id=membership_id,
         identity_id=user.identity_id,
+        role=role,
     )
+
+
+def is_active_company_admin(db: Session, context: AuthenticatedCompanyContext) -> bool:
+    """Re-check, inside the caller's Company-scoped transaction, that the
+    context's Membership is still active and still ``company_admin``.
+
+    For administrator-only writes: the role read during authorization is
+    confirmed again in the transaction that performs the write, so a role
+    change or revocation made in between is honoured. Revoked Memberships are
+    also invisible to the API role under RLS.
+    """
+    role = db.scalar(
+        select(Membership.role).where(
+            Membership.id == context.membership_id,
+            Membership.company_id == context.company_id,
+            Membership.user_id == context.user_id,
+            Membership.status == MEMBERSHIP_ACTIVE,
+        )
+    )
+    return role == ROLE_COMPANY_ADMIN

@@ -94,6 +94,32 @@ RUNTIME_FORBIDDEN = [
     pytest.param("SELECT count(*) FROM membership_events", id="read-membership-events"),
     pytest.param("DELETE FROM user_identities", id="delete-identities"),
     pytest.param("SET ROLE heroos_identity_operator", id="become-operator"),
+    # M1-10C: no self-promotion, registration or jurisdiction confirmation.
+    pytest.param(
+        "UPDATE memberships SET role = 'company_admin' WHERE id = :membership",
+        id="self-promote",
+    ),
+    pytest.param(
+        "INSERT INTO companies (id, name) VALUES (:company, 'Forged')", id="register-company"
+    ),
+    pytest.param("DELETE FROM companies WHERE id = :company", id="delete-company"),
+    pytest.param(
+        "UPDATE company_blueprints SET employment_jurisdiction = 'difc', "
+        "confirmed_licensing_location = 'difc', jurisdiction_confirmed_at = now()",
+        id="confirm-jurisdiction",
+    ),
+    pytest.param(
+        "INSERT INTO company_blueprints (id, company_id, licensing_location, "
+        "employment_jurisdiction, confirmed_licensing_location, jurisdiction_confirmed_at) "
+        "VALUES (gen_random_uuid(), :company, 'difc', 'difc', 'difc', now())",
+        id="insert-confirmed-blueprint",
+    ),
+    pytest.param(
+        "INSERT INTO company_events (event_type, company_id, actor_kind, db_role, "
+        "actor_reference) VALUES ('company_registered', :company, 'owner', 'x', 'HER-1')",
+        id="forge-company-event",
+    ),
+    pytest.param("SELECT count(*) FROM company_events", id="read-company-events"),
 ]
 
 
@@ -152,7 +178,27 @@ def test_api_role_sees_only_active_identities_users_and_memberships(
 OPERATOR_FORBIDDEN = [
     pytest.param("SELECT count(*) FROM cases", id="read-cases"),
     pytest.param("SELECT count(*) FROM case_subjects", id="read-case-subjects"),
-    pytest.param("SELECT count(*) FROM company_blueprints", id="read-blueprints"),
+    # Only the licensing answer and confirmation are readable (M1-10C), never
+    # the business profile.
+    pytest.param("SELECT legal_name FROM company_blueprints", id="read-blueprint-legal-name"),
+    pytest.param("SELECT industry FROM company_blueprints", id="read-blueprint-industry"),
+    pytest.param(
+        "SELECT employee_count FROM company_blueprints", id="read-blueprint-employee-count"
+    ),
+    pytest.param("SELECT * FROM company_blueprints", id="read-whole-blueprint"),
+    pytest.param("UPDATE company_blueprints SET legal_name = 'x'", id="edit-blueprint-profile"),
+    # The customer's answer is the customer's: the operator confirms, never edits it.
+    pytest.param(
+        "UPDATE company_blueprints SET licensing_location = 'difc'", id="edit-licensing-answer"
+    ),
+    pytest.param("DELETE FROM company_blueprints", id="delete-blueprint"),
+    pytest.param("DELETE FROM companies", id="delete-company"),
+    pytest.param("SELECT count(*) FROM company_events", id="read-company-events"),
+    pytest.param(
+        "INSERT INTO company_events (event_type, company_id, actor_kind, db_role, "
+        "actor_reference) VALUES ('company_registered', :company, 'owner', 'x', 'HER-1')",
+        id="forge-company-event",
+    ),
     pytest.param("SELECT name FROM companies", id="read-company-names"),
     pytest.param("UPDATE companies SET name = 'x'", id="rename-company"),
     pytest.param(
@@ -344,6 +390,9 @@ def test_operator_login_is_not_privileged_and_not_an_api_role(
     assert (row.operator, row.runtime) == (True, False)
 
 
+API_FUNCTIONS = ("heroos_register_company", "heroos_identity_companies")
+
+
 def test_audit_functions_are_pinned_and_not_callable_by_app_roles(
     admin_engine: Engine, tenant_database: TenantDatabase
 ) -> None:
@@ -359,12 +408,22 @@ def test_audit_functions_are_pinned_and_not_callable_by_app_roles(
             {"runtime": tenant_database.runtime_role, "operator": tenant_database.operator_role},
         ).all()
     by_name = {f.proname: f for f in functions}
-    for name in ("heroos_audit_identity_change", "heroos_audit_membership_change"):
+    for name in (
+        "heroos_audit_identity_change",
+        "heroos_audit_membership_change",
+        "heroos_audit_company_change",
+        *API_FUNCTIONS,
+    ):
         assert by_name[name].prosecdef is True
     for f in functions:
         if f.proname == "heroos_schema_contract":
-            # A constant SQL function; the only one the app roles may call.
+            # A constant SQL function, callable by both app roles.
             assert (f.prosecdef, f.runtime, f.operator) == (False, True, True)
+        elif f.proname in API_FUNCTIONS:
+            # Founder registration and workspace discovery (M1-10C): the API
+            # role's only SECURITY DEFINER capabilities; never the operator's.
+            assert f.proconfig == ['search_path=""'], f.proname
+            assert (f.runtime, f.operator) == (True, False), f.proname
         else:
             assert f.proconfig == ['search_path=""'], f.proname
             assert (f.runtime, f.operator) == (False, False), f.proname
@@ -378,6 +437,8 @@ def test_audit_functions_are_pinned_and_not_callable_by_app_roles(
     [
         "TRUNCATE identity_events",
         "TRUNCATE membership_events",
+        "TRUNCATE company_events",
+        "TRUNCATE company_registrations",
         # Cascaded truncation reaches the audit tables too.
         "TRUNCATE users CASCADE",
         "TRUNCATE companies CASCADE",
@@ -433,7 +494,8 @@ def test_new_identity_objects_hold_only_the_intended_grants(admin_engine: Engine
                     "SELECT c.relname, pg_get_userbyid(a.grantee), a.privilege_type "
                     "FROM pg_class c, aclexplode(c.relacl) a "
                     "WHERE c.relname IN ('user_identities', 'identity_events', "
-                    "'membership_events') AND a.grantee <> c.relowner"
+                    "'membership_events', 'company_events', 'company_registrations') "
+                    "AND a.grantee <> c.relowner"
                 )
             ).all()
         )
@@ -457,6 +519,8 @@ def test_new_identity_objects_hold_only_the_intended_grants(admin_engine: Engine
     assert function_acl == {
         ("heroos_schema_contract", "heroos_app_runtime", "EXECUTE"),
         ("heroos_schema_contract", "heroos_identity_operator", "EXECUTE"),
+        ("heroos_register_company", "heroos_app_runtime", "EXECUTE"),
+        ("heroos_identity_companies", "heroos_app_runtime", "EXECUTE"),
     }
 
 

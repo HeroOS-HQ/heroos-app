@@ -8,6 +8,8 @@ and its trigger-written audit event succeed or fail together.
 Every operation is idempotent: repeating it reports ``unchanged`` and writes
 nothing. Conflicts are refused with a fixed code, never resolved silently. There
 is no deletion (PRIV-008, PRIV-020); suspension and revocation keep every row.
+Company registration and jurisdiction confirmation are in
+``app.identity.companies`` (M1-10C).
 
 The database enforces the same boundaries for the operator role: column-level
 grants (bindings are immutable), RLS for Membership changes (one Company per
@@ -22,13 +24,13 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Membership, User, UserIdentity
-from app.db.models.membership import MEMBERSHIP_ACTIVE, MEMBERSHIP_REVOKED
+from app.db.models.membership import MEMBERSHIP_ACTIVE, MEMBERSHIP_REVOKED, MEMBERSHIP_ROLES
 from app.db.models.user import USER_ACTIVE, USER_SUSPENDED
 from app.db.models.user_identity import IDENTITY_ACTIVE, IDENTITY_REVOKED
 from app.identity import errors
 from app.identity.errors import IdentityOperationError
 from app.identity.operator import open_operator_company_scope
-from app.identity.validation import validate_issuer, validate_subject
+from app.identity.validation import validate_choice, validate_issuer, validate_subject
 
 CREATED: Final = "created"
 UPDATED: Final = "updated"
@@ -37,10 +39,15 @@ UNCHANGED: Final = "unchanged"
 
 @dataclass(frozen=True)
 class OperationResult:
-    """Outcome plus internal IDs only (never an issuer or subject)."""
+    """Outcome plus internal IDs only (never an issuer or subject).
+
+    ``details`` carries non-identifying codes (for example a role or a
+    jurisdiction readiness), never personal data.
+    """
 
     outcome: str
     ids: dict[str, UUID] = field(default_factory=dict)
+    details: dict[str, str | None] = field(default_factory=dict)
 
 
 # --- lookups -----------------------------------------------------------------
@@ -202,6 +209,29 @@ def reactivate_membership(
     membership.revoked_at = None
     session.flush()
     return OperationResult(UPDATED, {"membership_id": membership.id})
+
+
+def set_membership_role(
+    session: Session, *, company_id: UUID, membership_id: UUID, role: str
+) -> OperationResult:
+    """Make an existing Membership ``company_admin`` or ``member`` (M1-10C).
+
+    The trusted way to appoint or remove Company administrators, including for
+    Companies that existed before roles did. One Company per transaction under
+    RLS; audited as ``membership_role_changed``. A revoked Membership is
+    reactivated first, so a role change never silently restores access.
+    """
+    role = validate_choice(role, MEMBERSHIP_ROLES)
+    open_operator_company_scope(session, company_id)
+    membership = _membership_by_id(session, company_id, membership_id)
+    if membership.status == MEMBERSHIP_REVOKED:
+        raise IdentityOperationError(errors.MEMBERSHIP_REVOKED)
+    result_ids = {"membership_id": membership.id, "user_id": membership.user_id}
+    if membership.role == role:
+        return OperationResult(UNCHANGED, result_ids, {"role": role})
+    membership.role = role
+    session.flush()
+    return OperationResult(UPDATED, result_ids, {"role": role})
 
 
 # --- identity bindings -----------------------------------------------------------

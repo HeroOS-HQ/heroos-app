@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from uuid import UUID
 
+from app.db.models.membership import ROLE_MEMBER
+
 
 @dataclass(frozen=True, slots=True)
 class VerifiedIdentity:
@@ -30,11 +32,13 @@ class AuthenticatedCompanyContext:
     """Trusted request context for one Company.
 
     Only constructed after credential verification, HeroOS User resolution and a
-    server-side Membership lookup. ``company_id`` comes from the Membership row,
-    never from client input.
+    server-side Membership lookup. ``company_id`` and ``role`` come from the
+    Membership row, never from client input or token claims. The default is the
+    least-privileged role.
     """
 
     user_id: UUID
     company_id: UUID
     membership_id: UUID
     identity_id: UUID
+    role: str = ROLE_MEMBER

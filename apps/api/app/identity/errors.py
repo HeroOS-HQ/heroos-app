@@ -12,6 +12,12 @@ ACTIVE_IDENTITY_EXISTS_FOR_ISSUER: Final = "active_identity_exists_for_issuer"
 IDENTITY_REVOKED: Final = "identity_revoked"
 USER_SUSPENDED: Final = "user_suspended"
 MEMBERSHIP_REVOKED: Final = "membership_revoked_use_reactivate"
+# Company registration and jurisdiction confirmation (M1-10C).
+COMPANY_EXISTS: Final = "company_exists"
+REGISTRATION_CONFLICT: Final = "registration_conflict_rerun"
+BLUEPRINT_NOT_FOUND: Final = "blueprint_not_found"
+LICENSING_UNRESOLVED: Final = "licensing_answer_unresolved"
+LICENSING_MISMATCH: Final = "licensing_answer_mismatch"
 
 
 class IdentityOperationError(Exception):
