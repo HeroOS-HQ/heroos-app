@@ -1,6 +1,6 @@
 # Staging End-to-End Test Matrix (real services, after approval)
 
-**Status:** Prepared in M1-10E. **None of these tests has been run.** They need
+**Status:** Prepared in M1-10E. **Run on the staging demo on 2026-10-14**: per-test results, blocked and not-run items in the [close-out record §4](reports/2026-10-14-m1-10-staging-registration-closeout.md#4-g9-end-to-end-results). They need
 the deployed services of the [staging activation runbook](staging-activation.md),
 each under its own approval.\
 **Data:** Synthetic only. Company names start with `[SYNTHETIC STAGING]`;

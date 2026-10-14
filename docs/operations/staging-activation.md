@@ -1,6 +1,6 @@
 # Staging Activation Runbook: Identity, Company Registration and Onboarding
 
-**Status:** Prepared in M1-10E (2026-10-14). **Nothing in this runbook has been executed.**
+**Status:** Prepared in M1-10E. **Executed on the staging demo on 2026-10-14** (sections C, D and E; D7 and the operator checklist remain blocked): see the [close-out record](reports/2026-10-14-m1-10-staging-registration-closeout.md).
 Every step needs its own explicit approval.\
 **Owner:** Technical Lead (technical steps); JJ (product, privacy and policy approvals)\
 **Scope:** The temporary demo: Vercel (web), Render (API), Supabase PostgreSQL, Auth0. Synthetic data only. No AWS.\
