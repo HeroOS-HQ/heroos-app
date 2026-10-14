@@ -173,9 +173,14 @@ Preconditions, all recorded:
   Staging uses a Post Login Action scoped to the web client that calls
   `api.access.deny('email_not_verified')`. The web maps exactly that reason to
   `/?auth=verify_email`: a fixed "verify your email" message with *Sign in again*
-  and *Use a different account* (POST sign-out, which also ends the Auth0
-  session). Any other denial stays "Sign-in was cancelled."; provider text is
-  never rendered.
+  and *Use a different account* (the POST sign-out: RP-initiated logout at
+  Auth0, which ends the Auth0 session). Auth0 first shows its own "log out?"
+  confirmation, because HeroOS sends neither `id_token_hint` nor `logout_hint`
+  (the web keeps no ID token, and a denied user never receives one); the user
+  confirms once and returns to the homepage. Turning off the tenant's
+  "RP-Initiated Logout End-User Confirmation" would remove that screen but also
+  Auth0's protection against forged logout requests: keep it on. Any other
+  denial stays "Sign-in was cancelled."; provider text is never rendered.
 - Monitoring in place (F4).
 
 Steps:

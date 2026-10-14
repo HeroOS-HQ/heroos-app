@@ -60,7 +60,7 @@ Checked on 2026-10-11 against Auth0's documentation ("Access Token Profiles",
 | Access-token profile | API → Access Token Settings → JSON Web Token Profile = **RFC 9068** (Management API `token_dialect: rfc9068_profile`): `typ: at+jwt`, `client_id`, `jti`. The default "Auth0" profile (`typ: JWT`, `azp`, `gty`, no `client_id`/`jti`) is **rejected** by the API |
 | Signing | API signing algorithm **RS256** (HS256 is refused by the allow-list) |
 | Audience | Request `audience=<API identifier>`; `aud` also contains `<issuer>userinfo` (accepted) |
-| Logout | `end_session_endpoint` (`/oidc/logout`) present for tenants created since 14 Nov 2023 or when discovery of it is enabled; otherwise sign-out is local only |
+| Logout | `end_session_endpoint` (`/oidc/logout`) present for tenants created since 14 Nov 2023 or when discovery of it is enabled; otherwise sign-out is local only. The web sends `client_id` + `post_logout_redirect_uri` (must be in the application's Allowed Logout URLs) and no `id_token_hint`/`logout_hint`, so Auth0 shows its logout confirmation; keep "RP-Initiated Logout End-User Confirmation" enabled (it guards against forged logouts). Verified on `heroos-demo` 2026-10-14: endpoint advertised; the HeroOS URL is accepted (302), an unregistered one refused (400) |
 
 These shapes are pinned in `apps/api/tests/auth/test_oidc_hardening.py` and
 `apps/web/src/lib/server/oidc-flow.test.ts`. `HEROOS_OIDC_REQUIRE_RFC9068`
