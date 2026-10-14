@@ -57,9 +57,7 @@ export function AppShell({ children, context, signedIn = true, switcher, homeHre
               href={homeHref}
             >
               {/* With the switcher, phones show the symbol only so the header never overlaps. */}
-              <BrandMark
-                className={`[&_img]:size-9 sm:[&_img]:size-10 ${showSwitcher ? "max-sm:[&>span]:hidden" : ""}`}
-              />
+              <BrandMark compact={showSwitcher} />
             </a>
             {context ? (
               <>

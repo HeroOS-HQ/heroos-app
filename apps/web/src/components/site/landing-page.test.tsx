@@ -14,12 +14,17 @@ describe("LandingPage", () => {
     expect(screen.getByText(ENVIRONMENT_NOTICE)).toBeInTheDocument();
   });
 
-  it("shows the supplied logo symbol beside live wordmark text, and no extra hero sentence", () => {
+  it("shows JJ's approved mark and wordmark in the header and footer, and no extra hero sentence", () => {
     const { container } = render(<LandingPage />);
 
-    const symbol = container.querySelector("header img");
-    expect(symbol).toHaveAttribute("src", "/branding/heroos-logo-symbol.svg");
-    expect(symbol).toHaveAttribute("alt", "");
+    for (const area of ["header", "footer"]) {
+      const images = [...container.querySelectorAll(`${area} img`)];
+      expect(images.map((image) => image.getAttribute("src"))).toEqual([
+        "/branding/heroos-mark-transparent.svg",
+        "/branding/heroos-wordmark-transparent.svg",
+      ]);
+      for (const image of images) expect(image).toHaveAttribute("alt", "");
+    }
     expect(screen.getByRole("link", { name: "HeroOS home" })).toHaveTextContent("HeroOS");
     expect(screen.queryByText(/Practical guidance/)).toBeNull();
   });
