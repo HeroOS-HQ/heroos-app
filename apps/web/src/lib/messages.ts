@@ -8,6 +8,8 @@ const AUTH_MESSAGES: Record<string, string> = {
   cancelled: "Sign-in was cancelled.",
   expired: "The sign-in attempt expired. Please try again.",
   unavailable: "Sign-in is temporarily unavailable. Please try again later.",
+  verify_email:
+    "Please verify your email address first. Open the link we emailed you when you signed up, then sign in again.",
 };
 
 /** Fixed message for a known sign-in outcome; unknown values yield null. */

@@ -170,10 +170,35 @@ Preconditions, all recorded:
   - retention and deletion (PRIV-005, PRIV-008, PRIV-018, PRIV-020) or an accepted interim.
 - Abuse controls configured at Auth0 and checked: bot detection or attack protection, sign-up rate limits.
 - An **e-mail verification policy** decided. HeroOS does not check `email` or `email_verified`: the API binds the verified subject only. If verified e-mail must come before registration, Auth0 must enforce it (for example, an Action that denies unverified sign-ins).
+  Staging uses a Post Login Action scoped to the web client that calls
+  `api.access.deny('email_not_verified')`. The web maps exactly that reason to
+  `/?auth=verify_email`: a fixed "verify your email" message with *Sign in again*
+  and *Use a different account* (the POST sign-out: RP-initiated logout at
+  Auth0, which ends the Auth0 session). Auth0 first shows its own "log out?"
+  confirmation, because HeroOS sends neither `id_token_hint` nor `logout_hint`
+  (the web keeps no ID token, and a denied user never receives one); the user
+  confirms once and returns to the homepage. Turning off the tenant's
+  "RP-Initiated Logout End-User Confirmation" would remove that screen but also
+  Auth0's protection against forged logout requests: keep it on. Any other
+  denial stays "Sign-in was cancelled."; provider text is never rendered.
 - Monitoring in place (F4).
 
 Steps:
 1. **Auth0** (by the Technical Lead; engineering never changes provider settings): enable sign-up on the Database connection, with the decided password and verification policy.
+   For a demonstration limited to approved synthetic testers, keep the sign-up
+   screen but make it invitation-only:
+   - a Pre User Registration Action that refuses every address not in an Action
+     secret allow-list (empty or missing list: refuse all), with a user-facing
+     "Sign-up is by invitation only" message;
+   - no social connection enabled for the HeroOS application: social logins
+     create users without running Pre User Registration;
+   - the verified-e-mail Post Login Action above, so an approved address only
+     works for whoever controls its mailbox;
+   - before activation, review the existing Auth0 users and block any account
+     that is not a known tester or demo user (sign-up may have been public).
+   Simpler still, without the sign-up screen: "Disable Sign Ups" on the Database
+   connection and create each tester in the Auth0 dashboard (ST-01 is then not
+   testable).
 2. **Render:** `HEROOS_SELF_REGISTRATION_ENABLED=true`, then redeploy.
 3. **Smoke tests:** matrix ST-01 to ST-08 with two fresh synthetic identities.
 4. **Stop switch:** setting the flag to `false` stops new registrations at once. Existing workspaces stay. Disabling sign-up at Auth0 stops new accounts.

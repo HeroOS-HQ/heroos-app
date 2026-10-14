@@ -407,12 +407,16 @@ Browser ──GET /──▶ Next.js server ──GET /companies/{id}/… Author
   ends the provider session: Cognito `/logout`, or OIDC RP-Initiated Logout
   (`client_id` + `post_logout_redirect_uri`) when the discovered
   `end_session_endpoint` is on the issuer's origin (the only origin CSP
-  `form-action` allows); otherwise sign-out is local only. A copied access token
+  `form-action` allows); otherwise sign-out is local only. The web sends no
+  `id_token_hint` (it keeps no ID token), so Auth0 asks the user to confirm the
+  logout before redirecting back. A copied access token
   stays valid until it expires because API verification is stateless (see the
   M1 closeout risks).
 - **Redirects are fixed**: the callback always returns to the configured web
-  origin. Provider and API errors map to fixed messages (`?auth=failed|cancelled|expired`,
+  origin. Provider and API errors map to fixed messages (`?auth=failed|cancelled|expired|verify_email`,
   "session expired", "no access", "unavailable"); their text is never rendered.
+  `verify_email` is selected only by the exact denial reason `email_not_verified`
+  (staging Auth0 Action; see the staging activation runbook, section E).
 - **No prerendering of auth routes**: every auth route handler awaits
   `connection()`, so state and verifiers are generated per request (with Cache
   Components a GET handler that reads no request data would be built once).

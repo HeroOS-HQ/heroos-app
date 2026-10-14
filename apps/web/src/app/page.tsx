@@ -20,13 +20,18 @@ export default function Home({ searchParams }: PageProps<"/">) {
 
 async function HomeContent({ searchParams }: Pick<PageProps<"/">, "searchParams">) {
   const params = await searchParams;
-  const message = authOutcomeMessage(typeof params.auth === "string" ? params.auth : null);
+  const outcome = typeof params.auth === "string" ? params.auth : null;
+  const message = authOutcomeMessage(outcome);
   const gate = await sessionGate();
   if (gate.kind === "not_configured") {
     return <LandingPage notice={{ text: NOT_CONFIGURED_MESSAGE, role: "status" }} />;
   }
   if (gate.kind === "signed_out") {
-    return <LandingPage notice={message ? { text: message, role: "alert" } : undefined} />;
+    return (
+      <LandingPage
+        notice={message ? { text: message, role: "alert", accountActions: outcome === "verify_email" } : undefined}
+      />
+    );
   }
   redirect("/workspaces");
 }

@@ -189,6 +189,71 @@ describe("completeLogin", () => {
     expect(setCookies(response).find((c) => c.startsWith(`${LOGIN_COOKIE}=`))).toContain("Max-Age=0");
   });
 
+  it("maps the Action's exact unverified-e-mail denial to its own fixed outcome", async () => {
+    const { state, loginCookie } = await beginLogin();
+    const response = await completeLogin(
+      callback({ error: "access_denied", error_description: "email_not_verified", state }, loginCookie),
+      CONFIG,
+      deps(),
+    );
+    expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=verify_email`);
+    expect(await response.text()).toBe("");
+    expect(setCookies(response).find((c) => c.startsWith(`${LOGIN_COOKIE}=`))).toContain("Max-Age=0");
+  });
+
+  it("creates no session and never contacts the token endpoint for the unverified-e-mail denial", async () => {
+    const { state, loginCookie } = await beginLogin();
+    const d = deps();
+    const response = await completeLogin(
+      callback({ error: "access_denied", error_description: "email_not_verified", code: "c", state }, loginCookie),
+      CONFIG,
+      d,
+    );
+    expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=verify_email`);
+    expect(setCookies(response).some((c) => c.startsWith(`${SESSION_COOKIE}=`))).toBe(false);
+    expect(d.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("recovers after verification: the next sign-in completes normally", async () => {
+    const denied = await beginLogin();
+    await completeLogin(
+      callback({ error: "access_denied", error_description: "email_not_verified", state: denied.state }, denied.loginCookie),
+      CONFIG,
+      deps(),
+    );
+    // "Sign in again" starts a new transaction; the provider now issues a code.
+    const again = await beginLogin();
+    expect(again.state).not.toBe(denied.state);
+    const response = await completeLogin(callback({ code: "c", state: again.state }, again.loginCookie), CONFIG, deps());
+    expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/`);
+    expect(setCookies(response).find((c) => c.startsWith(`${SESSION_COOKIE}=`))).toContain("HttpOnly");
+  });
+
+  it.each([
+    ["access_denied", "Email_Not_Verified", "cancelled"],
+    ["access_denied", "email_not_verified ", "cancelled"],
+    ["access_denied", "email_not_verified<script>", "cancelled"],
+    ["server_error", "email_not_verified", "failed"],
+  ])("keeps %s with description %j on its generic outcome", async (error, description, expected) => {
+    const { state, loginCookie } = await beginLogin();
+    const response = await completeLogin(
+      callback({ error, error_description: description, state }, loginCookie),
+      CONFIG,
+      deps(),
+    );
+    expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=${expected}`);
+  });
+
+  it("ignores the unverified-e-mail reason on a forged callback (state mismatch)", async () => {
+    const { loginCookie } = await beginLogin();
+    const response = await completeLogin(
+      callback({ error: "access_denied", error_description: "email_not_verified", state: createState() }, loginCookie),
+      CONFIG,
+      deps(),
+    );
+    expect(response.headers.get("location")).toBe(`${WEB_ORIGIN}/?auth=failed`);
+  });
+
   describe("forged callbacks cannot cancel an in-progress login", () => {
     const forgedStates: [string, (state: string) => Record<string, string>][] = [
       ["missing state", () => ({})],
