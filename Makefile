@@ -24,7 +24,7 @@ build:
 
 check: lint format-check typecheck test build
 
-.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check backup-restore-check
+.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check backup-restore-check e2e-check
 
 # Root .env (if present) supplies DATABASE_URL / MIGRATION_DATABASE_URL. There
 # are no built-in database credentials: without .env (or exported variables)
@@ -67,6 +67,11 @@ tenant-isolation-check:
 # Logical backup -> restore -> verify on disposable databases (never `heroos`).
 backup-restore-check:
 	./scripts/verify-backup-restore.sh
+
+# Real web + API + PostgreSQL 16 + browser, signed in through a local OpenID
+# Provider; everything disposable (own container on tmpfs, no Compose, no .env).
+e2e-check:
+	./scripts/verify-e2e.sh
 
 .PHONY: privacy-decision-check
 

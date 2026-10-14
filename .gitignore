@@ -3,6 +3,9 @@
 .env.*
 !.env.example
 
+# End-to-end results (scripts/verify-e2e.sh)
+e2e/.output/
+
 # Node
 node_modules/
 .next/

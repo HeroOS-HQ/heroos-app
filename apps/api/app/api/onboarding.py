@@ -11,8 +11,9 @@ The only routes reachable before HeroOS knows a person:
   returning founder finds their workspace. Unknown identities get the generic
   403, like every Company route.
 
-Responses: 201 a Company was created; 200 this identity's earlier registration
-(a retry or a concurrent submission; the request body is then ignored); 401 no
+Responses: 201 a Company was created (role ``company_admin``); 200 this
+identity's earlier registration (a retry or a concurrent submission; the
+request body is then ignored), with the role the person holds there now; 401 no
 valid credential; 403 the identity, its User or the registered Membership is
 not active; 404 registration is disabled; 422 invalid input (never echoed). The
 client never chooses a Company id, user id, role or administrator.
@@ -64,7 +65,9 @@ class CompanyRegistrationOut(BaseModel):
     outcome: Literal["created", "existing"]
     company_id: UUID
     membership_id: UUID
-    role: Literal["company_admin"]
+    # Always company_admin when created; for an earlier registration the role
+    # held now (an operator may have demoted the founder since).
+    role: Literal["member", "company_admin"]
 
 
 class WorkspaceOut(BaseModel):
@@ -116,7 +119,7 @@ def register_company(
         outcome=result.outcome,  # type: ignore[arg-type]
         company_id=result.company_id,
         membership_id=result.membership_id,
-        role="company_admin",
+        role=result.role,  # type: ignore[arg-type]
     )
 
 

@@ -156,6 +156,12 @@ the access token server-side in a sealed `HttpOnly` cookie; its settings are in
 Sign-up, founder onboarding, workspace discovery and Company settings (M1-10D):
 [Customer Onboarding and Workspace UI](docs/architecture/web-onboarding.md).
 
+`make e2e-check` runs the real web, API and PostgreSQL together, signed in
+through a local OpenID Provider and driven by Chrome; everything it uses is
+disposable ([Local End-to-End Validation](docs/operations/local-end-to-end-validation.md)).
+Bringing the demo to the current code is approval-gated:
+[Staging Activation Runbook](docs/operations/staging-activation.md).
+
 ## Private Storage, Logging and Production Gates
 
 - Private objects: `HEROOS_STORAGE_PROVIDER=local` with an absolute

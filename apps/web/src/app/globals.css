@@ -70,6 +70,12 @@ body {
   }
 }
 
+/* A signed-in page being put into the back/forward cache (BackForwardCacheGuard):
+   never show it again before it has reloaded. */
+html[data-restoring] body {
+  visibility: hidden;
+}
+
 :focus-visible {
   outline: 3px solid var(--hero-blue);
   outline-offset: 3px;

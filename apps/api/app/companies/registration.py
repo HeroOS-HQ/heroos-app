@@ -25,16 +25,18 @@ Companies, which RLS otherwise hides by design (workspace discovery).
 """
 
 from dataclasses import dataclass
-from typing import Final
+from typing import Any, Final
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import Row, select, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.auth.exceptions import AuthorizationError
 from app.auth.models import AuthenticatedCompanyContext, VerifiedIdentity
-from app.db.models.membership import ROLE_COMPANY_ADMIN
+from app.db.models import Membership
+from app.db.models.membership import MEMBERSHIP_ACTIVE, ROLE_COMPANY_ADMIN
+from app.tenancy.context import set_tenant_context
 
 CREATED: Final = "created"
 EXISTING: Final = "existing"
@@ -55,6 +57,10 @@ class FounderRegistration:
     user_id: UUID
     identity_id: UUID
     membership_id: UUID
+    # The role held now through the registered Membership: company_admin for a
+    # new registration; for an earlier one, whatever an operator has made it
+    # since (a founder may have been demoted).
+    role: str
 
     @property
     def created(self) -> bool:
@@ -72,7 +78,7 @@ class FounderRegistration:
             company_id=self.company_id,
             membership_id=self.membership_id,
             identity_id=self.identity_id,
-            role=ROLE_COMPANY_ADMIN,
+            role=self.role,
         )
 
 
@@ -112,13 +118,37 @@ def register_founder_company(
         if state == _INVALID_NAME:
             raise InvalidRegistration("company name refused") from None
         raise
+    role = ROLE_COMPANY_ADMIN if row.outcome == CREATED else _registered_role(db, row)
     return FounderRegistration(
         outcome=row.outcome,
         company_id=row.company_id,
         user_id=row.user_id,
         identity_id=row.identity_id,
         membership_id=row.membership_id,
+        role=role,
     )
+
+
+def _registered_role(db: Session, row: Row[Any]) -> str:
+    """The current role of an earlier registration's (active) Membership.
+
+    Read in the same transaction in which the database function found that
+    Membership active, scoped to its Company (RLS). Never assumed: an operator
+    may have changed the role since the registration.
+    """
+    set_tenant_context(db, row.company_id)
+    role = db.scalar(
+        select(Membership.role).where(
+            Membership.id == row.membership_id,
+            Membership.company_id == row.company_id,
+            Membership.user_id == row.user_id,
+            Membership.status == MEMBERSHIP_ACTIVE,
+        )
+    )
+    if role is None:
+        db.rollback()
+        raise AuthorizationError("registration refused: registered Membership not active")
+    return role
 
 
 @dataclass(frozen=True, slots=True)

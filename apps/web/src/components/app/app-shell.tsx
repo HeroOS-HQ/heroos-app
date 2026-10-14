@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { BrandMark } from "@/components/site/brand-mark";
 import { DemoNotice } from "@/components/site/demo-notice";
 
+import { BackForwardCacheGuard } from "./back-forward-cache-guard";
 import { CompanySwitcher, type SwitcherItem } from "./company-switcher";
 
 /** POST-only sign-out (the route refuses cross-site requests). */
@@ -40,6 +41,7 @@ export function AppShell({ children, context, signedIn = true, switcher, homeHre
   const showSwitcher = signedIn && switcher !== undefined && switcher.items.length > 1;
   return (
     <>
+      {signedIn ? <BackForwardCacheGuard /> : null}
       <a
         className="sr-only z-[60] rounded-full bg-hero-yellow px-5 py-3 font-bold text-hero-navy focus:not-sr-only focus:fixed focus:left-4 focus:top-4"
         href="#main"
