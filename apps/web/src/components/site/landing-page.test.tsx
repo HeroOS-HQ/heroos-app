@@ -57,6 +57,18 @@ describe("LandingPage", () => {
     render(<LandingPage notice={{ text: "Sign-in was cancelled.", role: "alert" }} />);
 
     expect(screen.getByRole("alert")).toHaveTextContent("Sign-in was cancelled.");
+    expect(within(screen.getByRole("alert")).queryByRole("button")).not.toBeInTheDocument();
+  });
+
+  it("offers sign-in again and a POST sign-out after an unverified-e-mail denial", () => {
+    render(<LandingPage notice={{ text: "Please verify your email address first.", role: "alert", accountActions: true }} />);
+
+    const notice = screen.getByRole("alert");
+    expect(within(notice).getByRole("link", { name: "Sign in again" })).toHaveAttribute("href", "/auth/login");
+    const different = within(notice).getByRole("button", { name: "Use a different account" });
+    const form = different.closest("form");
+    expect(form).toHaveAttribute("action", "/auth/logout");
+    expect(form).toHaveAttribute("method", "post");
   });
 
   it("lists the three implemented capabilities and nothing else", () => {

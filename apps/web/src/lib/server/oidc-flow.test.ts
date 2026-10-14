@@ -221,6 +221,18 @@ describe("OIDC sign-out", () => {
     expect(setCookies(response).filter((c) => c.includes("Max-Age=0"))).toHaveLength(2);
   });
 
+  it("ends the provider session for a denied visitor without a HeroOS session (\"Use a different account\")", async () => {
+    const response = await logout(
+      post({ origin: WEB_ORIGIN, "sec-fetch-site": "same-origin", cookie: "__Host-heroos-login=stale" }),
+      OIDC_CONFIG,
+      idp(),
+    );
+    const location = new URL(response.headers.get("location")!);
+    expect(location.origin + location.pathname).toBe(`${OIDC_ORIGIN}/oidc/logout`);
+    expect(location.searchParams.get("client_id")).toBe(OIDC_CLIENT_ID);
+    expect(setCookies(response).filter((c) => c.includes("Max-Age=0"))).toHaveLength(2);
+  });
+
   it.each([
     ["no end_session_endpoint", () => json(discoveryDocument({ end_session_endpoint: undefined }))],
     ["an end_session_endpoint on another origin", () => json(discoveryDocument({ end_session_endpoint: "https://evil.example.com/logout" }))],

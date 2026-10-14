@@ -55,6 +55,25 @@ export class TestIssuer {
     this.codes = new Map();
     /** Every protocol event, for assertions (never contains tokens). */
     this.events = [];
+    // Emulation of the staging Auth0 setup, opt-in per subject: a Post Login
+    // Action denies unverified e-mail with the reason `email_not_verified`, and
+    // Auth0 remembers the authentication in its own session cookie, so a later
+    // /authorize skips the form and runs the Action again. Subjects never marked
+    // keep the plain behaviour (a form on every /authorize, no provider session).
+    this.emailUnverified = new Set();
+    this.remembered = new Set();
+    this.sessions = new Map();
+  }
+
+  /** The subject signs up with an unverified e-mail address (see the constructor). */
+  requireVerifiedEmail(subject) {
+    this.emailUnverified.add(subject);
+    this.remembered.add(subject);
+  }
+
+  /** The subject opened the verification link. */
+  verifyEmail(subject) {
+    this.emailUnverified.delete(subject);
   }
 
   start() {
@@ -108,9 +127,37 @@ export class TestIssuer {
     res.end(json ? JSON.stringify(body) : body);
   }
 
-  #redirect(res, location) {
-    res.writeHead(302, { Location: location, "Cache-Control": "no-store" });
+  #redirect(res, location, headers = {}) {
+    res.writeHead(302, { Location: location, "Cache-Control": "no-store", ...headers });
     res.end();
+  }
+
+  #sessionId(req) {
+    const match = /(?:^|;\s*)e2e_idp_session=([A-Za-z0-9_-]+)/.exec(req.headers.cookie ?? "");
+    return match && this.sessions.has(match[1]) ? match[1] : null;
+  }
+
+  /** After authentication: the emulated Post Login Action, then the code. */
+  #complete(request, subject, res, headers = {}) {
+    const back = new URL(request.redirect_uri);
+    back.searchParams.set("state", request.state);
+    if (this.emailUnverified.has(subject)) {
+      back.searchParams.set("error", "access_denied");
+      back.searchParams.set("error_description", "email_not_verified");
+      this.events.push({ type: "post_login_denied", reason: "email_not_verified" });
+      return this.#redirect(res, back.toString(), headers);
+    }
+    const code = randomBytes(24).toString("base64url");
+    this.codes.set(code, {
+      subject,
+      clientId: request.client_id,
+      redirectUri: request.redirect_uri,
+      challenge: request.code_challenge,
+      expires: Date.now() + CODE_TTL_MS,
+    });
+    back.searchParams.set("code", code);
+    this.events.push({ type: "code_issued", clientId: request.client_id });
+    return this.#redirect(res, back.toString(), headers);
   }
 
   async #handle(req, res) {
@@ -121,14 +168,14 @@ export class TestIssuer {
     if (req.method === "GET" && url.pathname === "/.well-known/jwks.json") {
       return this.#send(res, 200, { keys: [this.key.jwk] });
     }
-    if (req.method === "GET" && url.pathname === "/authorize") return this.#authorize(url, res);
+    if (req.method === "GET" && url.pathname === "/authorize") return this.#authorize(url, req, res);
     if (req.method === "POST" && url.pathname === "/authorize/decision") return this.#decision(req, res);
     if (req.method === "POST" && url.pathname === "/oauth/token") return this.#token(req, res);
-    if (req.method === "GET" && url.pathname === "/oidc/logout") return this.#logout(url, res);
+    if (req.method === "GET" && url.pathname === "/oidc/logout") return this.#logout(url, req, res);
     return this.#send(res, 404, { error: "not_found" });
   }
 
-  #authorize(url, res) {
+  #authorize(url, req, res) {
     const p = Object.fromEntries(url.searchParams);
     const client = this.clients[p.client_id];
     // Never redirect to an unregistered URI: answer on this page instead.
@@ -148,6 +195,12 @@ export class TestIssuer {
       back.searchParams.set("error", invalid);
       if (p.state) back.searchParams.set("state", p.state);
       return this.#redirect(res, back.toString());
+    }
+    const remembered = this.#sessionId(req);
+    if (remembered) {
+      // Like Auth0 with a live session: no form, straight to the Post Login step.
+      this.events.push({ type: "authorize", clientId: p.client_id, screenHint: p.screen_hint ?? null, extraParams: [], session: true });
+      return this.#complete(p, this.sessions.get(remembered), res);
     }
     const id = randomBytes(16).toString("hex");
     this.requests.set(id, { ...p, created: Date.now() });
@@ -188,17 +241,15 @@ export class TestIssuer {
     }
     const subject = form.get("subject") ?? "";
     if (!subject) return this.#send(res, 400, html("<h1>Subject required</h1>"));
-    const code = randomBytes(24).toString("base64url");
-    this.codes.set(code, {
-      subject,
-      clientId: request.client_id,
-      redirectUri: request.redirect_uri,
-      challenge: request.code_challenge,
-      expires: Date.now() + CODE_TTL_MS,
-    });
-    back.searchParams.set("code", code);
-    this.events.push({ type: "code_issued", clientId: request.client_id });
-    return this.#redirect(res, back.toString());
+    const headers = {};
+    if (this.remembered.has(subject)) {
+      // The provider session exists once the user authenticated, even when the
+      // Post Login step then denies the login.
+      const sid = randomBytes(16).toString("base64url");
+      this.sessions.set(sid, subject);
+      headers["Set-Cookie"] = `e2e_idp_session=${sid}; Path=/; Secure; HttpOnly; SameSite=Lax`;
+    }
+    return this.#complete(request, subject, res, headers);
   }
 
   async #token(req, res) {
@@ -226,14 +277,16 @@ export class TestIssuer {
     });
   }
 
-  #logout(url, res) {
+  #logout(url, req, res) {
     const client = this.clients[url.searchParams.get("client_id") ?? ""];
     const target = url.searchParams.get("post_logout_redirect_uri");
     if (!client || !client.postLogoutRedirectUris.includes(target)) {
       this.events.push({ type: "logout_rejected" });
       return this.#send(res, 400, html("<h1>Invalid logout request</h1>"));
     }
-    this.events.push({ type: "logout" });
-    return this.#redirect(res, target);
+    const sid = this.#sessionId(req);
+    if (sid) this.sessions.delete(sid);
+    this.events.push({ type: "logout", endedSession: sid !== null });
+    return this.#redirect(res, target, sid ? { "Set-Cookie": "e2e_idp_session=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0" } : {});
   }
 }

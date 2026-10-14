@@ -3,7 +3,7 @@
 // registration, lifecycle denials, tenant isolation by URL, stale UI after
 // revocation, switching, logout, jurisdiction display, responsive layout,
 // accessibility checks and the CSP investigation.
-import { counts, identityFacts, newFounder, quote } from "./common.mjs";
+import { counts, identityFacts, newFounder, quote, sameCounts } from "./common.mjs";
 
 const WIDTHS = [320, 375, 390, 768, 1024, 1440];
 
@@ -342,6 +342,76 @@ export async function run(ctx) {
   } finally {
     ctx.web.htmlCacheControl = null;
   }
+
+  // ===== Unverified e-mail: the staging Auth0 Post Login Action =====
+  // The test provider emulates the Action (deny with `email_not_verified`) and
+  // Auth0's remembered session for these subjects only (TestIssuer.requireVerifiedEmail).
+  const hasSession = async (p) => (await p.cookies([webOrigin])).some((c) => c.name === "__Host-heroos-session");
+  // A marker on `window` disappears once the click has really navigated.
+  const navigatedBack = (p, extra = "true") =>
+    p.waitFor(`!window.__heroosMarker && location.origin === ${JSON.stringify(webOrigin)} && document.readyState === "complete" && ${extra}`, {
+      message: "back on the web app after the click",
+    });
+  const unv = await open();
+  await unv.viewport(390, 844);
+  const unverifiedSubject = ctx.subject("ui-unverified");
+  ctx.issuer.requireVerifiedEmail(unverifiedSubject);
+  const beforeUnverified = await counts(ctx);
+  await ctx.signIn(unv, unverifiedSubject, { signup: true });
+  await unv.waitForText("Please verify your email address first");
+  await shot(unv, "verify-email-notice-390");
+  check("UI-33", "an unverified sign-up lands on the fixed verify-email notice without a session", new URL(unv.url).search === "?auth=verify_email" && !(await hasSession(unv)), unv.url);
+  const noticeActions = await unv.eval(`(() => {
+    const n = document.querySelector('[role="alert"]');
+    const form = n && n.querySelector("form");
+    return n && { link: n.querySelector("a")?.getAttribute("href"), action: form?.getAttribute("action"), method: form?.getAttribute("method") };
+  })()`);
+  check("UI-34", "the notice offers \"Sign in again\" and a POST \"Use a different account\"; the provider's reason is not rendered",
+    noticeActions?.link === "/auth/login" && noticeActions?.action === "/auth/logout" && noticeActions?.method === "post" && !(await unv.html()).includes("email_not_verified"),
+    JSON.stringify(noticeActions));
+
+  let mark = ctx.issuer.events.length;
+  await unv.eval("window.__heroosMarker = 1");
+  await unv.clickText("a", "Sign in again");
+  await navigatedBack(unv, `location.search === "?auth=verify_email"`);
+  await ctx.sleep(2000);
+  const retry = ctx.issuer.events.slice(mark);
+  check("UI-35", "still unverified: \"Sign in again\" is denied once through the remembered provider session (no loop, no form, no session)",
+    retry.filter((e) => e.type === "authorize").length === 1 && retry.some((e) => e.type === "authorize" && e.session)
+      && retry.filter((e) => e.type === "post_login_denied").length === 1 && !(await hasSession(unv)),
+    JSON.stringify(retry.map((e) => e.type)));
+
+  ctx.issuer.verifyEmail(unverifiedSubject);
+  mark = ctx.issuer.events.length;
+  await unv.eval("window.__heroosMarker = 1");
+  await unv.clickText("a", "Sign in again");
+  await navigatedBack(unv, `document.body.innerText.includes("Set up my company")`);
+  const recovered = ctx.issuer.events.slice(mark);
+  check("UI-36", "after verifying, \"Sign in again\" signs in (provider session, no form) to the neutral welcome; nothing is created",
+    (await hasSession(unv)) && recovered.some((e) => e.type === "authorize" && e.session) && recovered.some((e) => e.type === "token_issued")
+      && sameCounts(beforeUnverified, await counts(ctx)),
+    JSON.stringify(recovered.map((e) => e.type)));
+
+  const sw = await open();
+  await sw.viewport(390, 844);
+  const firstAccount = ctx.subject("ui-unverified-switch");
+  ctx.issuer.requireVerifiedEmail(firstAccount);
+  await ctx.signIn(sw, firstAccount);
+  await sw.waitForText("Please verify your email address first");
+  mark = ctx.issuer.events.length;
+  await sw.eval("window.__heroosMarker = 1");
+  await sw.clickText("button", "Use a different account");
+  await navigatedBack(sw, `location.pathname === "/" && document.body.innerText.includes("Get started")`);
+  check("UI-37", "\"Use a different account\" ends the provider session through RP-initiated logout",
+    ctx.issuer.events.slice(mark).some((e) => e.type === "logout" && e.endedSession === true),
+    JSON.stringify(ctx.issuer.events.slice(mark)));
+  await sw.goto(`${webOrigin}/auth/login`);
+  await sw.waitFor(`location.origin === ${JSON.stringify(ctx.issuer.origin)} && document.getElementById("subject")`, { message: "provider form after switching" });
+  const switchedTo = ctx.subject("ui-switched-account");
+  await sw.type("#subject", switchedTo);
+  await sw.click("#continue");
+  await sw.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && document.readyState === "complete" && document.body.innerText.includes("Set up my company")`, { message: "signed in as the other account" });
+  check("UI-38", "after switching, the provider asks again and a different identity signs in", await hasSession(sw));
 
   // ===== Session expiry in the browser =====
   const exp = await open();

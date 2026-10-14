@@ -30,7 +30,15 @@ export const MAX_SESSION_SECONDS = 3600;
 export const MAX_SEALED_SESSION_LENGTH = 3800;
 const TOKEN_TIMEOUT_MS = 10_000;
 
-export type AuthOutcome = "failed" | "cancelled" | "expired" | "unavailable";
+export type AuthOutcome = "failed" | "cancelled" | "expired" | "unavailable" | "verify_email";
+
+/**
+ * The one provider denial reason with its own outcome: the staging Auth0 Action
+ * that requires a verified e-mail address denies with exactly this string
+ * (docs/operations/staging-activation.md, section E). It only selects a fixed
+ * message; provider text is never rendered.
+ */
+export const EMAIL_NOT_VERIFIED_REASON = "email_not_verified";
 
 /** Why the user is signing in. Each intent has one fixed landing path. */
 export type LoginIntent = "login" | "signup";
@@ -123,6 +131,9 @@ export async function completeLogin(request: Request, config: AuthConfig, deps: 
 
   if (url.searchParams.has("error")) {
     const cancelled = url.searchParams.get("error") === "access_denied";
+    if (cancelled && url.searchParams.get("error_description") === EMAIL_NOT_VERIFIED_REASON) {
+      return outcome(config, "verify_email", cookies);
+    }
     return outcome(config, cancelled ? "cancelled" : "failed", cookies);
   }
   const code = url.searchParams.get("code");
