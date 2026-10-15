@@ -176,14 +176,26 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
       }
     },
     async goto(url) {
+      // Mark the current document: the outgoing page still reports "complete"
+      // until the navigation commits, so waiting on readyState alone could act
+      // on the old page (a lost click or save). Wait for the new document.
+      await page.eval("window.__e2eOutgoing = true").catch(() => {});
       await call("Page.navigate", { url });
-      await page.waitFor("document.readyState === 'complete'", { message: `load ${url}` });
+      await page.waitFor("!window.__e2eOutgoing && document.readyState === 'complete'", { message: `load ${url}` });
     },
     async waitForText(text, options) {
-      await page.waitFor(`document.body && document.body.innerText.includes(${JSON.stringify(text)})`, {
-        message: `text "${text}"`,
-        ...options,
-      });
+      try {
+        await page.waitFor(`document.body && document.body.innerText.includes(${JSON.stringify(text)})`, {
+          message: `text "${text}"`,
+          ...options,
+        });
+      } catch (error) {
+        // Say what the page showed instead (synthetic test data only).
+        const seen = await page
+          .eval("`${location.pathname} | ${document.body ? document.body.innerText.replace(/\\s+/g, ' ').slice(0, 400) : ''}`")
+          .catch(() => "unavailable");
+        throw new Error(`${error.message} (page: ${seen})`);
+      }
     },
     /** Waits until React has hydrated the element (its props are attached). */
     async waitForHydrated(selector) {

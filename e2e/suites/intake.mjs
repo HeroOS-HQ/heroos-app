@@ -213,10 +213,11 @@ export async function run(ctx) {
   await difcPage.viewport(1440, 900);
   await ctx.signIn(difcPage, difc.subject);
   await difcPage.goto(`${webOrigin}/workspaces/${difc.companyId}/cases/${difcCase}`);
-  await difcPage.waitForText("On hold: specialist review needed");
+  const difcLoaded = await difcPage.waitForText("On hold: specialist review needed").then(() => true, () => false);
   const difcText = await difcPage.text();
+  const difcUrl = await difcPage.eval("location.pathname");
   check("INTAKE-13", "in the browser the DIFC case explains the hold without UAE Federal guidance",
-    difcText.includes("isn't available for DIFC cases yet") && !difcText.includes("Caution:"), difcText.slice(0, 200));
+    difcLoaded && difcText.includes("isn't available for DIFC cases yet") && !difcText.includes("Caution:"), `${difcUrl} ${difcText.slice(0, 300)}`);
   await ctx.screenshot(difcPage, "intake-difc-held-1440");
   await difcPage.close();
 
