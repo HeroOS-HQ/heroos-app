@@ -3,7 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 
 import { parseCaseSummary } from "@/lib/workflows/model";
 import { COMPANY_ID } from "@/test/fixtures";
-import { apiCaseSummary, CASE_ID, NARRATIVE, OTHER_CASE_ID, view } from "@/test/workflow-fixtures";
+import {
+  ALL_CLEAR,
+  apiCaseSummary,
+  CASE_ID,
+  HIGH_RISK_HOLD,
+  NARRATIVE,
+  OTHER_CASE_ID,
+  POLICY_CAUTION,
+  view,
+} from "@/test/workflow-fixtures";
 
 import { CasesDashboard } from "./cases-dashboard";
 import { CaseWorkspace } from "./case-workspace";
@@ -32,8 +41,8 @@ describe("CasesDashboard", () => {
     render(
       <CasesDashboard
         cases={[
-          summary({ status: { code: "initial_facts_in_progress", label: "Initial facts in progress" }, answered: 3 }),
-          summary({ id: OTHER_CASE_ID, title: "[SYNTHETIC] Second", status: { code: "awaiting_jurisdiction", label: "Awaiting jurisdiction confirmation" }, answered: 5 }),
+          summary({ status: { code: "intake_in_progress", label: "Intake in progress" }, answered: 3, total: 10 }),
+          summary({ id: OTHER_CASE_ID, title: "[SYNTHETIC] Second", status: { code: "held_for_specialist_review", label: "On hold: specialist review needed" }, answered: 19, total: 19 }),
         ]}
         companyId={COMPANY_ID}
         companyName="[SYNTHETIC] Alpha"
@@ -47,11 +56,11 @@ describe("CasesDashboard", () => {
       `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`,
       `/workspaces/${COMPANY_ID}/cases/${OTHER_CASE_ID}`,
     ]);
-    expect(links[0]).toHaveTextContent("3 of 5 initial questions answered");
+    expect(links[0]).toHaveTextContent("3 of 10 intake questions answered");
     expect(links[0]).toHaveTextContent("Last updated 15 Oct 2026");
-    expect(links[1]).toHaveTextContent("Awaiting jurisdiction confirmation");
+    expect(links[1]).toHaveTextContent("On hold: specialist review needed");
     // The slice says what it does not do.
-    expect(screen.getByText("Early version: initial facts only")).toBeInTheDocument();
+    expect(screen.getByText("Early version: intake only")).toBeInTheDocument();
   });
 
   it("explains the empty state and that cases are confidential to administrators", () => {
@@ -134,14 +143,15 @@ describe("CaseWorkspace", () => {
   const save = () => fireEvent.click(screen.getByRole("button", { name: /Save answers/ }));
   const narrative = () => screen.getByRole("textbox", { name: "What happened?" });
 
-  it("renders the conversation, the composer and the case context from the view", () => {
+  it("renders the conversation, the question groups and the case context from the view", () => {
     renderWorkspace();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("[SYNTHETIC] Attendance concern");
     expect(screen.getByText(/guided workflow, no AI/)).toBeInTheDocument();
     const conversation = screen.getByRole("list", { name: "Conversation" });
     expect(within(conversation).getByText("This is a guided workflow, not an AI assistant.")).toBeInTheDocument();
     expect(within(conversation).getByText("Still to answer")).toBeInTheDocument();
-    expect(within(conversation).getByText("Jurisdiction not confirmed yet")).toBeInTheDocument();
+    // The Company's jurisdiction isn't confirmed: a pause, shown as a hold.
+    expect(within(conversation).getByText("Paused: jurisdiction not confirmed")).toBeInTheDocument();
 
     const details = screen.getByRole("complementary", { name: "Case details" });
     for (const label of ["Completed", "Needs information", "Blocked", "Coming later"]) {
@@ -149,11 +159,82 @@ describe("CaseWorkspace", () => {
     }
     expect(within(details).getByText("Expert review")).toBeInTheDocument();
     expect(within(details).getByText("No answers saved yet.")).toBeInTheDocument();
-    expect(within(details).getByText(/can't proceed until your company's jurisdiction is confirmed/)).toBeInTheDocument();
+    expect(within(details).getByText("Waiting for your company's jurisdiction")).toBeInTheDocument();
+    const history = within(details).getByRole("region", { name: "Case history" });
+    expect(within(history).getByText("Case created")).toBeInTheDocument();
+    expect(within(history).getByText(/· You/)).toBeInTheDocument();
 
     const sidebar = screen.getByRole("navigation", { name: "Cases" });
     expect(within(sidebar).getByRole("link", { current: "page" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`);
-    expect(screen.getByRole("heading", { name: "Answer the initial questions" })).toBeInTheDocument();
+    const groups = screen.getByRole("navigation", { name: "Question groups" });
+    expect(within(groups).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      expect.stringContaining("1. Initial facts"),
+      expect.stringContaining("2. Employment jurisdiction"),
+      expect.stringContaining("3. Incident context"),
+      expect.stringContaining("4. Safety screening"),
+    ]);
+    expect(within(groups).getByRole("button", { current: "step" })).toHaveTextContent("Initial facts");
+    expect(screen.getByRole("heading", { name: "Initial facts", level: 2 })).toBeInTheDocument();
+  });
+
+  it("shows why a step can't be answered yet instead of its questions", () => {
+    renderWorkspace();
+    fireEvent.click(screen.getByRole("button", { name: /Safety screening/ }));
+    expect(screen.getByText("Not available right now")).toBeInTheDocument();
+    expect(screen.getByText("Available once the case's jurisdiction is confirmed.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save answers/ })).toBeNull();
+  });
+
+  it("asks a follow-up only after the answer that needs it", () => {
+    renderWorkspace(view({ company: "uae_federal" }));
+    fireEvent.click(screen.getByRole("button", { name: /Incident context/ }));
+    expect(screen.queryByRole("group", { name: /connected to work/ })).toBeNull();
+    fireEvent.click(screen.getByRole("radio", { name: "No, outside work" }));
+    expect(screen.getByRole("group", { name: /connected to work/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Yes, at work or while working" }));
+    expect(screen.queryByRole("group", { name: /connected to work/ })).toBeNull();
+  });
+
+  it("offers the company's confirmed jurisdiction for this case", () => {
+    renderWorkspace(view({ company: "uae_federal" }));
+    fireEvent.click(screen.getByRole("button", { name: /Employment jurisdiction/ }));
+    const group = screen.getByRole("group", { name: /confirmed employment jurisdiction/ });
+    expect(within(group).getAllByRole("radio").map((r) => r.closest("label")!.textContent)).toEqual([
+      "Yes, UAE Federal (MOHRE)",
+      "No, a different jurisdiction applies",
+      "Not sure",
+    ]);
+  });
+
+  it("marks the safety screening as provisional and saves the whole group", async () => {
+    const confirmed = view({ company: "uae_federal", answers: { "jurisdiction.case_confirmation": "uae_federal" }, revision: 2 });
+    const fetcher = renderWorkspace(confirmed, fetcherOf(reply(200, { view: confirmed })));
+    fireEvent.click(screen.getByRole("button", { name: /Safety screening/ }));
+    expect(screen.getByText(/haven't been legally reviewed yet/)).toBeInTheDocument();
+    const groups = screen.getAllByRole("group");
+    expect(groups).toHaveLength(9);
+    for (const group of groups) fireEvent.click(within(group).getByRole("radio", { name: "No" }));
+    fireEvent.click(within(groups[3]).getByRole("radio", { name: "Not sure" }));
+    save();
+    await screen.findByText("Your answers are saved to this case.");
+    const [url] = fetcher.mock.calls[0] as [string];
+    expect(url).toBe(`/bff/companies/${COMPANY_ID}/cases/${CASE_ID}/steps/safety_screening/answers`);
+    expect(bodyOf(fetcher).answers).toEqual({ ...ALL_CLEAR, "screening.sick_leave": "not_sure" });
+  });
+
+  it("shows a hold and cautions from the API without promising an expert", () => {
+    renderWorkspace(view({ company: "uae_federal", hold: HIGH_RISK_HOLD, cautions: [POLICY_CAUTION] }));
+    const conversation = screen.getByRole("list", { name: "Conversation" });
+    expect(within(conversation).getByText("On hold: specialist review needed")).toBeInTheDocument();
+    expect(within(conversation).getByText("Sick leave")).toBeInTheDocument();
+    expect(within(conversation).getByText("Caution: Expected standard not explained")).toBeInTheDocument();
+    expect(within(conversation).getAllByText("Provisional: not legal advice").length).toBe(2);
+    const details = screen.getByRole("complementary", { name: "Case details" });
+    expect(within(details).getByRole("heading", { name: "Hold" })).toBeInTheDocument();
+    expect(within(details).getByRole("heading", { name: "Cautions" })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/will contact|ticket|we'll be in touch/i);
+    // A hold doesn't stop the employer correcting answers.
+    expect(screen.getByRole("button", { name: /Save answers/ })).toBeInTheDocument();
   });
 
   it("is view only for a member", () => {
@@ -184,9 +265,12 @@ describe("CaseWorkspace", () => {
     // The view is the API's answer: the employer's turn and the new progress.
     const conversation = screen.getByRole("list", { name: "Conversation" });
     expect(within(conversation).getByText("You")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Add the remaining answers" })).toBeInTheDocument();
+    expect(screen.getByText(/3 still to answer/)).toBeInTheDocument();
     const header = screen.getByRole("heading", { level: 1 }).closest("header")!;
-    expect(header).toHaveTextContent(/2 of 5\s+initial questions answered/);
+    expect(header).toHaveTextContent(/2 of 9\s+intake questions answered/);
+    // The next group with questions left is offered.
+    fireEvent.click(screen.getByRole("button", { name: "Continue to Incident context" }));
+    expect(screen.getByRole("heading", { name: "Incident context", level: 2 })).toBeInTheDocument();
   });
 
   it("asks to reload when the case changed since it was opened", async () => {

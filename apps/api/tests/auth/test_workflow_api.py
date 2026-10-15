@@ -29,6 +29,7 @@ from app.db.models import (
     CaseFact,
     CompanyBlueprint,
     Membership,
+    WorkflowEvaluation,
     WorkflowInstance,
     WorkflowSubmission,
 )
@@ -67,6 +68,7 @@ def sessions(session_factory: sessionmaker[Session], seed: SeedData) -> sessionm
             WorkflowInstance.__table__,
             WorkflowSubmission.__table__,
             CaseFact.__table__,
+            WorkflowEvaluation.__table__,
         ],
     )
     return session_factory
@@ -163,13 +165,18 @@ def test_administrator_creates_a_disciplinary_case(
     # Set by the server from the workflow, never by the client.
     assert body["case_type"] == "disciplinary"
     assert body["workflow_key"] == "disciplinary"
-    assert body["status"] == {"code": "case_created", "label": "Case created"}
-    assert (body["answered"], body["total"]) == (0, 5)
+    # Company A's jurisdiction isn't confirmed: the intake is paused from the start.
+    assert body["status"] == {
+        "code": "awaiting_jurisdiction",
+        "label": "Awaiting jurisdiction confirmation",
+    }
+    # Initial facts (5) and incident context (4); no jurisdiction or screening yet.
+    assert (body["answered"], body["total"]) == (0, 9)
     with sessions() as db:
         instance = db.scalar(select(WorkflowInstance))
         assert instance is not None
         assert (instance.company_id, instance.created_by_user_id) == (seed.company_a, seed.alice)
-        assert (instance.revision, instance.definition_version) == (0, 1)
+        assert (instance.revision, instance.definition_version) == (0, 2)
 
     listed = client.get(cases_url(seed.company_a), headers=admin_alice)
     assert listed.status_code == 200
@@ -189,11 +196,12 @@ def test_the_case_opens_with_the_guided_conversation(
     assert body["workflow"] == {
         "key": "disciplinary",
         "title": "Disciplinary",
-        "definition_version": 1,
+        "definition_version": 2,
         "revision": 0,
     }
     assert body["answers"] == {}
-    assert len(body["missing"]) == 5
+    assert len(body["missing"]) == 9
+    assert body["asked"] == body["missing"]
     assert [q["key"] for q in body["steps"][0]["questions"]] == [
         "incident.narrative",
         "incident.date",
@@ -204,25 +212,39 @@ def test_the_case_opens_with_the_guided_conversation(
     assert [m["kind"] for m in body["conversation"]] == [
         "information",
         "question_group",
+        "hold",
         "missing_information",
-        "status_notice",
+        "question_group",
         "status_notice",
     ]
     # Jurisdiction readiness comes from the Blueprint (none here): not confirmed.
     assert body["jurisdiction"]["readiness"] == "unconfirmed"
     assert body["jurisdiction"]["guidance_allowed"] is False
+    assert body["intake"]["case_jurisdiction"]["status"] == "company_unconfirmed"
+    assert body["intake"]["hold"]["reason"] == "company_jurisdiction_unconfirmed"
+    assert body["intake"]["hold"]["action"] == "block"
+    assert body["intake"]["next_stage_open"] is False
+    steps = {step["key"]: step for step in body["steps"]}
+    assert [k for k, step in steps.items() if not step["available"]] == [
+        "jurisdiction",
+        "safety_screening",
+    ]
+    assert steps["safety_screening"]["provisional"] is True
     assert [p["status"] for p in body["progress"]] == [
         "completed",
         "needs_information",
         "blocked",
-        "coming_later",
+        "needs_information",
+        "blocked",
+        "blocked",
     ]
     assert body["not_available"] == [
-        "Conditions and safeguard checks",
-        "Legal assessment and jurisdiction-specific guidance",
+        "Classification of the incident",
+        "Options and decisions",
         "Documents",
         "Expert review",
     ]
+    assert [(h["kind"], h["by_viewer"]) for h in body["history"]] == [("case_created", True)]
 
 
 def test_members_cannot_list_open_create_or_answer(
@@ -401,7 +423,8 @@ def test_answers_are_saved_versioned_and_survive_reopening(
     )
     assert first.status_code == 200
     assert first.json()["workflow"]["revision"] == 1
-    assert first.json()["status"]["code"] == "initial_facts_in_progress"
+    # The Company jurisdiction isn't confirmed: answers are saved, the intake paused.
+    assert first.json()["status"]["code"] == "awaiting_jurisdiction"
 
     second = save(
         client,
@@ -430,8 +453,12 @@ def test_answers_are_saved_versioned_and_survive_reopening(
         "incident.discussed_with_employee": "no",
         "incident.evidence_available": "yes",
     }
-    assert reopened["missing"] == []
-    # Complete, but the jurisdiction is not confirmed: nothing further proceeds.
+    # The initial facts are complete; the incident context is still to answer
+    # (with the documented-action follow-up, since the issue was raised before).
+    assert not any(key.startswith("incident.") for key in reopened["missing"])
+    assert "history.documented_action" in reopened["missing"]
+    assert reopened["uncertain"] == ["incident.date"]
+    # The jurisdiction is not confirmed: nothing jurisdiction-specific proceeds.
     assert reopened["status"]["code"] == "awaiting_jurisdiction"
     turns = [m for m in reopened["conversation"] if m["kind"] == "answer_confirmation"]
     assert [len(t["items"]) for t in turns] == [2, 4]

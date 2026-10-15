@@ -1,10 +1,17 @@
-"""Workflow entities attached to Cases (M2-01).
+"""Workflow entities attached to Cases (M2-01, M2-02).
 
 A ``WorkflowInstance`` is one guided workflow run for one Case. Answers are
 saved as ``WorkflowSubmission`` groups of append-only ``CaseFact`` rows: a fact
 is never updated, a later submission records a new value (``None`` = cleared).
 Workflow progress is derived from these facts; nothing here encodes a legal
 assessment. Migration ``75ec6db8b6c1`` adds RLS and the API grants.
+
+``WorkflowEvaluation`` (M2-02, migration ``e64497d997d8``) is the append-only
+record of the intake evaluation each saved submission produced: the Case
+status, hold and its reason, the resolved Case jurisdiction, the screening
+state and every condition's result with the structured inputs it read, plus the
+definition and rule-set versions used. The current state is always recomputed
+on read; these rows are the trace.
 """
 
 from datetime import datetime
@@ -32,9 +39,47 @@ from app.db.base import Base, TimestampMixin
 WORKFLOW_DISCIPLINARY: Final = "disciplinary"
 WORKFLOW_KEYS: Final = (WORKFLOW_DISCIPLINARY,)
 
+# Stored intake evaluation vocabularies (app.workflows.intake). Written out as
+# ``a = 'x' OR ...`` in CHECK constraints (see app.db.models.audit.one_of).
+EVALUATION_STATUSES: Final = (
+    "case_created",
+    "intake_in_progress",
+    "awaiting_jurisdiction",
+    "screening_not_cleared",
+    "held_for_specialist_review",
+    "intake_recorded",
+)
+EVALUATION_HOLDS: Final = ("jurisdiction", "specialist_review")
+EVALUATION_HOLD_REASONS: Final = (
+    "high_risk_factors",
+    "jurisdiction_different",
+    "jurisdiction_unsupported",
+    "screening_not_covered",
+    "company_jurisdiction_unconfirmed",
+    "case_jurisdiction_not_sure",
+    "case_jurisdiction_outdated",
+)
+EVALUATION_JURISDICTIONS: Final = ("uae_federal", "difc")
+EVALUATION_SCREENING: Final = (
+    "not_applicable",
+    "not_started",
+    "incomplete",
+    "not_cleared",
+    "cleared",
+    "positive",
+)
+# A bound on the trace, not a product rule (results hold codes and enumerated
+# answers only, never free text).
+MAX_EVALUATION_RESULTS_BYTES: Final = 65536
+
 # JSONB on PostgreSQL; plain JSON for the SQLite stand-ins in unit tests. Python
 # None is stored as SQL NULL (a cleared answer), not as a JSON null.
 FactValue = JSON(none_as_null=True).with_variant(JSONB(none_as_null=True), "postgresql")
+EvaluationResults = JSON().with_variant(JSONB(), "postgresql")
+
+
+def _one_of(column: str, values: tuple[str, ...]) -> str:
+    return " OR ".join(f"{column} = '{value}'" for value in values)
 
 
 class WorkflowInstance(TimestampMixin, Base):
@@ -156,3 +201,64 @@ class CaseFact(Base):
     fact_key: Mapped[str] = mapped_column(String(100), nullable=False)
     # None: the answer was cleared by this submission.
     value: Mapped[Any] = mapped_column(FactValue, nullable=True)
+
+
+class WorkflowEvaluation(Base):
+    """The intake evaluation one saved submission produced (append-only)."""
+
+    __tablename__ = "workflow_evaluations"
+    __table_args__ = (
+        # The submission of the same Company and the same instance.
+        ForeignKeyConstraint(
+            ["company_id", "instance_id", "submission_id"],
+            [
+                "workflow_submissions.company_id",
+                "workflow_submissions.instance_id",
+                "workflow_submissions.id",
+            ],
+            name="fk_workflow_evaluations_company_id_instance_id_submission_id",
+        ),
+        UniqueConstraint("submission_id", name="uq_workflow_evaluations_submission_id"),
+        CheckConstraint(
+            _one_of("status", EVALUATION_STATUSES), name="ck_workflow_evaluations_status"
+        ),
+        CheckConstraint(
+            "(hold IS NULL AND hold_reason IS NULL) OR (hold IS NOT NULL AND hold_reason IS NOT "
+            f"NULL AND ({_one_of('hold', EVALUATION_HOLDS)}) "
+            f"AND ({_one_of('hold_reason', EVALUATION_HOLD_REASONS)}))",
+            name="ck_workflow_evaluations_hold",
+        ),
+        CheckConstraint(
+            f"jurisdiction IS NULL OR {_one_of('jurisdiction', EVALUATION_JURISDICTIONS)}",
+            name="ck_workflow_evaluations_jurisdiction",
+        ),
+        CheckConstraint(
+            _one_of("screening", EVALUATION_SCREENING), name="ck_workflow_evaluations_screening"
+        ),
+        Index("ix_workflow_evaluations_instance_id", "instance_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    company_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "companies.id", ondelete="CASCADE", name="fk_workflow_evaluations_company_id_companies"
+        ),
+        nullable=False,
+    )
+    instance_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    submission_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    ruleset_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    ruleset_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    hold: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    hold_reason: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The resolved Case jurisdiction; None while unresolved.
+    jurisdiction: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    screening: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Every condition's result, in rule-set order (app.workflows.intake).
+    results: Mapped[Any] = mapped_column(EvaluationResults, nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

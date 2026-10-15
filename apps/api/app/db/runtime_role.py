@@ -12,9 +12,10 @@ runtime role, so it can provision identities but cannot read HR data.
 ``heroos_schema_contract()`` tells code which schema is live (the runtime role
 cannot read ``alembic_version``): 1 after migration B1a, 2 after B1b, 3 after
 C1 (M1-10C: Company roles, registration and jurisdiction readiness), 4 after D1
-(M2-01: workflow instances, submissions and facts). The API needs at least 4;
-the operator needs exactly 4 (its own grants are unchanged by D1, but it refuses
-any schema it was not written against).
+(M2-01: workflow instances, submissions and facts), 5 after D2 (M2-02: intake
+evaluations). The API needs at least 5; the operator needs exactly 5 (its own
+grants are unchanged by D1 and D2, but it refuses any schema it was not written
+against).
 """
 
 from typing import Final
@@ -25,12 +26,12 @@ from sqlalchemy.exc import DBAPIError
 RUNTIME_GROUP_ROLE: Final = "heroos_app_runtime"
 OPERATOR_GROUP_ROLE: Final = "heroos_identity_operator"
 
-# Schema the API needs (D1: workflow Cases and facts, on top of C1 roles and
-# jurisdiction readiness and B1a/B1b identities and lifecycle).
-API_MINIMUM_SCHEMA_CONTRACT: Final = 4
+# Schema the API needs (D2: intake evaluations, on top of D1 workflow Cases and
+# facts, C1 roles and jurisdiction readiness and B1a/B1b identities and lifecycle).
+API_MINIMUM_SCHEMA_CONTRACT: Final = 5
 # Schema the operator CLI needs exactly (C1 registration, role and jurisdiction
-# confirmation grants on top of B1b provisioning; D1 adds nothing for it).
-OPERATOR_SCHEMA_CONTRACT: Final = 4
+# confirmation grants on top of B1b provisioning; D1 and D2 add nothing for it).
+OPERATOR_SCHEMA_CONTRACT: Final = 5
 
 
 class UnsafeDatabaseRoleError(RuntimeError):

@@ -7,7 +7,12 @@ from app.db.models.company_registration import CompanyRegistration
 from app.db.models.membership import Membership
 from app.db.models.user import User
 from app.db.models.user_identity import UserIdentity
-from app.db.models.workflow import CaseFact, WorkflowInstance, WorkflowSubmission
+from app.db.models.workflow import (
+    CaseFact,
+    WorkflowEvaluation,
+    WorkflowInstance,
+    WorkflowSubmission,
+)
 
 __all__ = [
     "Case",
@@ -22,6 +27,7 @@ __all__ = [
     "MembershipEvent",
     "User",
     "UserIdentity",
+    "WorkflowEvaluation",
     "WorkflowInstance",
     "WorkflowSubmission",
 ]

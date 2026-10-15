@@ -1,27 +1,91 @@
+import type { ReactNode } from "react";
+
+import { CheckIcon, ClockIcon, ShieldIcon } from "@/components/site/icons";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { JurisdictionStatus } from "@/components/workspace/jurisdiction-status";
-import { displayAnswer, PROGRESS_COPY } from "@/lib/workflows/copy";
-import type { Question, WorkflowView } from "@/lib/workflows/model";
+import { formatDayTime, PROGRESS_COPY } from "@/lib/workflows/copy";
+import type { CaseJurisdictionStatus, HistoryItem, Question, WorkflowView } from "@/lib/workflows/model";
+
+import { CautionCard, HoldCard } from "./conversation";
 
 const sectionHeading = "text-xs font-bold uppercase tracking-[0.14em] text-hero-blue-ink";
 
+const CASE_JURISDICTION: Record<CaseJurisdictionStatus, { status: string; tone: "positive" | "caution" | "muted" }> = {
+  resolved: { status: "Confirmed for this case", tone: "positive" },
+  awaiting_case_confirmation: { status: "Confirm for this case", tone: "caution" },
+  company_unconfirmed: { status: "Waiting for your company's jurisdiction", tone: "muted" },
+  company_unsupported: { status: "Not supported yet", tone: "caution" },
+  case_not_sure: { status: "Not sure", tone: "caution" },
+  case_different: { status: "A different jurisdiction applies", tone: "caution" },
+  case_confirmation_outdated: { status: "Confirm again", tone: "caution" },
+};
+
+function Section({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id}>
+      <h2 className={sectionHeading} id={id}>
+        {title}
+      </h2>
+      {children}
+    </section>
+  );
+}
+
+function QuestionList({ questions, empty }: { questions: Question[]; empty: string }) {
+  if (questions.length === 0) return <p className="mt-3 text-[0.9375rem] text-hero-muted">{empty}</p>;
+  return (
+    <ul className="mt-3 flex list-disc flex-col gap-1 pl-5 text-[0.9375rem] text-hero-navy">
+      {questions.map((question) => (
+        <li key={question.key}>{question.label}</li>
+      ))}
+    </ul>
+  );
+}
+
+function HistoryEntry({ item }: { item: HistoryItem }) {
+  const marker =
+    item.kind === "hold_placed" ? (
+      <ShieldIcon className="size-4 text-hero-danger" />
+    ) : item.kind === "intake_recorded" || item.kind === "hold_lifted" ? (
+      <CheckIcon className="size-4 text-hero-success" />
+    ) : (
+      <ClockIcon className="size-4 text-hero-blue-ink" />
+    );
+  return (
+    <li className="relative flex gap-3 pb-4 last:pb-0">
+      <span aria-hidden="true" className="mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-full border border-hero-border bg-white">
+        {marker}
+      </span>
+      <div className="min-w-0">
+        <p className="text-[0.9375rem] font-semibold leading-snug text-hero-navy">{item.title}</p>
+        {item.detail ? <p className="mt-0.5 text-sm leading-relaxed text-hero-navy/80">{item.detail}</p> : null}
+        <p className="mt-0.5 text-xs text-hero-muted">
+          <time dateTime={item.at}>{formatDayTime(item.at)}</time>
+          {item.byViewer === true ? " · You" : item.byViewer === false ? " · Another administrator" : ""}
+        </p>
+      </div>
+    </li>
+  );
+}
+
 /**
- * The Case at a glance: progress (derived by the API from the saved answers
- * and the Company's current jurisdiction readiness), the readiness itself, the
- * known facts as the employer gave them, what is still missing and what this
- * version does not do yet. Nothing here is an assessment.
+ * The Case at a glance: progress, the Case's jurisdiction and its basis, any
+ * hold and cautions (all from the API's intake evaluation), the facts as the
+ * employer gave them, what is missing or uncertain, the case history and what
+ * this version doesn't do yet. Nothing here is an assessment.
  */
 export function CaseContextPanel({ view }: { view: WorkflowView }) {
   const questions: Question[] = view.steps.flatMap((step) => step.questions);
-  const known = questions.filter((question) => view.answers[question.key] !== undefined);
-  const missing = questions.filter((question) => view.missing.includes(question.key));
+  const asked = questions.filter((question) => view.asked.includes(question.key));
+  const known = asked.filter((question) => view.answers[question.key] !== undefined);
+  const missing = asked.filter((question) => view.missing.includes(question.key));
+  const uncertain = asked.filter((question) => view.uncertain.includes(question.key));
+  const { caseJurisdiction, hold, cautions } = view.intake;
+  const caseCopy = CASE_JURISDICTION[caseJurisdiction.status];
 
   return (
     <div className="flex flex-col gap-7">
-      <section aria-labelledby="progress-heading">
-        <h2 className={sectionHeading} id="progress-heading">
-          Case progress
-        </h2>
+      <Section id="progress-heading" title="Case progress">
         <ol className="mt-3 flex flex-col">
           {view.progress.map((item) => {
             const copy = PROGRESS_COPY[item.status];
@@ -39,26 +103,50 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
             );
           })}
         </ol>
-      </section>
+      </Section>
 
-      <section aria-labelledby="jurisdiction-heading">
-        <h2 className={sectionHeading} id="jurisdiction-heading">
-          Jurisdiction
-        </h2>
+      {hold ? (
+        <Section id="hold-heading" title="Hold">
+          <div
+            className={`mt-3 rounded-2xl border px-4 py-3.5 text-hero-navy ${
+              hold.action === "escalate" ? "border-[#e9b4c0] bg-hero-danger-tint" : "border-[#f1df8d] bg-hero-yellow-tint"
+            }`}
+          >
+            <HoldCard hold={hold} />
+          </div>
+        </Section>
+      ) : null}
+
+      <Section id="jurisdiction-heading" title="Jurisdiction">
+        <div className="mt-3 rounded-2xl border border-hero-border bg-white px-4 py-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-base font-extrabold text-hero-navy">{caseJurisdiction.label ?? "This case"}</p>
+            <StatusBadge tone={caseCopy.tone}>{caseCopy.status}</StatusBadge>
+          </div>
+          <p className="mt-1.5 text-sm leading-relaxed text-hero-navy/80">
+            {caseJurisdiction.status === "resolved"
+              ? "Based on your company's confirmed jurisdiction and your confirmation for this case."
+              : "Checks that depend on the jurisdiction don't run until it's confirmed for this case."}
+          </p>
+        </div>
         <div className="mt-3">
           <JurisdictionStatus jurisdiction={view.jurisdiction} />
         </div>
-        {!view.jurisdiction.guidanceAllowed ? (
-          <p className="mt-2 text-sm leading-relaxed text-hero-muted">
-            Jurisdiction-dependent steps can&apos;t proceed until your company&apos;s jurisdiction is confirmed.
-          </p>
-        ) : null}
-      </section>
+      </Section>
 
-      <section aria-labelledby="facts-heading">
-        <h2 className={sectionHeading} id="facts-heading">
-          Known facts
-        </h2>
+      {cautions.length > 0 ? (
+        <Section id="cautions-heading" title="Cautions">
+          <ul className="mt-3 flex flex-col gap-3">
+            {cautions.map((caution) => (
+              <li className="rounded-2xl border border-[#f1df8d] bg-hero-yellow-tint px-4 py-3.5 text-hero-navy" key={caution.id}>
+                <CautionCard caution={caution} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+
+      <Section id="facts-heading" title="Known facts">
         {known.length === 0 ? (
           <p className="mt-3 text-[0.9375rem] text-hero-muted">No answers saved yet.</p>
         ) : (
@@ -67,33 +155,34 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
               <div key={question.key}>
                 <dt className="text-sm font-bold text-hero-navy">{question.label}</dt>
                 <dd className="mt-0.5 line-clamp-6 whitespace-pre-wrap break-words text-[0.9375rem] leading-relaxed text-hero-navy/85">
-                  {displayAnswer(question, view.answers[question.key])}
+                  {view.answerLabels[question.key] ?? view.answers[question.key]}
                 </dd>
               </div>
             ))}
           </dl>
         )}
-      </section>
+      </Section>
 
-      <section aria-labelledby="missing-heading">
-        <h2 className={sectionHeading} id="missing-heading">
-          Missing information
-        </h2>
-        {missing.length === 0 ? (
-          <p className="mt-3 text-[0.9375rem] text-hero-muted">All initial questions are answered.</p>
-        ) : (
-          <ul className="mt-3 flex list-disc flex-col gap-1 pl-5 text-[0.9375rem] text-hero-navy">
-            {missing.map((question) => (
-              <li key={question.key}>{question.label}</li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <Section id="missing-heading" title="Missing information">
+        <QuestionList empty="Nothing is missing for the questions HeroOS can ask now." questions={missing} />
+      </Section>
 
-      <section aria-labelledby="later-heading">
-        <h2 className={sectionHeading} id="later-heading">
-          Not available yet
-        </h2>
+      {uncertain.length > 0 ? (
+        <Section id="uncertain-heading" title="Answers marked “Not sure”">
+          <QuestionList empty="" questions={uncertain} />
+          <p className="mt-2 text-sm leading-relaxed text-hero-muted">HeroOS never reads “Not sure” as “No”.</p>
+        </Section>
+      ) : null}
+
+      <Section id="history-heading" title="Case history">
+        <ol className="mt-3 flex flex-col">
+          {[...view.history].reverse().map((item) => (
+            <HistoryEntry item={item} key={item.id} />
+          ))}
+        </ol>
+      </Section>
+
+      <Section id="later-heading" title="Not available yet">
         <ul className="mt-3 flex flex-col gap-2">
           {view.notAvailable.map((stage) => (
             <li className="flex items-center justify-between gap-3 text-[0.9375rem] text-hero-navy" key={stage}>
@@ -103,9 +192,9 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
           ))}
         </ul>
         <p className="mt-3 text-sm leading-relaxed text-hero-muted">
-          Nothing in this case has been assessed or decided. HeroOS only records your answers for now.
+          Nothing in this case has been assessed or decided. HeroOS records your answers and runs fixed checks on them.
         </p>
-      </section>
+      </Section>
     </div>
   );
 }

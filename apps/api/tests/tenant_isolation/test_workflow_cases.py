@@ -1,7 +1,8 @@
-"""M2-01 workflow Cases on real PostgreSQL with RLS, as the API runtime role.
+"""M2-01 workflow Cases and M2-02 intake evaluations on real PostgreSQL with RLS.
 
 The tenant-isolation contract for new private entities (tenant-isolation.md §9)
-applied to ``workflow_instances``, ``workflow_submissions`` and ``case_facts``:
+applied to ``workflow_instances``, ``workflow_submissions``, ``case_facts`` and
+``workflow_evaluations``, as the API runtime role:
 
 - isolation proven three ways: repositories with RLS, RLS alone (unfiltered
   SQL) and the repository filter alone (an admin session that bypasses RLS);
@@ -9,8 +10,11 @@ applied to ``workflow_instances``, ``workflow_submissions`` and ``case_facts``:
 - the runtime role can only append (no fact or submission UPDATE/DELETE, no
   instance DELETE, only the revision is updatable) and cannot delete a Case
   that has a workflow (PRIV-020);
-- real concurrency: compare-and-set revisions, concurrent saves and
-  concurrent idempotent creations through the production application.
+- real concurrency: compare-and-set revisions, concurrent saves (one
+  evaluation per saved submission) and concurrent idempotent creations through
+  the production application;
+- the intake end to end on PostgreSQL: a high-risk answer holds the Case and
+  writes nothing but the submission, its facts and its evaluation.
 """
 
 import threading
@@ -31,12 +35,20 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.auth.dependencies import get_authentication_provider
 from app.auth.providers.cognito import CognitoAccessTokenProvider
+from app.companies.jurisdiction import (
+    JurisdictionAssessment,
+    JurisdictionReadiness,
+    ReadinessReason,
+)
 from app.core.config import Settings
 from app.db.session import get_db
 from app.main import create_app
 from app.repositories import workflows
 from app.tenancy.scope import CompanyScope
-from app.workflows.definition import DISCIPLINARY_V1
+from app.workflows.conditions import DISCIPLINARY_INTAKE
+from app.workflows.definition import DISCIPLINARY_V1, DISCIPLINARY_V2, SAFETY_SCREENING
+from app.workflows.history import evaluation_results
+from app.workflows.intake import evaluate_intake
 from tests.auth.conftest import TEST_APP_CLIENT_ID, TEST_COGNITO_ISSUER, LocalJWKClient
 from tests.tenant_isolation.conftest import (
     TenantDatabase,
@@ -45,11 +57,19 @@ from tests.tenant_isolation.conftest import (
     owners,
     scope_for,
 )
+from tests.tenant_isolation.test_company_blueprint import answer, confirm
 from tests.tenant_isolation.test_company_roles import set_role
 
 ALICE = "alice-subject"
 BOB = "bob-subject"
-TABLES = ("workflow_instances", "workflow_submissions", "case_facts")
+TABLES = ("workflow_instances", "workflow_submissions", "case_facts", "workflow_evaluations")
+UNCONFIRMED = JurisdictionAssessment(
+    JurisdictionReadiness.UNCONFIRMED, ReadinessReason.LICENSING_NOT_PROVIDED
+)
+EVALUATION_COLUMNS = (
+    "id, company_id, instance_id, submission_id, definition_version, ruleset_version, "
+    "ruleset_digest, status, hold, hold_reason, screening, results"
+)
 FORBIDDEN = (403, {"detail": "Forbidden"})
 NOT_FOUND = (404, {"detail": "Not found"})
 CONFLICT = (409, {"detail": "Conflict"})
@@ -104,14 +124,19 @@ def new_case(scope: CompanyScope, user: uuid.UUID, title: str = "[SYNTHETIC] Cas
     )
     revision = workflows.advance_revision(scope, item.instance.id, 0)
     assert revision == 1
-    workflows.record_submission(
+    changes = {"incident.history": "new", "incident.narrative": "[SYNTHETIC] narrative"}
+    submission = workflows.record_submission(
         scope,
         item.instance,
         step_key="initial_facts",
         revision=1,
         idempotency_key=uuid.uuid4(),
         user_id=user,
-        changes={"incident.history": "new", "incident.narrative": "[SYNTHETIC] narrative"},
+        changes=changes,
+    )
+    evaluation = evaluate_intake(DISCIPLINARY_V2, changes, UNCONFIRMED)
+    workflows.record_evaluation(
+        scope, submission, evaluation, evaluation_results(evaluation, DISCIPLINARY_INTAKE)
     )
     return item
 
@@ -132,6 +157,10 @@ def seeded(runtime_sessions: sessionmaker[Session], tenants: Tenants) -> dict[st
             scope.commit()
             created[label]["submission"] = db.scalar(
                 text("SELECT id FROM workflow_submissions WHERE instance_id = :i"),
+                {"i": created[label]["instance"]},
+            )
+            created[label]["evaluation"] = db.scalar(
+                text("SELECT id FROM workflow_evaluations WHERE instance_id = :i"),
                 {"i": created[label]["instance"]},
             )
     return created
@@ -157,6 +186,9 @@ def test_repositories_see_only_their_own_company(
             assert len(facts[seeded[own]["instance"]]) == 2
             assert facts[seeded[other]["instance"]] == []
             assert workflows.submissions(scope, seeded[other]["instance"]) == []
+            assert workflows.evaluations(scope, seeded[other]["instance"]) == {}
+            own_evaluations = workflows.evaluations(scope, seeded[own]["instance"])
+            assert list(own_evaluations) == [seeded[own]["submission"]]
             # Another Company's revision cannot be advanced either.
             assert workflows.advance_revision(scope, seeded[other]["instance"], 1) is None
 
@@ -185,6 +217,7 @@ def test_repository_filter_alone_hides_other_companies_rows(
         assert workflows.facts_by_instance(scope, [seeded["b"]["instance"]]) == {
             seeded["b"]["instance"]: []
         }
+        assert workflows.evaluations(scope, seeded["b"]["instance"]) == {}
 
 
 @pytest.mark.parametrize(
@@ -208,6 +241,12 @@ def test_repository_filter_alone_hides_other_companies_rows(
             "VALUES (gen_random_uuid(), :other_company, :other_instance, :other_submission, "
             "'incident.history', '\"new\"')",
             id="fact-in-other-company",
+        ),
+        pytest.param(
+            f"INSERT INTO workflow_evaluations ({EVALUATION_COLUMNS}) VALUES (gen_random_uuid(), "
+            ":other_company, :other_instance, :other_submission, 2, 'disciplinary-intake.1', "
+            "repeat('0', 64), 'intake_in_progress', NULL, NULL, 'not_applicable', '[]')",
+            id="evaluation-in-other-company",
         ),
     ],
 )
@@ -304,6 +343,112 @@ def test_a_fact_cannot_point_at_a_submission_of_another_instance(
         assert sqlstate(caught.value) == "23503"
 
 
+def _extra_submission(db: Session, company: uuid.UUID, instance: uuid.UUID, user: uuid.UUID) -> Any:
+    """A submission without an evaluation (inserted as admin)."""
+    return db.scalar(
+        text(
+            "INSERT INTO workflow_submissions (id, company_id, instance_id, step_key, revision, "
+            "idempotency_key, submitted_by_user_id) VALUES (gen_random_uuid(), :company, "
+            ":instance, 'initial_facts', 7, gen_random_uuid(), :user) RETURNING id"
+        ),
+        {"company": company, "instance": instance, "user": user},
+    )
+
+
+def test_an_evaluation_cannot_point_at_another_companys_submission(
+    admin_sessions: sessionmaker[Session], tenants: Tenants, seeded: dict[str, Any]
+) -> None:
+    # As admin (no RLS): the Company-qualified foreign key alone refuses it.
+    with admin_sessions() as db:
+        other = _extra_submission(db, tenants.b.company, seeded["b"]["instance"], tenants.b.user)
+        for instance in (seeded["b"]["instance"], seeded["a"]["instance"]):
+            # The savepoint rolls back first, then the error reaches pytest.raises.
+            with pytest.raises(DBAPIError) as caught, db.begin_nested():
+                db.execute(
+                    text(
+                        f"INSERT INTO workflow_evaluations ({EVALUATION_COLUMNS}) VALUES "
+                        "(gen_random_uuid(), :company, :instance, :submission, 2, "
+                        "'disciplinary-intake.1', repeat('0', 64), 'intake_in_progress', NULL, "
+                        "NULL, 'not_applicable', '[]')"
+                    ),
+                    {"company": tenants.a.company, "instance": instance, "submission": other},
+                )
+            assert sqlstate(caught.value) == "23503"
+        db.rollback()
+
+
+@pytest.mark.parametrize(
+    ("values", "constraint"),
+    [
+        ("2, 'disciplinary-intake.1', repeat('0', 64), 'approved', NULL, NULL, 'cleared', '[]'",
+         "ck_workflow_evaluations_status"),
+        ("2, 'disciplinary-intake.1', repeat('0', 64), 'held_for_specialist_review', "
+         "'specialist_review', NULL, 'positive', '[]'", "ck_workflow_evaluations_hold"),
+        ("2, 'disciplinary-intake.1', repeat('0', 64), 'intake_recorded', NULL, "
+         "'high_risk_factors', 'cleared', '[]'", "ck_workflow_evaluations_hold"),
+        ("2, 'disciplinary-intake.1', repeat('0', 64), 'intake_recorded', NULL, NULL, "
+         "'waived', '[]'", "ck_workflow_evaluations_screening"),
+        ("2, 'disciplinary-intake.1', 'not-a-digest', 'intake_recorded', NULL, NULL, "
+         "'cleared', '[]'", "ck_workflow_evaluations_ruleset_digest"),
+        ("2, 'disciplinary-intake.1', repeat('0', 64), 'intake_recorded', NULL, NULL, "
+         "'cleared', '{}'", "ck_workflow_evaluations_results"),
+        ("0, 'disciplinary-intake.1', repeat('0', 64), 'intake_recorded', NULL, NULL, "
+         "'cleared', '[]'", "ck_workflow_evaluations_definition_version"),
+    ],
+)  # fmt: skip
+def test_the_database_refuses_an_evaluation_outside_the_vocabulary(
+    runtime_sessions: sessionmaker[Session],
+    admin_sessions: sessionmaker[Session],
+    tenants: Tenants,
+    seeded: dict[str, Any],
+    values: str,
+    constraint: str,
+) -> None:
+    with admin_sessions() as db:
+        submission = _extra_submission(
+            db, tenants.a.company, seeded["a"]["instance"], tenants.a.user
+        )
+        db.commit()
+    with runtime_sessions() as db:
+        scope_for(db, tenants.a)
+        with pytest.raises(DBAPIError) as caught:
+            db.execute(
+                text(
+                    f"INSERT INTO workflow_evaluations ({EVALUATION_COLUMNS}) VALUES "
+                    f"(gen_random_uuid(), :company, :instance, :submission, {values})"
+                ),
+                {
+                    "company": tenants.a.company,
+                    "instance": seeded["a"]["instance"],
+                    "submission": submission,
+                },
+            )
+        assert sqlstate(caught.value) == "23514"
+        assert constraint in str(caught.value)
+
+
+def test_one_evaluation_per_submission(
+    runtime_sessions: sessionmaker[Session], tenants: Tenants, seeded: dict[str, Any]
+) -> None:
+    with runtime_sessions() as db:
+        scope_for(db, tenants.a)
+        with pytest.raises(DBAPIError) as caught:
+            db.execute(
+                text(
+                    f"INSERT INTO workflow_evaluations ({EVALUATION_COLUMNS}) VALUES "
+                    "(gen_random_uuid(), :company, :instance, :submission, 2, "
+                    "'disciplinary-intake.1', repeat('0', 64), 'intake_in_progress', NULL, NULL, "
+                    "'not_applicable', '[]')"
+                ),
+                {
+                    "company": tenants.a.company,
+                    "instance": seeded["a"]["instance"],
+                    "submission": seeded["a"]["submission"],
+                },
+            )
+        assert sqlstate(caught.value) == "23505"
+
+
 # --- append-only and no deletion ------------------------------------------------------
 
 
@@ -318,6 +463,12 @@ def test_a_fact_cannot_point_at_a_submission_of_another_instance(
         "UPDATE workflow_instances SET case_id = gen_random_uuid()",
         "UPDATE workflow_instances SET created_by_user_id = gen_random_uuid()",
         "TRUNCATE case_facts",
+        # The evaluation trace: never rewritten, never removed.
+        "UPDATE workflow_evaluations SET status = 'intake_recorded'",
+        "UPDATE workflow_evaluations SET hold = NULL, hold_reason = NULL",
+        "UPDATE workflow_evaluations SET results = '[]'",
+        "DELETE FROM workflow_evaluations",
+        "TRUNCATE workflow_evaluations",
     ],
 )
 def test_runtime_role_can_only_append(
@@ -530,6 +681,14 @@ def test_concurrent_saves_against_one_revision_apply_once(
             )
             == 11
         )
+        # Every saved submission has exactly one evaluation (none for replays).
+        assert db.execute(
+            text(
+                "SELECT count(*), count(DISTINCT e.submission_id) FROM workflow_evaluations e "
+                "JOIN workflow_instances i ON i.id = e.instance_id WHERE i.case_id = :c"
+            ),
+            {"c": case_id},
+        ).one() == (11, 11)
 
 
 def test_a_save_racing_an_identical_committed_save_answers_with_the_committed_state(
@@ -694,4 +853,78 @@ def test_routes_isolate_and_authorize_on_postgresql(
     records = pooled_client.get(f"/companies/{a.company}/cases", headers=auth(ALICE))
     assert [c["id"] for c in records.json()] == [str(a.case)]
     response = pooled_client.get(f"/companies/{a.company}/cases/{case_id}", headers=auth(ALICE))
+    assert (response.status_code, response.json()) == NOT_FOUND
+
+
+def test_a_high_risk_hold_on_postgresql_writes_only_its_own_trace(
+    pooled_client: TestClient,
+    tenants: Tenants,
+    auth: Any,
+    runtime_engine: Engine,
+    operator_engine: Engine,
+    admin_engine: Engine,
+) -> None:
+    a = tenants.a
+    authority = "[SYNTHETIC] Licensing authority"
+    answer(runtime_engine, a, "other", authority)
+    confirm(operator_engine, a, "uae_federal", "other", authority)
+    created = pooled_client.post(
+        f"/companies/{a.company}/workflows/disciplinary/cases",
+        headers=auth(ALICE),
+        json={"title": "[SYNTHETIC] Intake", "request_key": str(uuid.uuid4())},
+    )
+    case_id = created.json()["id"]
+    base = f"/companies/{a.company}/cases/{case_id}/workflow/steps"
+
+    def put(step: str, answers: dict[str, str], revision: int) -> Any:
+        return pooled_client.put(
+            f"{base}/{step}/answers",
+            headers=auth(ALICE),
+            json={
+                "expected_revision": revision,
+                "submission_key": str(uuid.uuid4()),
+                "answers": answers,
+            },
+        )
+
+    confirmed = put("jurisdiction", {"jurisdiction.case_confirmation": "uae_federal"}, 0)
+    assert confirmed.json()["intake"]["case_jurisdiction"]["status"] == "resolved"
+
+    def table_counts() -> dict[str, int]:
+        with admin_engine.connect() as conn:
+            names = conn.scalars(
+                text(
+                    "SELECT relname FROM pg_class WHERE relnamespace = 'public'::regnamespace "
+                    "AND relkind IN ('r', 'p') ORDER BY relname"
+                )
+            ).all()
+            return {n: conn.scalar(text(f"SELECT count(*) FROM {n}")) or 0 for n in names}
+
+    before = table_counts()
+    screening = {q.key: "no" for q in SAFETY_SCREENING.questions}
+    held = put("safety_screening", {**screening, "screening.whistleblower": "yes"}, 1)
+
+    assert held.status_code == 200
+    body = held.json()
+    assert body["status"]["code"] == "held_for_specialist_review"
+    assert body["intake"]["hold"]["reason"] == "high_risk_factors"
+    after = table_counts()
+    changed = {t: after[t] - before[t] for t in after if after[t] != before[t]}
+    # One submission, its nine facts and its evaluation; nothing else anywhere.
+    assert changed == {"workflow_submissions": 1, "case_facts": 9, "workflow_evaluations": 1}
+    with admin_engine.connect() as conn:
+        stored = conn.execute(
+            text(
+                "SELECT e.hold, e.hold_reason, e.jurisdiction, e.screening FROM "
+                "workflow_evaluations e JOIN workflow_instances i ON i.id = e.instance_id "
+                "WHERE i.case_id = :c ORDER BY e.evaluated_at DESC LIMIT 1"
+            ),
+            {"c": case_id},
+        ).one()
+    assert tuple(stored) == ("specialist_review", "high_risk_factors", "uae_federal", "positive")
+    # Another Company's administrator sees none of it.
+    set_role(operator_engine, tenants.b.company, tenants.b.membership, "company_admin")
+    response = pooled_client.get(
+        f"/companies/{tenants.b.company}/cases/{case_id}/workflow", headers=auth(BOB)
+    )
     assert (response.status_code, response.json()) == NOT_FOUND

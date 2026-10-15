@@ -1,17 +1,18 @@
-"""Case progress, derived from persisted answers and live jurisdiction readiness.
+"""Case progress, derived from persisted answers and the live intake evaluation.
 
 Nothing here is stored or hard-coded: progress is recomputed on every read from
-the Case's facts and the Company's current jurisdiction assessment (which an
-operator confirmation can change at any time). Stages that are not built yet
-are reported as "coming later", never as pending results.
+the Case's facts and the Company's current jurisdiction readiness (which an
+operator confirmation can change at any time), through
+``app.workflows.intake``. Stages that are not built yet are reported as
+"coming later", never as pending results.
 """
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal
 
-from app.companies.jurisdiction import JurisdictionAssessment, JurisdictionReadiness
-from app.workflows.definition import Question, Step, WorkflowDefinition
+from app.workflows.definition import Step, StepGate, WorkflowDefinition
+from app.workflows.intake import JURISDICTION_LABELS, IntakeEvaluation, JurisdictionStatus
 
 ProgressStatus = Literal["completed", "in_progress", "needs_information", "blocked", "coming_later"]
 
@@ -33,12 +34,6 @@ class ProgressItem:
     detail: str
 
 
-@dataclass(frozen=True, slots=True)
-class CaseStatus:
-    code: str
-    label: str
-
-
 def latest_answers(facts: Iterable[FactRecord]) -> dict[str, object]:
     """The current answer per fact key (a later revision wins; ``None`` clears)."""
     answers: dict[str, object] = {}
@@ -50,67 +45,72 @@ def latest_answers(facts: Iterable[FactRecord]) -> dict[str, object]:
     return answers
 
 
-def questions(definition: WorkflowDefinition) -> list[Question]:
-    return [question for step in definition.steps for question in step.questions]
+_JURISDICTION_PROGRESS: Final[Mapping[JurisdictionStatus, tuple[ProgressStatus, str]]] = {
+    "company_unconfirmed": ("blocked", "Your company's jurisdiction isn't confirmed yet"),
+    "company_unsupported": ("blocked", "Not supported yet"),
+    "awaiting_case_confirmation": ("needs_information", "Confirm it for this case"),
+    "case_not_sure": ("blocked", "Not sure: confirm when you can"),
+    "case_different": ("blocked", "A different jurisdiction applies"),
+    "case_confirmation_outdated": ("blocked", "Confirm it again for this case"),
+}
 
 
-def missing_questions(step: Step, answers: Mapping[str, object]) -> list[Question]:
-    return [question for question in step.questions if question.key not in answers]
-
-
-def answered_count(definition: WorkflowDefinition, answers: Mapping[str, object]) -> int:
-    return sum(1 for question in questions(definition) if question.key in answers)
-
-
-def _step_item(step: Step, answers: Mapping[str, object]) -> ProgressItem:
-    total = len(step.questions)
-    done = total - len(missing_questions(step, answers))
+def _step_item(step: Step, evaluation: IntakeEvaluation) -> ProgressItem:
+    asked = [key for key in evaluation.asked if step.question(key) is not None]
+    missing = [key for key in asked if key in evaluation.missing]
+    total = len(asked)
+    done = total - len(missing)
     if done == total:
-        return ProgressItem(step.key, step.title, "completed", f"All {total} questions answered")
+        return ProgressItem(step.key, step.title, "completed", f"All {total} answered")
     if done == 0:
         return ProgressItem(step.key, step.title, "needs_information", "Not started")
     return ProgressItem(step.key, step.title, "in_progress", f"{done} of {total} answered")
 
 
-def _jurisdiction_item(jurisdiction: JurisdictionAssessment) -> ProgressItem:
-    if jurisdiction.readiness is JurisdictionReadiness.SUPPORTED_CONFIRMED:
-        return ProgressItem("jurisdiction", "Jurisdiction", "completed", "Confirmed")
-    if jurisdiction.readiness is JurisdictionReadiness.UNSUPPORTED:
-        return ProgressItem("jurisdiction", "Jurisdiction", "blocked", "Not supported yet")
-    return ProgressItem("jurisdiction", "Jurisdiction", "blocked", "Awaiting confirmation")
+def _jurisdiction_item(step: Step, evaluation: IntakeEvaluation) -> ProgressItem:
+    case = evaluation.jurisdiction
+    if case.resolved and case.jurisdiction is not None:
+        return ProgressItem(
+            step.key, step.title, "completed", JURISDICTION_LABELS[case.jurisdiction]
+        )
+    status, detail = _JURISDICTION_PROGRESS[case.status]
+    return ProgressItem(step.key, step.title, status, detail)
 
 
-def progress(
-    definition: WorkflowDefinition,
-    answers: Mapping[str, object],
-    jurisdiction: JurisdictionAssessment,
-) -> list[ProgressItem]:
-    return [
-        ProgressItem("case_created", "Case created", "completed", "Saved"),
-        *(_step_item(step, answers) for step in definition.steps),
-        _jurisdiction_item(jurisdiction),
-        ProgressItem(
-            "next_stages",
-            "Assessment, decisions and documents",
-            "coming_later",
-            "Not available yet",
-        ),
-    ]
+def _screening_item(step: Step, evaluation: IntakeEvaluation) -> ProgressItem:
+    match evaluation.screening:
+        case "cleared":
+            return ProgressItem(step.key, step.title, "completed", "No high-risk factors reported")
+        case "positive":
+            return ProgressItem(step.key, step.title, "blocked", "Specialist review needed")
+        case "not_cleared":
+            return ProgressItem(
+                step.key, step.title, "needs_information", "“Not sure” answers to check"
+            )
+        case "not_applicable":
+            detail = (
+                "Not available for this jurisdiction yet"
+                if evaluation.jurisdiction.resolved
+                else "Needs the case's jurisdiction first"
+            )
+            return ProgressItem(step.key, step.title, "blocked", detail)
+        case _:
+            return _step_item(step, evaluation)
 
 
-def case_status(
-    definition: WorkflowDefinition,
-    answers: Mapping[str, object],
-    jurisdiction: JurisdictionAssessment,
-) -> CaseStatus:
-    total = len(questions(definition))
-    done = answered_count(definition, answers)
-    if done == 0:
-        return CaseStatus("case_created", "Case created")
-    if done < total:
-        return CaseStatus("initial_facts_in_progress", "Initial facts in progress")
-    if jurisdiction.readiness is JurisdictionReadiness.UNSUPPORTED:
-        return CaseStatus("jurisdiction_unsupported", "Jurisdiction not supported yet")
-    if jurisdiction.readiness is not JurisdictionReadiness.SUPPORTED_CONFIRMED:
-        return CaseStatus("awaiting_jurisdiction", "Awaiting jurisdiction confirmation")
-    return CaseStatus("initial_facts_completed", "Initial facts completed")
+def progress(definition: WorkflowDefinition, evaluation: IntakeEvaluation) -> list[ProgressItem]:
+    items = [ProgressItem("case_created", "Case created", "completed", "Saved")]
+    for step in definition.steps:
+        if step.gate is StepGate.COMPANY_JURISDICTION_CONFIRMED:
+            items.append(_jurisdiction_item(step, evaluation))
+        elif step.gate is StepGate.SCREENING_COVERED:
+            items.append(_screening_item(step, evaluation))
+        else:
+            items.append(_step_item(step, evaluation))
+    if evaluation.hold is not None:
+        items.append(ProgressItem("next_stages", "Next stages", "blocked", "On hold"))
+    else:
+        items.append(
+            ProgressItem("next_stages", "Next stages", "coming_later", "Not available yet")
+        )
+    return items

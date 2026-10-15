@@ -1,6 +1,7 @@
 # Workflow Case Foundation (M2-01)
 
-**Status:** Implemented on a feature branch (M2-01). Not deployed.\
+**Status:** Implemented (M2-01, PR #29, deployed to temporary staging). Extended by
+M2-02: [Disciplinary Intake](disciplinary-intake.md).\
 **Owner:** Technical Lead\
 **Milestone:** M2 — Workflow Platform\
 **Related:** [ADR-006](../decisions/ADR-006-workflow-orchestration.md),
@@ -47,16 +48,19 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
   workflow (the foreign key refuses). Deletion and retention are privacy
   decisions (PRIV-001/002/004/020), not technical defaults. Downgrading D1
   refuses once any workflow data exists.
-- `heroos_schema_contract()` = 4. The API needs at least 4 (it refuses to start
-  on C1); the identity operator CLI needs exactly 4. **Deployment order:** apply
-  D1, then deploy the API and the operator CLI, then the web app. The M1-10C API
-  keeps working on D1 (rehearsed in `make e2e-check`, MIG-30 to MIG-34).
+- `heroos_schema_contract()` = 4 after D1, 5 after D2 (M2-02). The current API
+  needs at least 5; the identity operator CLI needs exactly 5. **Deployment
+  order:** apply the migration, then deploy the API and the operator CLI, then
+  the web app. The M1-10C API keeps working on D1 and the M2-01 API on D2
+  (rehearsed in `make e2e-check`, MIG-30 to MIG-41).
 
 ## 3. Definitions, progress and conversation (`app/workflows/`)
 
 - **Definitions are versioned code** (`definition.py`): steps and structured
   questions with neutral, authored text. A Case records the definition version
-  it started with. Disciplinary v1 has one step, `initial_facts`: what happened
+  it started with; a later version serves it only if it declares that version
+  compatible (v2 keeps v1's questions unchanged and adds the M2-02 intake
+  steps). Disciplinary v1 has one step, `initial_facts`: what happened
   (free text, ≤ 4,000 characters, stored as written), when (date or "not sure"),
   new or previously raised, discussed with the employee, evidence available
   (yes / no / not sure; no upload).
@@ -66,9 +70,11 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
   and the Company's current jurisdiction assessment (operator confirmation can
   change it at any time). Steps: Case created → Initial facts (needs
   information / in progress / completed) → Jurisdiction (completed or blocked)
-  → Assessment, decisions and documents (coming later). The Case status is one
-  of `case_created`, `initial_facts_in_progress`, `awaiting_jurisdiction`,
-  `jurisdiction_unsupported`, `initial_facts_completed`.
+  → Assessment, decisions and documents (coming later). In M2-01 the Case
+  status was one of `case_created`, `initial_facts_in_progress`,
+  `awaiting_jurisdiction`, `jurisdiction_unsupported`, `initial_facts_completed`;
+  since M2-02 progress and status come from the intake evaluation
+  ([Disciplinary Intake §5](disciplinary-intake.md#5-safety-screening-holds-and-the-gate)).
 - **Conversation** (`conversation.py`) is composed from that state: welcome,
   the question group, each saved submission as the employer's turn followed by a
   neutral "Saved" acknowledgement, missing information, the jurisdiction notice
@@ -84,7 +90,7 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
 | `GET /companies/{id}/workflows/{key}/cases` | `company_admin` | Summaries with status and progress counts, most recently active first |
 | `POST /companies/{id}/workflows/{key}/cases` | `company_admin` | `{title, request_key}`; 201 created, 200 for a retry with the same key and title, 409 for a reused key with other details |
 | `GET /companies/{id}/cases/{case}/workflow` | `company_admin` | Definition, current answers, missing questions, progress, status, jurisdiction readiness, conversation, `can_edit` |
-| `PUT /companies/{id}/cases/{case}/workflow/steps/{step}/answers` | `company_admin` | `{expected_revision, submission_key, answers}`; 409 if stale; a retry with the same `submission_key` is applied once |
+| `PUT /companies/{id}/cases/{case}/workflow/steps/{step}/answers` | `company_admin` | `{expected_revision, submission_key, answers}`; 409 if stale or if the step can't be answered in the Case's current state (M2-02); a retry with the same `submission_key` is applied once (checked before anything state-dependent) |
 
 - **Access policy (M2-01, interim least privilege until JJ approves dedicated
   HR access roles):** Disciplinary Cases are for **Company administrators
@@ -147,5 +153,7 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
 
 Conditions engine, classification, jurisdiction-specific guidance, employer
 decisions, document generation, expert escalation, case-subject linking,
-case-history/audit timeline, deletion. See the analysis report's sequence for
-M2-02 onwards (kept outside the repository with the confidential sources).
+case-history/audit timeline, deletion. M2-02 added the intake, the first
+conditions, jurisdiction routing, the safety screening, holds and the case
+history ([Disciplinary Intake](disciplinary-intake.md)); the rest is later M2
+work.
