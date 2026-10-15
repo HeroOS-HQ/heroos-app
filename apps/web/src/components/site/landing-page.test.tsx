@@ -129,6 +129,38 @@ describe("WorkflowJourney", () => {
 
     expect(screen.getByRole("tabpanel")).toHaveTextContent("Guided steps are not available yet.");
   });
+
+  it("keeps Steps 1 to 3 and shows Step 4, Complete the process, in its card and panel", () => {
+    render(<LandingPage />);
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "workflow-tab-describe",
+      "workflow-tab-guidance",
+      "workflow-tab-decide",
+      "workflow-tab-prepare",
+    ]);
+    const cards = [
+      ["Tell us what's happening", "Describe the situation in your own words."],
+      ["Get guidance", "Understand the context and your options."],
+      ["Make your decision", "Choose the right next step."],
+      ["Complete the process", "Follow guided steps and prepare the documents you need."],
+    ];
+    cards.forEach(([title, summary], index) => {
+      expect(tabs[index]).toHaveTextContent(title);
+      expect(tabs[index]).toHaveTextContent(summary);
+    });
+
+    fireEvent.click(tabs[3]);
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute("aria-labelledby", "workflow-tab-prepare");
+    expect(panel).toHaveTextContent("Step 4 of 4");
+    expect(panel).toHaveTextContent(
+      "Once you make your decision, HeroOS is designed to guide the required actions, help keep the process organised, and prepare the documents you need.",
+    );
+    expect(panel).toHaveTextContent("This shows how HeroOS is meant to work. Guided steps are not available yet.");
+  });
 });
 
 describe("ClosingCta", () => {
