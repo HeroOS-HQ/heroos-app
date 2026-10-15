@@ -10,8 +10,8 @@
 
 The first vertical slice of the guided Disciplinary workflow, without AI:
 
-1. an authorized user opens a Company workspace and selects **Disciplinary**;
-2. sees the Company's Disciplinary Cases, creates one (Company administrators only);
+1. a Company administrator opens a Company workspace and selects **Disciplinary**;
+2. sees the Company's Disciplinary Cases and creates one;
 3. opens it in a ChatGPT-style guided workspace and answers an initial
    structured question group;
 4. leaves and comes back (reload, new sign-in): everything is read from
@@ -81,20 +81,36 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
 
 | Method and path | Who | Notes |
 | --- | --- | --- |
-| `GET /companies/{id}/workflows/{key}/cases` | any active member | Summaries with status and progress counts, most recently active first |
+| `GET /companies/{id}/workflows/{key}/cases` | `company_admin` | Summaries with status and progress counts, most recently active first |
 | `POST /companies/{id}/workflows/{key}/cases` | `company_admin` | `{title, request_key}`; 201 created, 200 for a retry with the same key and title, 409 for a reused key with other details |
-| `GET /companies/{id}/cases/{case}/workflow` | any active member | Definition, current answers, missing questions, progress, status, jurisdiction readiness, conversation, `can_edit` |
+| `GET /companies/{id}/cases/{case}/workflow` | `company_admin` | Definition, current answers, missing questions, progress, status, jurisdiction readiness, conversation, `can_edit` |
 | `PUT /companies/{id}/cases/{case}/workflow/steps/{step}/answers` | `company_admin` | `{expected_revision, submission_key, answers}`; 409 if stale; a retry with the same `submission_key` is applied once |
 
-- **Write-authorization policy (M2-01):** creating Cases and saving answers is
-  limited to Company administrators (`CompanyAdminDb`: checked at authorization
-  and again in the write transaction). Reading follows the existing Case read
-  policy (any active member). Whether members should see Disciplinary content
-  at all is an open product/privacy question for JJ.
-- **Concurrency:** the revision bump is one compare-and-set `UPDATE`; concurrent
-  saves against the same revision serialize on the row lock and exactly one
-  wins. Concurrent creations with one `request_key` produce one Case (unique key,
-  the loser replays). Both are proven on PostgreSQL with real threads.
+- **Access policy (M2-01, interim least privilege until JJ approves dedicated
+  HR access roles):** Disciplinary Cases are for **Company administrators
+  only**: listing, opening, creating and answering. Every workflow route uses
+  `CompanyAdminDb` (the role is checked at authorization and again inside the
+  request's transaction), so a member gets the same fixed 403 everywhere and
+  no title, answer, message or workflow metadata. The generic Case record
+  routes (`GET /companies/{id}/cases[/{case}]`) leave restricted types out of a
+  member's list and answer 404 for one (`app/workflows/access.py`). The web app
+  never requests case data for a non-administrator and shows an
+  "administrators only" state; the Disciplinary card on the workspace home is
+  not a link for members. Blueprint and Company permissions are unchanged.
+- **Concurrency:** a save locks the Case's instance row first
+  (`SELECT … FOR UPDATE OF workflow_instances`), so concurrent saves of one
+  Case run one after the other and every read in a request (replay check,
+  revision check, current facts) sees one committed state. The revision bump
+  remains a compare-and-set `UPDATE` as a second guard; exactly one of several
+  saves against the same revision wins. Concurrent creations with one
+  `request_key` produce one Case (unique key, the loser replays). Proven on
+  PostgreSQL with real threads, including a deterministic regression test.
+- **CI finding (PR #29, run 38777691679):** before the lock, an identical save
+  committed by another request between this request's instance read and its
+  replay check made this request replay with the revision it had read earlier:
+  a 200 whose revision was older than the answers it returned, so the next save
+  would have been refused as stale. No data was ever written twice or crossed a
+  Company; the lock removes the window.
 - Errors follow the Company routes: 403 for another Company or a member writing,
   404 for a Case outside the authorized Company (identical to a random id), 422
   with field locations only.
@@ -111,9 +127,10 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
   field by field; responses carry fixed codes.
 - The guided workspace: case list (left), conversation and composer (centre),
   progress, jurisdiction readiness, known facts, missing information and "not
-  available yet" (right; below the conversation on smaller screens). Members get
-  a view-only workspace. Double submission is prevented in the client and made
-  harmless by the idempotency keys; a stale save asks the employer to reload.
+  available yet" (right; below the conversation on smaller screens). Members see
+  an "administrators only" state instead. Double submission is prevented in the
+  client and made harmless by the idempotency keys; a stale save asks the
+  employer to reload.
 
 ## 6. Privacy and safety boundaries
 

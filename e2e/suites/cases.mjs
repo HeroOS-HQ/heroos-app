@@ -143,21 +143,36 @@ export async function run(ctx) {
   check("CASE-12", "a stale save is refused (409) and a replayed save is applied once (200, nothing new written)",
     stale.status === 409 && replay.status === 200 && replay.json?.workflow?.revision === 2 && before[0][0] === after[0][0], `${stale.status} ${replay.status} ${before} ${after}`);
 
-  // ===== A member: read only =====
+  // ===== A member: no access at all (M2-01 interim policy: administrators only) =====
   const memberList = await ctx.apiFetch(casesApi(founder.companyId), { token: member.token });
   const memberView = await ctx.apiFetch(`/companies/${founder.companyId}/cases/${caseId}/workflow`, { token: member.token });
   const memberCreate = await ctx.apiFetch(casesApi(founder.companyId), { token: member.token, method: "POST", body: { title: "x", request_key: crypto.randomUUID() } });
   const memberSave = await ctx.apiFetch(answersPath, { token: member.token, method: "PUT", body: { expected_revision: 2, submission_key: crypto.randomUUID(), answers: { "incident.history": "not_sure" } } });
-  check("CASE-13", "a member can read the cases but cannot create one or save answers (403)",
-    memberList.status === 200 && memberView.status === 200 && memberView.json?.can_edit === false && memberCreate.status === 403 && memberSave.status === 403,
-    `${memberList.status} ${memberView.status} ${memberCreate.status} ${memberSave.status}`);
+  const memberRecords = await ctx.apiFetch(`/companies/${founder.companyId}/cases`, { token: member.token });
+  const memberRecord = await ctx.apiFetch(`/companies/${founder.companyId}/cases/${caseId}`, { token: member.token });
+  const leaked = [memberList, memberView, memberCreate, memberSave, memberRecords, memberRecord].some((r) => r.text.includes("Attendance concern") || r.text.includes(NARRATIVE.slice(16, 50)));
+  check("CASE-13", "a member cannot list, open, create or answer Disciplinary cases (403), and the case records hide them (list without it, record 404)",
+    [memberList, memberView, memberCreate, memberSave].every((r) => r.status === 403) &&
+      memberRecords.status === 200 && Array.isArray(memberRecords.json) && !memberRecords.json.some((c) => c.id === caseId) &&
+      memberRecord.status === 404 && !leaked,
+    `${memberList.status} ${memberView.status} ${memberCreate.status} ${memberSave.status} ${memberRecords.status} ${memberRecord.status} leaked=${leaked}`);
   const memberPage = await ctx.newPage();
   await memberPage.viewport(1440, 900);
   await ctx.signIn(memberPage, member.subject);
+  await memberPage.goto(`${webOrigin}${companyPath}`);
+  await memberPage.waitForText("HR workflows");
+  const memberCard = await memberPage.eval(`(() => { const s = document.querySelector('section[aria-labelledby="workflows-heading"]'); return { links: s.querySelectorAll("a").length, text: s.innerText }; })()`);
+  await memberPage.goto(`${webOrigin}${companyPath}/cases`);
+  await memberPage.waitForText("Disciplinary cases are for company administrators");
+  const memberListPage = await memberPage.text();
   await memberPage.goto(`${webOrigin}${companyPath}/cases/${caseId}`);
-  await memberPage.waitForText("View only");
-  const memberHasSave = await memberPage.eval(`[...document.querySelectorAll("button")].some((b) => b.textContent.includes("Save answers"))`);
-  check("CASE-14", "in the browser a member sees the case view only (no composer)", memberHasSave === false && (await memberPage.text()).includes(NARRATIVE.slice(0, 40)));
+  await memberPage.waitForText("Disciplinary cases are for company administrators");
+  const memberCasePage = await memberPage.text();
+  await ctx.screenshot(memberPage, "case-member-admin-only-1440");
+  check("CASE-14", "in the browser a member sees Disciplinary as administrator-only: no link, no list, no case content",
+    memberCard.links === 0 && memberCard.text.includes("Administrators only") &&
+      ![memberListPage, memberCasePage].some((t) => t.includes(TITLE) || t.includes(NARRATIVE.slice(0, 40))),
+    JSON.stringify(memberCard).slice(0, 200));
   await memberPage.close();
 
   // ===== Another Company =====

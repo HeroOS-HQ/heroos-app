@@ -337,7 +337,9 @@ def _create_tenant(db: Session, label: str, subject: str) -> Tenant:
     case = Case(
         company_id=company.id,
         subject_id=case_subject.id,
-        case_type="disciplinary",
+        # A neutral M1 record: Disciplinary records are administrator-only
+        # (M2-01) and are covered by test_workflow_cases.py.
+        case_type="general",
         title=f"Case {label}",
     )
     db.add(case)

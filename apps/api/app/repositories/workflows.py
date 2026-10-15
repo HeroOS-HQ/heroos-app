@@ -71,8 +71,20 @@ def find_by_request_key(scope: CompanyScope, request_key: UUID) -> WorkflowCase 
     return None if row is None else WorkflowCase(row[0], row[1])
 
 
-def get_workflow_case(scope: CompanyScope, case_id: UUID) -> WorkflowCase | None:
-    row = scope.session.execute(_cases_query(scope).where(Case.id == case_id)).first()
+def get_workflow_case(
+    scope: CompanyScope, case_id: UUID, *, for_update: bool = False
+) -> WorkflowCase | None:
+    """The workflow Case, optionally locking its instance row for this transaction.
+
+    ``for_update`` serializes writers of one Case: a concurrent save waits for
+    the lock, then reads the committed revision, submissions and facts, so
+    everything one request reads is mutually consistent. Only the instance row
+    is locked (``FOR UPDATE OF workflow_instances``), never the Case.
+    """
+    query = _cases_query(scope).where(Case.id == case_id)
+    if for_update:
+        query = query.with_for_update(of=WorkflowInstance)
+    row = scope.session.execute(query).first()
     return None if row is None else WorkflowCase(row[0], row[1])
 
 

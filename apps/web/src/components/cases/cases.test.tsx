@@ -31,7 +31,6 @@ describe("CasesDashboard", () => {
   it("lists the Company's cases with their status in words and a New case action for administrators", () => {
     render(
       <CasesDashboard
-        canCreate
         cases={[
           summary({ status: { code: "initial_facts_in_progress", label: "Initial facts in progress" }, answered: 3 }),
           summary({ id: OTHER_CASE_ID, title: "[SYNTHETIC] Second", status: { code: "awaiting_jurisdiction", label: "Awaiting jurisdiction confirmation" }, answered: 5 }),
@@ -55,14 +54,11 @@ describe("CasesDashboard", () => {
     expect(screen.getByText("Early version: initial facts only")).toBeInTheDocument();
   });
 
-  it("explains the empty state to an administrator and to a member", () => {
-    const { rerender } = render(<CasesDashboard canCreate cases={[]} companyId={COMPANY_ID} companyName="A" />);
+  it("explains the empty state and that cases are confidential to administrators", () => {
+    render(<CasesDashboard cases={[]} companyId={COMPANY_ID} companyName="A" />);
     expect(screen.getByRole("heading", { name: "No Disciplinary cases yet" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Start a case" })).toBeInTheDocument();
-
-    rerender(<CasesDashboard canCreate={false} cases={[]} companyId={COMPANY_ID} companyName="A" />);
-    expect(screen.queryByRole("link", { name: /new case|start a case/i })).toBeNull();
-    expect(screen.getByText(/Only company administrators can start a case/)).toBeInTheDocument();
+    expect(screen.getByText(/only your company's administrators can see them/)).toBeInTheDocument();
   });
 });
 

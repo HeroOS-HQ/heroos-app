@@ -43,6 +43,8 @@ export function commonStateView(state: CasesState | CaseState, retryHref: string
       return <AccessDeniedView />;
     case "api_unavailable":
       return <ApiUnavailableView retryHref={retryHref} />;
+    case "admin_only":
+      return <AdminOnlyView details={state.details} workspaces={state.workspaces} />;
     case "workflow_unavailable":
       return (
         <CompanyShell details={state.details} workspaces={state.workspaces}>
@@ -62,6 +64,31 @@ export function commonStateView(state: CasesState | CaseState, retryHref: string
     default:
       return null;
   }
+}
+
+/**
+ * ADMIN_ONLY (M2-01 interim policy): Disciplinary Cases are confidential and
+ * open only to Company administrators until dedicated HR access roles are
+ * approved. Nothing about any Case is shown or was requested.
+ */
+export function AdminOnlyView({ details, workspaces }: Ready) {
+  return (
+    <CompanyShell details={details} workspaces={workspaces}>
+      <StatePanel
+        actions={
+          <a className={buttonPrimary} href={`/workspaces/${encodeURIComponent(details.company.id)}`}>
+            Back to your workspace
+          </a>
+        }
+        role="status"
+        title="Disciplinary cases are for company administrators"
+      >
+        <p>
+          Disciplinary cases are confidential. For now, only your company&apos;s administrators can see or work on them.
+        </p>
+      </StatePanel>
+    </CompanyShell>
+  );
 }
 
 /** CASE_NOT_FOUND: identical for a Case of another Company and one that doesn't exist. */

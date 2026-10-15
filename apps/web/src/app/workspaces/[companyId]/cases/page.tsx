@@ -9,7 +9,7 @@ import { WORKFLOW_DISCIPLINARY } from "@/lib/workflows/model";
 
 export const metadata: Metadata = { title: "Disciplinary cases · HeroOS" };
 
-/** CASES_READY: the Company's Disciplinary Cases; the API authorizes every request. */
+/** CASES_READY for an administrator (ADMIN_ONLY otherwise); the API authorizes every request. */
 export default function CasesPage({ params }: PageProps<"/workspaces/[companyId]/cases">) {
   return (
     <Suspense fallback={<LoadingView label="Loading cases…" />}>
@@ -23,15 +23,10 @@ async function CasesContent({ params }: Pick<PageProps<"/workspaces/[companyId]/
   const state = await loadCases(companyId, WORKFLOW_DISCIPLINARY);
   const common = commonStateView(state, `/workspaces/${encodeURIComponent(companyId)}/cases`);
   if (common !== null || state.kind !== "cases_ready") return common;
-  const { company, membership } = state.details;
+  const { company } = state.details;
   return (
     <CompanyShell details={state.details} workspaces={state.workspaces}>
-      <CasesDashboard
-        canCreate={membership?.role === "company_admin"}
-        cases={state.cases}
-        companyId={company.id}
-        companyName={company.name}
-      />
+      <CasesDashboard cases={state.cases} companyId={company.id} companyName={company.name} />
     </CompanyShell>
   );
 }

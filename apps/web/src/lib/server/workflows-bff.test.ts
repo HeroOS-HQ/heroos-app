@@ -192,29 +192,40 @@ describe("workflow API client", () => {
 });
 
 describe("page states", () => {
-  const details = {
+  const withRole = (role: "company_admin" | "member" | null) => ({
     ok: true as const,
     data: {
       company: { id: COMPANY_ID, name: "[SYNTHETIC] Alpha" },
-      membership: null,
+      membership: role === null ? null : { companyId: COMPANY_ID, membershipId: "m", role, canUpdateBlueprint: role === "company_admin" },
       blueprint: null,
       cases: [],
     },
-  };
+  });
+  const admin = withRole("company_admin");
   const workspaces = { ok: true as const, data: [] };
 
   it("separates an API without workflow routes from other failures", () => {
-    expect(casesState(details, workspaces, { ok: false, failure: "not_found" }).kind).toBe("workflow_unavailable");
-    expect(casesState(details, workspaces, { ok: false, failure: "unauthenticated" }).kind).toBe("session_expired");
-    expect(casesState(details, workspaces, { ok: false, failure: "unavailable" }).kind).toBe("api_unavailable");
-    expect(casesState(details, workspaces, { ok: false, failure: "forbidden" }).kind).toBe("access_denied");
-    expect(casesState({ ok: false, failure: "forbidden" }, workspaces, { ok: true, data: [] }).kind).toBe("access_denied");
-    expect(casesState(details, workspaces, { ok: true, data: [] }).kind).toBe("cases_ready");
+    expect(casesState(admin, workspaces, { ok: false, failure: "not_found" }).kind).toBe("workflow_unavailable");
+    expect(casesState(admin, workspaces, { ok: false, failure: "unauthenticated" }).kind).toBe("session_expired");
+    expect(casesState(admin, workspaces, { ok: false, failure: "unavailable" }).kind).toBe("api_unavailable");
+    expect(casesState({ ok: false, failure: "forbidden" }, workspaces, null).kind).toBe("access_denied");
+    expect(casesState(admin, workspaces, { ok: true, data: [] }).kind).toBe("cases_ready");
+  });
+
+  it("is administrator-only: a member (or an unknown role) never gets case data", () => {
+    // Even if case data were handed over, a non-administrator state wins.
+    expect(casesState(withRole("member"), workspaces, { ok: true, data: [] }).kind).toBe("admin_only");
+    expect(casesState(withRole(null), workspaces, null).kind).toBe("admin_only");
+    // Demoted since the membership was read: the API's 403 also means admin-only.
+    expect(casesState(admin, workspaces, { ok: false, failure: "forbidden" }).kind).toBe("admin_only");
+    const list = { ok: true as const, data: [] };
+    expect(caseState(admin, workspaces, list, { ok: false, failure: "forbidden" }).kind).toBe("admin_only");
+    expect(caseState(withRole("member"), workspaces, null, null).kind).toBe("admin_only");
   });
 
   it("shows a missing Case as not found, like another Company's", () => {
     const list = { ok: true as const, data: [] };
-    expect(caseState(details, workspaces, list, { ok: false, failure: "not_found" }).kind).toBe("case_not_found");
-    expect(caseState(details, workspaces, list, { ok: false, failure: "unavailable" }).kind).toBe("api_unavailable");
+    expect(caseState(admin, workspaces, list, { ok: false, failure: "not_found" }).kind).toBe("case_not_found");
+    expect(caseState(admin, workspaces, list, { ok: false, failure: "unavailable" }).kind).toBe("api_unavailable");
   });
 });

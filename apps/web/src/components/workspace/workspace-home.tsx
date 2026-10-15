@@ -45,6 +45,8 @@ export function WorkspaceHome({ details }: { details: WorkspaceDetails }) {
   const { company, membership, blueprint, cases } = details;
   const role = roleLabel(membership?.role ?? null);
   const canEdit = membership?.canUpdateBlueprint === true;
+  // Disciplinary Cases are administrator-only (M2-01); the API enforces it.
+  const isAdmin = membership?.role === "company_admin";
   const settingsHref = `/workspaces/${encodeURIComponent(company.id)}/settings`;
 
   return (
@@ -120,7 +122,7 @@ export function WorkspaceHome({ details }: { details: WorkspaceDetails }) {
         </section>
       </div>
 
-      <WorkflowAreas companyId={company.id} />
+      <WorkflowAreas companyId={company.id} isAdmin={isAdmin} />
 
       {cases.length > 0 ? (
         <section aria-labelledby="cases-heading" className={`${card} p-5 sm:p-8`}>
@@ -135,7 +137,7 @@ export function WorkspaceHome({ details }: { details: WorkspaceDetails }) {
           </div>
           <ul aria-label="Cases" className="mt-5 flex flex-col gap-2">
             {cases.map((item) =>
-              item.caseType === "disciplinary" ? (
+              item.caseType === "disciplinary" && isAdmin ? (
                 <li key={item.id}>
                   <a
                     className="block rounded-xl border border-hero-border px-4 py-3 transition-colors duration-150 hover:bg-hero-blue-tint/60 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-hero-blue"

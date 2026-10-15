@@ -108,6 +108,14 @@ describe("WorkspaceHome", () => {
     expect(within(workflows).queryAllByRole("button")).toHaveLength(0);
   });
 
+  it("shows Disciplinary as administrator-only to a member, with nothing to click", () => {
+    render(<WorkspaceHome details={details({ membership: MEMBER })} />);
+    const workflows = screen.getByRole("region", { name: "HR workflows" });
+    expect(within(workflows).queryAllByRole("link")).toHaveLength(0);
+    expect(within(workflows).getByText("Administrators only")).toBeInTheDocument();
+    expect(within(workflows).getAllByText("Coming soon")).toHaveLength(2);
+  });
+
   it("links saved Disciplinary cases to the guided workspace, other records stay read-only", () => {
     render(
       <WorkspaceHome

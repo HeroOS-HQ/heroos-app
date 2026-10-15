@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from uuid import UUID
 
 from sqlalchemy import select
@@ -44,10 +44,11 @@ def get_case(scope: CompanyScope, case_id: UUID) -> Case | None:
     )
 
 
-def list_cases(scope: CompanyScope) -> Sequence[Case]:
-    return scope.session.scalars(
-        select(Case).where(Case.company_id == scope.company_id).order_by(Case.created_at, Case.id)
-    ).all()
+def list_cases(scope: CompanyScope, *, exclude_case_types: Collection[str] = ()) -> Sequence[Case]:
+    query = select(Case).where(Case.company_id == scope.company_id)
+    if exclude_case_types:
+        query = query.where(Case.case_type.not_in(list(exclude_case_types)))
+    return scope.session.scalars(query.order_by(Case.created_at, Case.id)).all()
 
 
 def update_case(

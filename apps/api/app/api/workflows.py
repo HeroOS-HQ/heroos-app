@@ -3,17 +3,16 @@
 Same dependency chain as every Company route (bearer token -> HeroOS User ->
 Membership -> transaction-local tenant context -> scoped repositories -> RLS).
 
-Write-authorization policy (M2-01, until broader permissions are approved):
-
-- creating a workflow Case and saving answers: **Company administrators only**
-  (``CompanyAdminDb``: the role is checked at authorization and again inside
-  the write transaction);
-- listing and reading: any active member of the Company (``CompanyDb``), the
-  same read policy as the existing Case records.
+Access policy (M2-01 interim least privilege, until JJ approves dedicated HR
+access roles): **every** route here, reads included, is for Company
+administrators only (``CompanyAdminDb``: the role is checked at authorization
+and again inside the request's transaction). Ordinary members cannot list,
+open, create or answer Disciplinary Cases; the generic Case record routes hide
+them too (``app.workflows.access``).
 
 Responses:
 
-- 401 / 403 exactly as the Company routes (403 also for a member writing).
+- 401 / 403 exactly as the Company routes (403 also for any member).
 - 404 ``Not found``: unknown workflow or step, or a Case that is not a workflow
   Case of the authorized Company (identical for another Company's Case).
 - 409 ``Conflict``: a reused creation ``request_key`` with different details,
@@ -51,7 +50,7 @@ from app.db.models import WorkflowInstance
 from app.db.models.membership import ROLE_COMPANY_ADMIN
 from app.repositories import workflows
 from app.repositories.company_blueprints import get_company_blueprint
-from app.tenancy.dependencies import CompanyAdminDb, CompanyDb
+from app.tenancy.dependencies import CompanyAdminDb
 from app.tenancy.scope import CompanyScope
 from app.workflows import conversation
 from app.workflows.answers import validate_answers
@@ -394,7 +393,7 @@ def _message_out(message: conversation.Message) -> MessageOut:
 
 
 @router.get("/workflows/{workflow_key}/cases", response_model=list[CaseSummaryOut])
-def list_workflow_cases(workflow_key: str, scope: CompanyDb) -> list[CaseSummaryOut]:
+def list_workflow_cases(workflow_key: str, scope: CompanyAdminDb) -> list[CaseSummaryOut]:
     definition = _workflow(workflow_key)
     items = workflows.list_workflow_cases(scope, definition.key)
     facts = workflows.facts_by_instance(scope, [item.instance.id for item in items])
@@ -461,7 +460,9 @@ def create_workflow_case(
 
 
 @router.get("/cases/{case_id}/workflow", response_model=WorkflowViewOut)
-def get_case_workflow(case_id: UUID, scope: CompanyDb, context: CompanyContext) -> WorkflowViewOut:
+def get_case_workflow(
+    case_id: UUID, scope: CompanyAdminDb, context: CompanyContext
+) -> WorkflowViewOut:
     item = workflows.get_workflow_case(scope, case_id)
     if item is None:
         raise _not_found()
@@ -484,7 +485,10 @@ def save_step_answers(
     scope: CompanyAdminDb,
     context: CompanyContext,
 ) -> WorkflowViewOut:
-    item = workflows.get_workflow_case(scope, case_id)
+    # Lock the instance first: concurrent saves of this Case run one after the
+    # other, so the replay check, the revision check and the facts all read the
+    # same committed state (a replay never answers with an older revision).
+    item = workflows.get_workflow_case(scope, case_id, for_update=True)
     if item is None:
         raise _not_found()
     definition = _definition(item.instance)

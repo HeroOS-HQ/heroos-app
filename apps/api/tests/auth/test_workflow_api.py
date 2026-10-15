@@ -5,10 +5,10 @@ production provider, and in-memory SQLite built from the real models (no RLS;
 the database layer, grants and concurrency are proven on PostgreSQL in
 tests/tenant_isolation/test_workflow_cases.py).
 
-Covers the write-authorization policy (administrators only), the read policy
-(any active member), idempotent creation, versioned answers with stale-write
-protection and replay, validation without echoing values, and the "not
-implemented yet" boundaries of the slice.
+Covers the access policy (administrators only, reads included; Disciplinary
+records hidden from members in the generic Case routes), idempotent creation,
+versioned answers with stale-write protection and replay, validation without
+echoing values, and the "not implemented yet" boundaries of the slice.
 """
 
 import logging
@@ -225,29 +225,64 @@ def test_the_case_opens_with_the_guided_conversation(
     ]
 
 
-def test_members_read_but_cannot_write(
+def test_members_cannot_list_open_create_or_answer(
     client: TestClient,
     sessions: sessionmaker[Session],
     seed: SeedData,
     alice: dict[str, str],
 ) -> None:
-    # Policy: create and answer are administrator-only (M2-01).
+    # Interim least-privilege policy (M2-01): Disciplinary Cases are for
+    # Company administrators only, reads included.
     assert (create(client, alice, seed.company_a).status_code, count(sessions, Case)) == (403, 0)
 
     make_admin(sessions, seed.company_a, seed.alice)
-    case_id = create(client, alice, seed.company_a).json()["id"]
+    title = "[SYNTHETIC] Confidential title"
+    case_id = create(client, alice, seed.company_a, title=title).json()["id"]
+    save(client, alice, seed.company_a, case_id, {"incident.narrative": NARRATIVE}, revision=0)
     with sessions() as db:
         db.execute(update(Membership).values(role="member"))
         db.commit()
 
-    member_view = client.get(f"/companies/{seed.company_a}/cases/{case_id}/workflow", headers=alice)
-    assert member_view.status_code == 200
-    assert member_view.json()["can_edit"] is False
-    assert client.get(cases_url(seed.company_a), headers=alice).status_code == 200
-    refused = save(client, alice, seed.company_a, case_id, {"incident.history": "new"}, revision=0)
-    assert (refused.status_code, refused.json()) == FORBIDDEN
-    assert count(sessions, WorkflowSubmission) == 0
-    assert (create(client, alice, seed.company_a).status_code, count(sessions, Case)) == (403, 1)
+    # Demoted: every workflow route answers the same fixed 403, with no content.
+    for response in (
+        client.get(cases_url(seed.company_a), headers=alice),
+        client.get(f"/companies/{seed.company_a}/cases/{case_id}/workflow", headers=alice),
+        client.get(f"/companies/{seed.company_a}/cases/{uuid.uuid4()}/workflow", headers=alice),
+        save(client, alice, seed.company_a, case_id, {"incident.history": "new"}, revision=1),
+        create(client, alice, seed.company_a),
+    ):
+        assert (response.status_code, response.json()) == FORBIDDEN
+    assert count(sessions, WorkflowSubmission) == 1
+    assert count(sessions, Case) == 1
+
+
+def test_generic_case_records_hide_disciplinary_cases_from_members(
+    client: TestClient,
+    sessions: sessionmaker[Session],
+    seed: SeedData,
+    alice: dict[str, str],
+) -> None:
+    make_admin(sessions, seed.company_a, seed.alice)
+    title = "[SYNTHETIC] Confidential title"
+    case_id = create(client, alice, seed.company_a, title=title).json()["id"]
+    with sessions() as db:
+        db.add(Case(company_id=seed.company_a, case_type="general", title="[SYNTHETIC] Other"))
+        db.commit()
+
+    admin_list = client.get(f"/companies/{seed.company_a}/cases", headers=alice).json()
+    assert sorted(c["case_type"] for c in admin_list) == ["disciplinary", "general"]
+    assert (
+        client.get(f"/companies/{seed.company_a}/cases/{case_id}", headers=alice).status_code == 200
+    )
+
+    with sessions() as db:
+        db.execute(update(Membership).values(role="member"))
+        db.commit()
+    member_list = client.get(f"/companies/{seed.company_a}/cases", headers=alice)
+    assert [c["case_type"] for c in member_list.json()] == ["general"]
+    assert title not in member_list.text
+    member_get = client.get(f"/companies/{seed.company_a}/cases/{case_id}", headers=alice)
+    assert (member_get.status_code, member_get.json()) == NOT_FOUND
 
 
 def test_another_company_is_forbidden_and_its_cases_are_not_found(

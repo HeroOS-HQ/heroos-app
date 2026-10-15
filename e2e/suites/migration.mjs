@@ -158,8 +158,8 @@ export async function run(ctx) {
   await m110cApi.stop();
   await currentOnStage.start();
   const workflowList = await fetch(`${currentOnStage.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } });
-  check("MIG-33", "the current API starts on D1; existing cases are not workflow Cases (empty Disciplinary list)",
-    workflowList.status === 200 && JSON.stringify(await workflowList.json()) === "[]" && (await probe(currentOnStage, "alpha", B)) === 403);
+  check("MIG-33", "the current API starts on D1; the not-yet-appointed demo member gets no Disciplinary access (403, administrators only)",
+    workflowList.status === 403 && (await probe(currentOnStage, "alpha", A)) === 200 && (await probe(currentOnStage, "alpha", B)) === 403);
 
   // --- step 8: appoint administrators through the trusted procedure -------------------------
   const membershipA = await db.ownerValue(`SELECT id FROM memberships WHERE company_id = '${A}'`);
@@ -171,6 +171,9 @@ export async function run(ctx) {
   // --- rollback restrictions -------------------------------------------------------------------
   const downgrade = await alembic(stage, "downgrade", B1B);
   check("MIG-23", "C1 cannot be downgraded once a role change exists (roll forward only; the whole downgrade is refused)", downgrade.code !== 0 && (await revision()) === D1, downgrade.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
+  const adminList = await fetch(`${currentOnStage.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } });
+  check("MIG-35", "once appointed, the administrator sees an empty Disciplinary list (existing cases are not workflow Cases)",
+    adminList.status === 200 && JSON.stringify(await adminList.json()) === "[]");
   const created = await fetch(`${currentOnStage.url}/companies/${A}/workflows/disciplinary/cases`, {
     method: "POST",
     headers: { Authorization: `Bearer ${tokens.alpha}`, "Content-Type": "application/json" },

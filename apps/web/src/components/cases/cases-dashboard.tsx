@@ -21,17 +21,16 @@ export function SliceNotice({ className }: { className?: string }) {
 
 /**
  * CASES_READY: the Company's Disciplinary Cases, most recently active first.
- * Only an administrator sees "New case" (the API enforces it on create).
+ * Rendered for Company administrators only (the API enforces it on every
+ * request; members see AdminOnlyView instead).
  */
 export function CasesDashboard({
   companyId,
   companyName,
-  canCreate,
   cases,
 }: {
   companyId: string;
   companyName: string;
-  canCreate: boolean;
   cases: CaseSummary[];
 }) {
   const newHref = `${casesHref(companyId)}/new`;
@@ -47,11 +46,9 @@ export function CasesDashboard({
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-hero-blue-ink">HR workflow</p>
             <h1 className={`${pageTitle} mt-2`}>Disciplinary cases</h1>
           </div>
-          {canCreate ? (
-            <a className={`${buttonPrimary} min-h-11 px-6 text-[0.9375rem]`} href={newHref}>
-              New case
-            </a>
-          ) : null}
+          <a className={`${buttonPrimary} min-h-11 px-6 text-[0.9375rem]`} href={newHref}>
+            New case
+          </a>
         </div>
         <p className={`mt-3 max-w-[42rem] ${lede}`}>
           A guided way to record a conduct concern step by step. Each case keeps its answers, so you can stop and come
@@ -70,15 +67,12 @@ export function CasesDashboard({
             No Disciplinary cases yet
           </h2>
           <p className="max-w-[36rem] text-[0.9375rem] leading-relaxed text-hero-muted">
-            {canCreate
-              ? "Start a case when a conduct concern comes up. You'll answer a few questions about what happened; you can fill in the rest later."
-              : "Only company administrators can start a case. Cases they create will appear here."}
+            Start a case when a conduct concern comes up. You&apos;ll answer a few questions about what happened; you
+            can fill in the rest later.
           </p>
-          {canCreate ? (
-            <a className={`${buttonPrimary} mt-1 min-h-11 px-6 text-[0.9375rem]`} href={newHref}>
-              Start a case
-            </a>
-          ) : null}
+          <a className={`${buttonPrimary} mt-1 min-h-11 px-6 text-[0.9375rem]`} href={newHref}>
+            Start a case
+          </a>
         </section>
       ) : (
         <section aria-labelledby="list-heading" className={`${card} p-2 sm:p-3`}>
@@ -110,9 +104,9 @@ export function CasesDashboard({
         </section>
       )}
 
-      {!canCreate && cases.length > 0 ? (
-        <p className="text-sm text-hero-muted">You can view these cases. Only company administrators can create or update them.</p>
-      ) : null}
+      <p className="text-sm text-hero-muted">
+        Disciplinary cases are confidential: only your company&apos;s administrators can see them.
+      </p>
     </div>
   );
 }

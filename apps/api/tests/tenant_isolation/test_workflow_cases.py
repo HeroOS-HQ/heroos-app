@@ -495,26 +495,30 @@ def test_concurrent_saves_against_one_revision_apply_once(
     assert winner["workflow"]["revision"] == 1
 
     # The same save sent three times at once (a double click and a retry):
-    # applied once, every response shows the result.
-    view = pooled_client.get(
-        f"/companies/{tenants.a.company}/cases/{case_id}/workflow", headers=auth(ALICE)
-    )
-    key = str(uuid.uuid4())
+    # applied once, and every response shows the committed result. Repeated,
+    # because the race CI caught (run 38777691679) needs a narrow interleaving.
+    for round_ in range(10):
+        revision = 1 + round_
+        key = str(uuid.uuid4())
+        answer = ("yes", "no")[round_ % 2]
 
-    def same() -> Any:
-        return pooled_client.put(
-            url,
-            headers=auth(ALICE),
-            json={
-                "expected_revision": view.json()["workflow"]["revision"],
-                "submission_key": key,
-                "answers": {"incident.discussed_with_employee": "yes"},
-            },
-        )
+        def same(key: str = key, revision: int = revision, answer: str = answer) -> Any:
+            return pooled_client.put(
+                url,
+                headers=auth(ALICE),
+                json={
+                    "expected_revision": revision,
+                    "submission_key": key,
+                    "answers": {"incident.discussed_with_employee": answer},
+                },
+            )
 
-    repeated = _parallel([same, same, same])
-    assert [r.status_code for r in repeated] == [200, 200, 200]
-    assert {r.json()["workflow"]["revision"] for r in repeated} == {2}
+        repeated = _parallel([same, same, same])
+        assert [r.status_code for r in repeated] == [200, 200, 200]
+        assert {r.json()["workflow"]["revision"] for r in repeated} == {revision + 1}
+        assert {r.json()["answers"]["incident.discussed_with_employee"] for r in repeated} == {
+            answer
+        }
     with admin_sessions() as db:
         assert (
             db.scalar(
@@ -524,7 +528,110 @@ def test_concurrent_saves_against_one_revision_apply_once(
                 ),
                 {"c": case_id},
             )
-            == 2
+            == 11
+        )
+
+
+def test_a_save_racing_an_identical_committed_save_answers_with_the_committed_state(
+    pooled_client: TestClient,
+    tenants: Tenants,
+    auth: Any,
+    runtime_engine: Engine,
+    admin_sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for CI run 38777691679 (Tenant Isolation).
+
+    The same save (same submission key) committed by another request right
+    after this request's first read. Before the fix, this request read the
+    instance (revision 1), then found the other request's submission and replayed
+    with the stale revision: a 200 whose revision (1) was older than the answers
+    it showed (revision 2), so the employer's next save would have been refused
+    as stale. The route now locks the instance row first: the other request
+    waits, and every response reflects one committed state.
+    """
+    a = tenants.a
+    created = pooled_client.post(
+        f"/companies/{a.company}/workflows/disciplinary/cases",
+        headers=auth(ALICE),
+        json={"title": "[SYNTHETIC] Race", "request_key": str(uuid.uuid4())},
+    )
+    case_id = uuid.UUID(created.json()["id"])
+    url = f"/companies/{a.company}/cases/{case_id}/workflow/steps/initial_facts/answers"
+    first = pooled_client.put(
+        url,
+        headers=auth(ALICE),
+        json={
+            "expected_revision": 0,
+            "submission_key": str(uuid.uuid4()),
+            "answers": {"incident.history": "new"},
+        },
+    )
+    assert first.json()["workflow"]["revision"] == 1
+    key = uuid.uuid4()
+    original = workflows.get_workflow_case
+    state: dict[str, Any] = {"errors": []}
+
+    def concurrent_identical_save() -> None:
+        try:
+            with Session(runtime_engine, autoflush=False) as db:
+                scope = scope_for(db, a)
+                item = original(scope, case_id, for_update=True)
+                assert item is not None
+                if workflows.find_submission(scope, item.instance.id, key) is None:
+                    revision = workflows.advance_revision(scope, item.instance.id, 1)
+                    if revision is not None:
+                        workflows.record_submission(
+                            scope,
+                            item.instance,
+                            step_key="initial_facts",
+                            revision=revision,
+                            idempotency_key=key,
+                            user_id=a.user,
+                            changes={"incident.discussed_with_employee": "yes"},
+                        )
+                scope.commit()
+        except Exception as error:  # surfaced by the assertion below
+            state["errors"].append(error)
+
+    def racing_lookup(scope: CompanyScope, lookup: uuid.UUID, **options: Any) -> Any:
+        result = original(scope, lookup, **options)
+        if "worker" not in state:
+            # The other request runs right after this read; it can only commit
+            # now if this request holds no lock on the instance.
+            worker = threading.Thread(target=concurrent_identical_save)
+            state["worker"] = worker
+            worker.start()
+            worker.join(timeout=1.5)
+        return result
+
+    monkeypatch.setattr(workflows, "get_workflow_case", racing_lookup)
+    response = pooled_client.put(
+        url,
+        headers=auth(ALICE),
+        json={
+            "expected_revision": 1,
+            "submission_key": str(key),
+            "answers": {"incident.discussed_with_employee": "yes"},
+        },
+    )
+    state["worker"].join(timeout=10)
+    assert not state["worker"].is_alive()
+    assert state["errors"] == []
+    assert response.status_code == 200
+    body = response.json()
+    assert body["workflow"]["revision"] == 2
+    assert body["answers"]["incident.discussed_with_employee"] == "yes"
+    with admin_sessions() as db:
+        assert (
+            db.scalar(
+                text(
+                    "SELECT count(*) FROM workflow_submissions s JOIN workflow_instances i "
+                    "ON i.id = s.instance_id WHERE i.case_id = :c AND s.idempotency_key = :k"
+                ),
+                {"c": case_id, "k": key},
+            )
+            == 1
         )
 
 
@@ -553,7 +660,8 @@ def test_routes_isolate_and_authorize_on_postgresql(
     )
     assert [c["id"] for c in listed.json()] == [case_id]
 
-    # Bob (a member of B only): 403 on A, 404 for A's Case through B.
+    # Bob (administrator of B only): 403 on A, 404 for A's Case through B.
+    set_role(operator_engine, b.company, b.membership, "company_admin")
     response = pooled_client.get(
         f"/companies/{a.company}/workflows/disciplinary/cases", headers=auth(BOB)
     )
@@ -563,7 +671,8 @@ def test_routes_isolate_and_authorize_on_postgresql(
     )
     assert (response.status_code, response.json()) == NOT_FOUND
 
-    # Demoted between requests: the write is refused in the write transaction.
+    # Demoted between requests: refused inside the request's transaction, and a
+    # member can neither write nor read (administrator-only, M2-01).
     set_role(operator_engine, a.company, a.membership, "member")
     response = pooled_client.put(
         f"/companies/{a.company}/cases/{case_id}/workflow/steps/initial_facts/answers",
@@ -575,7 +684,14 @@ def test_routes_isolate_and_authorize_on_postgresql(
         },
     )
     assert (response.status_code, response.json()) == FORBIDDEN
-    member_view = pooled_client.get(
-        f"/companies/{a.company}/cases/{case_id}/workflow", headers=auth(ALICE)
-    )
-    assert (member_view.status_code, member_view.json()["can_edit"]) == (200, False)
+    for path in (
+        f"/companies/{a.company}/cases/{case_id}/workflow",
+        f"/companies/{a.company}/workflows/disciplinary/cases",
+    ):
+        response = pooled_client.get(path, headers=auth(ALICE))
+        assert (response.status_code, response.json()) == FORBIDDEN
+    # The generic Case records hide the Disciplinary Case from the member.
+    records = pooled_client.get(f"/companies/{a.company}/cases", headers=auth(ALICE))
+    assert [c["id"] for c in records.json()] == [str(a.case)]
+    response = pooled_client.get(f"/companies/{a.company}/cases/{case_id}", headers=auth(ALICE))
+    assert (response.status_code, response.json()) == NOT_FOUND

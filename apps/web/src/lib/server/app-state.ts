@@ -114,6 +114,8 @@ export async function loadWorkspace(companyId: string): Promise<WorkspaceState> 
 
 export type CasesState =
   | Exclude<WorkspaceState, { kind: "workspace_ready" }>
+  /** M2-01 interim policy: Disciplinary Cases are for Company administrators only. */
+  | { kind: "admin_only"; details: WorkspaceDetails; workspaces: Workspace[] }
   /** The HeroOS API serving this app has no workflow routes yet (an older deployment). */
   | { kind: "workflow_unavailable"; details: WorkspaceDetails; workspaces: Workspace[] }
   | { kind: "cases_ready"; details: WorkspaceDetails; workspaces: Workspace[]; cases: WorkflowCaseSummary[] };
@@ -130,6 +132,9 @@ export type CaseState =
       view: WorkflowView;
     };
 
+/** The API's answer for this Company; never a client-side grant of anything. */
+export const isCompanyAdmin = (details: WorkspaceDetails) => details.membership?.role === "company_admin";
+
 function failureState(failure: string): Exclude<WorkspaceState, { kind: "workspace_ready" }> {
   switch (failure) {
     case "unauthenticated":
@@ -141,16 +146,24 @@ function failureState(failure: string): Exclude<WorkspaceState, { kind: "workspa
   }
 }
 
+/**
+ * `cases` is null when it was not requested: case data is never asked for on
+ * behalf of a non-administrator (the API refuses it too). A 403 from the
+ * workflow routes means the caller is no longer an administrator.
+ */
 export function casesState(
   details: ApiResult<WorkspaceDetails>,
   workspaces: ApiResult<Workspace[]>,
-  cases: ApiResult<WorkflowCaseSummary[]>,
+  cases: ApiResult<WorkflowCaseSummary[]> | null,
 ): CasesState {
   const workspace = workspaceState(details, workspaces);
   if (workspace.kind !== "workspace_ready") return workspace;
   const base = { details: workspace.details, workspaces: workspace.workspaces };
+  if (cases === null || !isCompanyAdmin(workspace.details)) return { kind: "admin_only", ...base };
   if (!cases.ok) {
-    return cases.failure === "not_found" ? { kind: "workflow_unavailable", ...base } : failureState(cases.failure);
+    if (cases.failure === "not_found") return { kind: "workflow_unavailable", ...base };
+    if (cases.failure === "forbidden") return { kind: "admin_only", ...base };
+    return failureState(cases.failure);
   }
   return { kind: "cases_ready", ...base, cases: cases.data };
 }
@@ -158,13 +171,18 @@ export function casesState(
 export function caseState(
   details: ApiResult<WorkspaceDetails>,
   workspaces: ApiResult<Workspace[]>,
-  cases: ApiResult<WorkflowCaseSummary[]>,
-  view: ApiResult<WorkflowView>,
+  cases: ApiResult<WorkflowCaseSummary[]> | null,
+  view: ApiResult<WorkflowView> | null,
 ): CaseState {
   const list = casesState(details, workspaces, cases);
   if (list.kind !== "cases_ready") return list;
   const base = { details: list.details, workspaces: list.workspaces, cases: list.cases };
-  if (!view.ok) return view.failure === "not_found" ? { kind: "case_not_found", ...base } : failureState(view.failure);
+  if (view === null) return { kind: "admin_only", details: base.details, workspaces: base.workspaces };
+  if (!view.ok) {
+    if (view.failure === "not_found") return { kind: "case_not_found", ...base };
+    if (view.failure === "forbidden") return { kind: "admin_only", details: base.details, workspaces: base.workspaces };
+    return failureState(view.failure);
+  }
   return { kind: "case_ready", ...base, view: view.data };
 }
 
@@ -172,11 +190,12 @@ export function caseState(
 export async function loadCases(companyId: string, workflowKey: string): Promise<CasesState> {
   const gate = await sessionGate();
   if (gate.kind !== "ok") return gate;
-  const [details, workspaces, cases] = await Promise.all([
+  const [details, workspaces] = await Promise.all([
     getWorkspaceDetails(gate.accessToken, gate.config, companyId),
     discoverWorkspaces(gate.accessToken, gate.config),
-    listWorkflowCases(gate.accessToken, gate.config, companyId, workflowKey),
   ]);
+  const admin = details.ok && isCompanyAdmin(details.data);
+  const cases = admin ? await listWorkflowCases(gate.accessToken, gate.config, companyId, workflowKey) : null;
   return casesState(details, workspaces, cases);
 }
 
@@ -184,9 +203,12 @@ export async function loadCases(companyId: string, workflowKey: string): Promise
 export async function loadCase(companyId: string, workflowKey: string, caseId: string): Promise<CaseState> {
   const gate = await sessionGate();
   if (gate.kind !== "ok") return gate;
-  const [details, workspaces, cases, view] = await Promise.all([
+  const [details, workspaces] = await Promise.all([
     getWorkspaceDetails(gate.accessToken, gate.config, companyId),
     discoverWorkspaces(gate.accessToken, gate.config),
+  ]);
+  if (!(details.ok && isCompanyAdmin(details.data))) return caseState(details, workspaces, null, null);
+  const [cases, view] = await Promise.all([
     listWorkflowCases(gate.accessToken, gate.config, companyId, workflowKey),
     getCaseWorkflow(gate.accessToken, gate.config, companyId, caseId),
   ]);

@@ -24,11 +24,13 @@ const AREAS = [
 ] as const;
 
 /**
- * The three V1 HR workflows. Disciplinary opens its Cases (M2-01: the initial
- * facts only, stated on the card); the others are honestly not available yet:
- * no links, no buttons, nothing that suggests a working feature.
+ * The three V1 HR workflows. Disciplinary opens its Cases for Company
+ * administrators (M2-01: the initial facts only, stated on the card); for other
+ * members it is shown as administrator-only, with no link. The others are
+ * honestly not available yet: no links, no buttons, nothing that suggests a
+ * working feature. The API enforces access whatever this shows.
  */
-export function WorkflowAreas({ companyId }: { companyId: string }) {
+export function WorkflowAreas({ companyId, isAdmin }: { companyId: string; isAdmin: boolean }) {
   return (
     <section aria-labelledby="workflows-heading" className={`${card} p-5 sm:p-8`}>
       <div className="flex items-start gap-3">
@@ -45,7 +47,7 @@ export function WorkflowAreas({ companyId }: { companyId: string }) {
       </div>
       <ul className="mt-6 grid gap-4 md:grid-cols-3">
         {AREAS.map(({ key, title, description, Icon }) =>
-          key === "disciplinary" ? (
+          key === "disciplinary" && isAdmin ? (
             <li className="flex" key={key}>
               <a
                 className="group flex w-full flex-col rounded-2xl border border-hero-blue/30 bg-hero-blue-tint/50 p-5 transition-colors duration-150 hover:bg-hero-blue-tint focus-visible:outline-3 focus-visible:outline-offset-3 focus-visible:outline-hero-blue"
@@ -71,7 +73,7 @@ export function WorkflowAreas({ companyId }: { companyId: string }) {
                 <span className="inline-flex size-10 items-center justify-center rounded-xl bg-white text-hero-blue">
                   <Icon className="size-5" />
                 </span>
-                <StatusBadge tone="muted">Coming soon</StatusBadge>
+                <StatusBadge tone="muted">{key === "disciplinary" ? "Administrators only" : "Coming soon"}</StatusBadge>
               </div>
               <h3 className="mt-4 text-base font-extrabold text-hero-navy">{title}</h3>
               <p className="mt-1 text-sm leading-relaxed text-hero-muted">{description}</p>
