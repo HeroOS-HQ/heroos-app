@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import companies, onboarding
+from app.api import companies, onboarding, workflows
 from app.auth.dependencies import get_authentication_provider
 from app.core.config import Settings, settings
 from app.core.http_security import install_http_security
@@ -59,6 +59,7 @@ def create_app(config: Settings) -> FastAPI:
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)
     application.include_router(onboarding.router)
+    application.include_router(workflows.router)
     return application
 
 

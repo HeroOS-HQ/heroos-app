@@ -84,6 +84,14 @@ RUNTIME_WRITABLE_TABLES = {
 RUNTIME_INSERTABLE_TABLES = {
     table: column for table, column in RUNTIME_WRITABLE_TABLES.items() if table != "companies"
 }
+# Workflow entities (M2-01, migration D1): tenant-owned, append-only for the API
+# role (SELECT/INSERT; only the instance revision is updatable), never deleted.
+# Kept apart from TENANT_TABLES, whose generic tests build rows per table.
+WORKFLOW_TABLES = {
+    "workflow_instances": "company_id",
+    "workflow_submissions": "company_id",
+    "case_facts": "company_id",
+}
 # Tenant-owned audit tables: written only by owner-run triggers; no API grant.
 TENANT_AUDIT_TABLES = {
     "membership_events": "company_id",
@@ -329,7 +337,9 @@ def _create_tenant(db: Session, label: str, subject: str) -> Tenant:
     case = Case(
         company_id=company.id,
         subject_id=case_subject.id,
-        case_type="disciplinary",
+        # A neutral M1 record: Disciplinary records are administrator-only
+        # (M2-01) and are covered by test_workflow_cases.py.
+        case_type="general",
         title=f"Case {label}",
     )
     db.add(case)
@@ -466,12 +476,17 @@ def backend_pid(session: Session) -> int:
 
 def count_rows(session: Session, table: str) -> int:
     """Unfiltered row count: anything returned is what RLS lets through."""
-    assert table in TENANT_TABLES or table in TENANT_AUDIT_TABLES or table in GLOBAL_TABLES
+    assert (
+        table in TENANT_TABLES
+        or table in TENANT_AUDIT_TABLES
+        or table in WORKFLOW_TABLES
+        or table in GLOBAL_TABLES
+    )
     count: int = session.scalar(text(f"SELECT count(*) FROM {table}"))
     return count
 
 
 def owners(session: Session, table: str) -> set[uuid.UUID]:
     """Owning Company of every row RLS lets through, from an unfiltered query."""
-    column = {**TENANT_TABLES, **TENANT_AUDIT_TABLES}[table]
+    column = {**TENANT_TABLES, **TENANT_AUDIT_TABLES, **WORKFLOW_TABLES}[table]
     return set(session.scalars(text(f"SELECT {column} FROM {table}")))

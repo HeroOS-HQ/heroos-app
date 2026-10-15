@@ -10,6 +10,16 @@ import {
   type RegistrationPayload,
 } from "@/lib/onboarding/model";
 
+import {
+  type CaseSummary as WorkflowCaseSummary,
+  FACT_KEY,
+  KEY,
+  parseCaseSummaries,
+  parseCaseSummary,
+  parseWorkflowView,
+  type WorkflowView,
+} from "@/lib/workflows/model";
+
 import type { AuthConfig } from "./config";
 
 /**
@@ -46,8 +56,11 @@ export type Blueprint = {
 
 export type Registration = { outcome: "created" | "existing"; companyId: string; membershipId: string };
 
-export type ApiFailure = "unauthenticated" | "forbidden" | "not_found" | "invalid" | "unavailable";
-export type ApiResult<T> = { ok: true; data: T } | { ok: false; failure: ApiFailure; fields?: FieldName[] };
+export type ApiFailure = "unauthenticated" | "forbidden" | "not_found" | "conflict" | "invalid" | "unavailable";
+export type ApiResult<T> =
+  | { ok: true; data: T }
+  /** `answerKeys`: the workflow questions a 422 named (keys only, never values). */
+  | { ok: false; failure: ApiFailure; fields?: FieldName[]; answerKeys?: string[] };
 
 type Fetch = typeof fetch;
 const READ_TIMEOUT_MS = 10_000;
@@ -61,11 +74,24 @@ function failureFor(status: number): ApiFailure {
   if (status === 401) return "unauthenticated";
   if (status === 403) return "forbidden";
   if (status === 404) return "not_found";
+  if (status === 409) return "conflict";
   if (status === 422) return "invalid";
   return "unavailable";
 }
 
-type Call = { method?: "GET" | "POST" | "PATCH"; body?: unknown };
+type Call = { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown };
+
+/** Question keys named by a 422 (`loc: ["body", "answers", key]`). */
+export function answerKeysFromApiDetail(detail: unknown): string[] {
+  if (!Array.isArray(detail)) return [];
+  const keys = detail.flatMap((error) => {
+    const loc = typeof error === "object" && error !== null ? (error as { loc?: unknown }).loc : null;
+    return Array.isArray(loc) && loc[0] === "body" && loc[1] === "answers" && typeof loc[2] === "string" && FACT_KEY.test(loc[2])
+      ? [loc[2]]
+      : [];
+  });
+  return [...new Set(keys)];
+}
 
 async function apiCall<T>(
   config: AuthConfig,
@@ -98,7 +124,8 @@ async function apiCall<T>(
       } catch {
         // No usable body: the fields stay unknown.
       }
-      return { ok: false, failure, fields: fieldsFromApiDetail(detail) };
+      const answerKeys = answerKeysFromApiDetail(detail);
+      return { ok: false, failure, fields: fieldsFromApiDetail(detail), ...(answerKeys.length > 0 ? { answerKeys } : {}) };
     }
     const data = parse(await response.json());
     return data === null ? { ok: false, failure: "unavailable" } : { ok: true, data };
@@ -339,5 +366,87 @@ export async function updateBlueprint(
     body: patch,
   });
   if (result.ok && result.data.companyId !== companyId) return { ok: false, failure: "unavailable" };
+  return result;
+}
+
+// --- guided workflow Cases (M2-01) ---------------------------------------------------
+
+function workflowCasesPath(companyId: string, workflowKey: string): string | null {
+  return UUID.test(companyId) && KEY.test(workflowKey)
+    ? `/companies/${companyId}/workflows/${workflowKey}/cases`
+    : null;
+}
+
+/** `GET /companies/{id}/workflows/{key}/cases`: the Company's Cases of one workflow. */
+export async function listWorkflowCases(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  workflowKey: string,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowCaseSummary[]>> {
+  const path = workflowCasesPath(companyId, workflowKey);
+  if (path === null) return { ok: false, failure: "forbidden" };
+  return apiCall(config, accessToken, fetcher, path, parseCaseSummaries);
+}
+
+/**
+ * `POST /companies/{id}/workflows/{key}/cases` (administrators only, enforced by
+ * the API). 201 creates; a retry with the same `request_key` answers 200 with
+ * the same Case; a reused key with other details is a conflict.
+ */
+export async function createWorkflowCase(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  workflowKey: string,
+  payload: { title: string; request_key: string },
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowCaseSummary>> {
+  const path = workflowCasesPath(companyId, workflowKey);
+  if (path === null) return { ok: false, failure: "forbidden" };
+  return apiCall(config, accessToken, fetcher, path, parseCaseSummary, { method: "POST", body: payload });
+}
+
+/** `GET /companies/{id}/cases/{caseId}/workflow`: the Case's guided view. */
+export async function getCaseWorkflow(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowView>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  if (!UUID.test(caseId)) return { ok: false, failure: "not_found" };
+  const result = await apiCall(config, accessToken, fetcher, `/companies/${companyId}/cases/${caseId}/workflow`, parseWorkflowView);
+  if (result.ok && result.data.case.id !== caseId) return { ok: false, failure: "unavailable" };
+  return result;
+}
+
+/**
+ * `PUT /companies/{id}/cases/{caseId}/workflow/steps/{step}/answers`
+ * (administrators only). A stale `expected_revision` is a conflict; a retry
+ * with the same `submission_key` is applied once.
+ */
+export async function saveStepAnswers(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  stepKey: string,
+  payload: { expected_revision: number; submission_key: string; answers: Record<string, string | null> },
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowView>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  if (!UUID.test(caseId) || !KEY.test(stepKey)) return { ok: false, failure: "not_found" };
+  const result = await apiCall(
+    config,
+    accessToken,
+    fetcher,
+    `/companies/${companyId}/cases/${caseId}/workflow/steps/${stepKey}/answers`,
+    parseWorkflowView,
+    { method: "PUT", body: payload },
+  );
+  if (result.ok && result.data.case.id !== caseId) return { ok: false, failure: "unavailable" };
   return result;
 }

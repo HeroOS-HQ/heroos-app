@@ -18,6 +18,7 @@ from tests.tenant_isolation.conftest import (
     DISPOSABLE_RUNTIME_ROLE,
     TENANT_AUDIT_TABLES,
     TENANT_TABLES,
+    WORKFLOW_TABLES,
     TenantDatabase,
 )
 
@@ -169,6 +170,11 @@ def test_startup_guard_accepts_runtime_role_and_rejects_admin(
         # Identity lookup only: no binding, reassignment or suspension.
         ("users", {"SELECT"}),
         ("user_identities", {"SELECT"}),
+        # Workflow entities (M2-01): append-only, never deleted (PRIV-020). The
+        # instance's revision is updatable column by column (below).
+        ("workflow_instances", {"SELECT", "INSERT"}),
+        ("workflow_submissions", {"SELECT", "INSERT"}),
+        ("case_facts", {"SELECT", "INSERT"}),
         # Audit is written only by owner-run triggers.
         ("identity_events", set()),
         ("membership_events", set()),
@@ -344,7 +350,11 @@ def test_every_table_has_rls_unless_explicitly_exempt(admin_engine: Engine) -> N
     without_rls = {name for name, enabled in tables.items() if not enabled}
     assert without_rls == set(RLS_EXEMPT_TABLES)
     assert {name for name, enabled in tables.items() if enabled} == (
-        set(TENANT_TABLES) | set(TENANT_AUDIT_TABLES) | set(LIFECYCLE_TABLES) | OWNER_ONLY_TABLES
+        set(TENANT_TABLES)
+        | set(TENANT_AUDIT_TABLES)
+        | set(WORKFLOW_TABLES)
+        | set(LIFECYCLE_TABLES)
+        | OWNER_ONLY_TABLES
     )
 
 
@@ -359,7 +369,7 @@ def test_each_tenant_table_has_exactly_one_permissive_policy_for_all_commands(
             )
         ).all()
 
-    tenant_tables = {**TENANT_TABLES, **TENANT_AUDIT_TABLES}
+    tenant_tables = {**TENANT_TABLES, **TENANT_AUDIT_TABLES, **WORKFLOW_TABLES}
     permissive_tenant = [p for p in policies if p.tablename in tenant_tables]
     permissive_tenant = [p for p in permissive_tenant if p.permissive == "PERMISSIVE"]
     # A second permissive policy would be OR-ed in and could only widen access.

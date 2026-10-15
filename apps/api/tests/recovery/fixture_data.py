@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (
     Case,
+    CaseFact,
     CaseSubject,
     Company,
     CompanyBlueprint,
@@ -28,6 +29,8 @@ from app.db.models import (
     Membership,
     User,
     UserIdentity,
+    WorkflowInstance,
+    WorkflowSubmission,
 )
 
 SOURCE_URL_ENV = "RECOVERY_TEST_SOURCE_URL"
@@ -48,6 +51,18 @@ CASE_B = UUID("b5000000-0000-4000-8000-00000000000b")
 IDENTITY_A = UUID("a6000000-0000-4000-8000-00000000000a")
 IDENTITY_B = UUID("b6000000-0000-4000-8000-00000000000b")
 REGISTRATION_A = UUID("a7000000-0000-4000-8000-00000000000a")
+# M2-01 workflow state a restore must keep: each Case runs the Disciplinary
+# workflow with one saved answer group and one (synthetic) fact.
+INSTANCE_A = UUID("a8000000-0000-4000-8000-00000000000a")
+INSTANCE_B = UUID("b8000000-0000-4000-8000-00000000000b")
+REQUEST_KEY_A = UUID("a9000000-0000-4000-8000-00000000000a")
+REQUEST_KEY_B = UUID("b9000000-0000-4000-8000-00000000000b")
+SUBMISSION_A = UUID("aa000000-0000-4000-8000-00000000000a")
+SUBMISSION_B = UUID("ba000000-0000-4000-8000-00000000000b")
+SUBMISSION_KEY_A = UUID("ab000000-0000-4000-8000-00000000000a")
+SUBMISSION_KEY_B = UUID("bb000000-0000-4000-8000-00000000000b")
+FACT_A = UUID("ac000000-0000-4000-8000-00000000000a")
+FACT_B = UUID("bc000000-0000-4000-8000-00000000000b")
 ISSUER = "urn:heroos:recovery-test"
 # M1-10C state a restore must keep: A has an administrator and a current DIFC
 # confirmation; B is a member-only Company with an unconfirmed "Other" answer.
@@ -135,6 +150,44 @@ def build() -> list[object]:
                 subject_id=subject,
                 case_type="disciplinary",
                 title=f"Synthetic Recovery Case {label}",
+            )
+        )
+        instance, request_key, submission, submission_key, fact = (
+            (INSTANCE_A, REQUEST_KEY_A, SUBMISSION_A, SUBMISSION_KEY_A, FACT_A)
+            if label == "A"
+            else (INSTANCE_B, REQUEST_KEY_B, SUBMISSION_B, SUBMISSION_KEY_B, FACT_B)
+        )
+        rows.append(
+            WorkflowInstance(
+                id=instance,
+                company_id=company,
+                case_id=case,
+                workflow_key="disciplinary",
+                definition_version=1,
+                revision=1,
+                request_key=request_key,
+                created_by_user_id=user,
+            )
+        )
+        rows.append(
+            WorkflowSubmission(
+                id=submission,
+                company_id=company,
+                instance_id=instance,
+                step_key="initial_facts",
+                revision=1,
+                idempotency_key=submission_key,
+                submitted_by_user_id=user,
+            )
+        )
+        rows.append(
+            CaseFact(
+                id=fact,
+                company_id=company,
+                instance_id=instance,
+                submission_id=submission,
+                fact_key="incident.history",
+                value="new",
             )
         )
     return rows

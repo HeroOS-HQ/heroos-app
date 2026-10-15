@@ -45,6 +45,8 @@ export function WorkspaceHome({ details }: { details: WorkspaceDetails }) {
   const { company, membership, blueprint, cases } = details;
   const role = roleLabel(membership?.role ?? null);
   const canEdit = membership?.canUpdateBlueprint === true;
+  // Disciplinary Cases are administrator-only (M2-01); the API enforces it.
+  const isAdmin = membership?.role === "company_admin";
   const settingsHref = `/workspaces/${encodeURIComponent(company.id)}/settings`;
 
   return (
@@ -120,7 +122,7 @@ export function WorkspaceHome({ details }: { details: WorkspaceDetails }) {
         </section>
       </div>
 
-      <WorkflowAreas />
+      <WorkflowAreas companyId={company.id} isAdmin={isAdmin} />
 
       {cases.length > 0 ? (
         <section aria-labelledby="cases-heading" className={`${card} p-5 sm:p-8`}>
@@ -130,16 +132,28 @@ export function WorkspaceHome({ details }: { details: WorkspaceDetails }) {
               <h2 className={sectionTitle} id="cases-heading">
                 Case records
               </h2>
-              <p className="mt-1 text-[0.9375rem] text-hero-muted">Read-only records saved for this company.</p>
+              <p className="mt-1 text-[0.9375rem] text-hero-muted">Records saved for this company. Disciplinary cases open in the guided workspace.</p>
             </div>
           </div>
           <ul aria-label="Cases" className="mt-5 flex flex-col gap-2">
-            {cases.map((item) => (
-              <li className="rounded-xl border border-hero-border px-4 py-3" key={item.id}>
-                <p className="break-words font-semibold text-hero-navy">{item.title}</p>
-                <p className="text-sm capitalize text-hero-muted">{item.caseType}</p>
-              </li>
-            ))}
+            {cases.map((item) =>
+              item.caseType === "disciplinary" && isAdmin ? (
+                <li key={item.id}>
+                  <a
+                    className="block rounded-xl border border-hero-border px-4 py-3 transition-colors duration-150 hover:bg-hero-blue-tint/60 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-hero-blue"
+                    href={`/workspaces/${encodeURIComponent(company.id)}/cases/${encodeURIComponent(item.id)}`}
+                  >
+                    <span className="block break-words font-semibold text-hero-navy">{item.title}</span>
+                    <span className="block text-sm capitalize text-hero-muted">{item.caseType}</span>
+                  </a>
+                </li>
+              ) : (
+                <li className="rounded-xl border border-hero-border px-4 py-3" key={item.id}>
+                  <p className="break-words font-semibold text-hero-navy">{item.title}</p>
+                  <p className="text-sm capitalize text-hero-muted">{item.caseType}</p>
+                </li>
+              ),
+            )}
           </ul>
         </section>
       ) : null}

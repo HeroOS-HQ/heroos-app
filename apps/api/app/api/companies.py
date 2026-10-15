@@ -18,6 +18,10 @@ Responses:
   Company or jurisdiction confirmation fields are never accepted). Submitted
   values are never echoed.
 
+Case records of restricted types (Disciplinary, ``app.workflows.access``) are
+for Company administrators only: a member's list leaves them out and a member
+reading one gets the same 404 as for a missing record.
+
 Only ``PATCH /blueprint`` commits; every other request's transaction is rolled
 back when the session closes. Founder self-registration is
 ``app.api.onboarding``; role assignment has no HTTP route (trusted operator
@@ -40,6 +44,7 @@ from pydantic import (
 
 from app.auth.dependencies import CompanyContext
 from app.companies.jurisdiction import (
+    JurisdictionAssessment,
     JurisdictionReadiness,
     ReadinessReason,
     assess_jurisdiction,
@@ -50,6 +55,7 @@ from app.db.models.membership import ROLE_COMPANY_ADMIN
 from app.repositories import cases, companies
 from app.repositories.company_blueprints import get_company_blueprint, update_company_blueprint
 from app.tenancy.dependencies import CompanyAdminDb, CompanyDb
+from app.workflows.access import hidden_case_types, may_access_case_type
 
 router = APIRouter(prefix="/companies/{company_id}", tags=["companies"])
 
@@ -171,16 +177,20 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
-def _blueprint_out(company_id: UUID, blueprint: CompanyBlueprint | None) -> BlueprintOut:
-    """Every authorized Company has a Blueprint view; a missing row reads as empty."""
-    assessment = assess_jurisdiction(blueprint)
-    jurisdiction = JurisdictionOut(
+def jurisdiction_out(assessment: JurisdictionAssessment) -> JurisdictionOut:
+    """The API view of a jurisdiction assessment (also used by workflow Cases)."""
+    return JurisdictionOut(
         readiness=assessment.readiness,
         reason=assessment.reason,
         employment_jurisdiction=assessment.jurisdiction,  # type: ignore[arg-type]
         confirmed_at=assessment.confirmed_at,
         guidance_allowed=assessment.guidance_allowed,
     )
+
+
+def _blueprint_out(company_id: UUID, blueprint: CompanyBlueprint | None) -> BlueprintOut:
+    """Every authorized Company has a Blueprint view; a missing row reads as empty."""
+    jurisdiction = jurisdiction_out(assess_jurisdiction(blueprint))
     if blueprint is None:
         return BlueprintOut(
             company_id=company_id,
@@ -253,13 +263,18 @@ def update_blueprint(update: BlueprintUpdate, scope: CompanyAdminDb) -> Blueprin
 
 
 @router.get("/cases", response_model=list[CaseOut])
-def list_cases(scope: CompanyDb) -> list[CaseOut]:
-    return [CaseOut.model_validate(case) for case in cases.list_cases(scope)]
+def list_cases(scope: CompanyDb, context: CompanyContext) -> list[CaseOut]:
+    # Disciplinary records are administrator-only (app.workflows.access).
+    hidden = hidden_case_types(context.role)
+    return [
+        CaseOut.model_validate(case) for case in cases.list_cases(scope, exclude_case_types=hidden)
+    ]
 
 
 @router.get("/cases/{case_id}", response_model=CaseOut)
-def get_case(case_id: UUID, scope: CompanyDb) -> CaseOut:
+def get_case(case_id: UUID, scope: CompanyDb, context: CompanyContext) -> CaseOut:
     case = cases.get_case(scope, case_id)
-    if case is None:
+    # A restricted record reads exactly like a missing one for a member.
+    if case is None or not may_access_case_type(context.role, case.case_type):
         raise _not_found()
     return CaseOut.model_validate(case)
