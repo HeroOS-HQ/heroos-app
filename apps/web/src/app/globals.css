@@ -82,8 +82,8 @@ html[data-restoring] body {
 }
 
 /*
- * Motion. Everything runs once except the gentle illustration float. The CSP
- * forbids inline style attributes, so delays are expressed as classes.
+ * Motion. Everything runs once; Hannah herself is static. The CSP forbids
+ * inline style attributes, so delays are expressed as classes.
  */
 @keyframes hero-rise {
   from {
@@ -102,16 +102,6 @@ html[data-restoring] body {
   }
   to {
     opacity: 1;
-  }
-}
-
-@keyframes hero-float {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-5px);
   }
 }
 
@@ -150,11 +140,6 @@ html[data-restoring] body {
 
 .fade-swap {
   animation: hero-fade 220ms ease-out both;
-}
-
-.float-slow {
-  animation: hero-float 6s ease-in-out infinite;
-  transform-box: fill-box;
 }
 
 .sun-in {
@@ -209,8 +194,5 @@ html[data-restoring] body {
   [data-reveal="hidden"] {
     opacity: 1;
     transform: none;
-  }
-  .float-slow {
-    animation: none;
   }
 }

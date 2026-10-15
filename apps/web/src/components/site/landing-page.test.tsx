@@ -29,6 +29,16 @@ describe("LandingPage", () => {
     expect(screen.queryByText(/Practical guidance/)).toBeNull();
   });
 
+  it("shows Hannah as static, decorative artwork", () => {
+    const { container } = render(<LandingPage />);
+
+    const hannah = container.querySelector('image[href="/branding/hannah-hero-static.webp"]');
+    expect(hannah).not.toBeNull();
+    expect(hannah).not.toHaveAttribute("class");
+    expect(hannah?.closest("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector(".float-slow")).toBeNull();
+  });
+
   it("sends every sign-in call to action to the login route as a plain link", () => {
     render(<LandingPage />);
 
