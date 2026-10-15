@@ -22,7 +22,7 @@ const CLOSING_MASCOT = {
 };
 const MASCOT_HEIGHT = 76;
 /** Where Hannah stands: on the pathway, a little short of the sun. */
-const MASCOT_FEET = { x: 612, y: 268 };
+const MASCOT_FEET = { x: 592, y: 289 };
 
 function WalkingMascotSlot() {
   const scale = MASCOT_HEIGHT / CLOSING_MASCOT.height;
@@ -50,13 +50,26 @@ export function ClosingIllustration({ className }: { className?: string }) {
     >
       <defs>
         <radialGradient id="closing-sun-glow">
-          <stop offset="0%" stopColor="#ffd401" stopOpacity="0.5" />
-          <stop offset="55%" stopColor="#ffd401" stopOpacity="0.15" />
+          <stop offset="0%" stopColor="#ffd401" stopOpacity="0.55" />
+          <stop offset="55%" stopColor="#ffd401" stopOpacity="0.16" />
           <stop offset="100%" stopColor="#ffd401" stopOpacity="0" />
         </radialGradient>
+        <radialGradient id="closing-horizon-glow">
+          <stop offset="0%" stopColor="#ffc95a" stopOpacity="0.6" />
+          <stop offset="60%" stopColor="#ffd98a" stopOpacity="0.22" />
+          <stop offset="100%" stopColor="#ffd98a" stopOpacity="0" />
+        </radialGradient>
+        <radialGradient id="closing-cloud">
+          <stop offset="0%" stopColor="#ffdca0" stopOpacity="0.75" />
+          <stop offset="100%" stopColor="#ffdca0" stopOpacity="0" />
+        </radialGradient>
         <linearGradient id="closing-hill" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#5888e8" stopOpacity="0.24" />
+          <stop offset="100%" stopColor="#5888e8" stopOpacity="0.08" />
+        </linearGradient>
+        <linearGradient id="closing-hill-near" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0%" stopColor="#5888e8" stopOpacity="0.2" />
-          <stop offset="100%" stopColor="#5888e8" stopOpacity="0" />
+          <stop offset="100%" stopColor="#5888e8" stopOpacity="0.12" />
         </linearGradient>
         {/* Everything above the far hill: the sun is drawn only there, so it sets behind the hill. */}
         <clipPath id="closing-sky">
@@ -64,42 +77,57 @@ export function ClosingIllustration({ className }: { className?: string }) {
         </clipPath>
       </defs>
 
-      {/* Low sun with its halo */}
-      <circle cx="700" cy="252" fill="#5888e8" fillOpacity="0.07" r="168" />
-      <circle cx="700" cy="252" fill="#5888e8" fillOpacity="0.07" r="112" />
-      <circle cx="700" cy="252" fill="url(#closing-sun-glow)" r="84" />
-      <circle clipPath="url(#closing-sky)" cx="700" cy="258" fill="#ffd401" r="26" />
+      {/* Airy sky: soft haloes around the low sun and a golden glow along the horizon */}
+      <circle cx="700" cy="254" fill="#5888e8" fillOpacity="0.06" r="232" />
+      <circle cx="700" cy="254" fill="#5888e8" fillOpacity="0.06" r="152" />
+      <ellipse cx="680" cy="258" fill="url(#closing-horizon-glow)" rx="400" ry="104" />
+      <circle cx="700" cy="252" fill="url(#closing-sun-glow)" r="118" />
 
-      {/* Hills */}
+      {/* Soft clouds near the horizon */}
+      <g fill="url(#closing-cloud)">
+        <ellipse cx="548" cy="216" rx="74" ry="8" />
+        <ellipse cx="590" cy="206" rx="42" ry="5" />
+        <ellipse cx="782" cy="226" rx="60" ry="7" />
+        <ellipse cx="452" cy="234" rx="34" ry="4" />
+      </g>
+
+      {/* Setting sun */}
+      <circle clipPath="url(#closing-sky)" cx="700" cy="262" fill="#ffd401" r="42" />
+
+      {/* Rolling hills, far to near */}
       <path
         d="M120 318C200 290 300 284 380 262C470 236 560 256 650 256C712 256 750 248 800 262V360H0V340Z"
         fill="#5888e8"
-        fillOpacity="0.1"
+        fillOpacity="0.15"
       />
-      <path d="M0 330C140 300 280 296 420 300C560 304 690 292 800 282V360H0Z" fill="url(#closing-hill)" />
-      <ellipse cx="420" cy="346" fill="#3d6bc4" fillOpacity="0.06" rx="400" ry="22" />
+      <path d="M430 360C500 318 600 296 700 298C752 299 782 292 800 288V360Z" fill="url(#closing-hill)" />
+      <path d="M0 326C140 300 280 300 420 310C560 320 690 318 800 312V360H0Z" fill="url(#closing-hill-near)" />
 
-      {/* Pathway, leading to the sun */}
+      {/* Winding pathway to the sun, with a soft glow */}
+      <g fill="none" stroke="#5888e8" strokeLinecap="round" strokeLinejoin="round">
+        <path
+          d="M-10 352C90 336 170 352 270 336C370 320 450 314 530 302C590 293 640 280 672 266C684 261 692 258 700 256"
+          strokeOpacity="0.16"
+          strokeWidth="12"
+        />
+        <path
+          d="M-10 352C90 336 170 352 270 336C370 320 450 314 530 302C590 293 640 280 672 266C684 261 692 258 700 256"
+          strokeWidth="4"
+        />
+      </g>
       <path
-        d="M16 334C110 318 170 350 260 330C350 310 420 312 500 296C560 284 600 272 640 264C664 259 680 257 690 256"
-        fill="none"
-        stroke="#5888e8"
-        strokeLinecap="round"
-        strokeWidth="3"
-      />
-      <path
-        d="M14 350C110 340 160 362 262 348"
+        d="M14 356C110 346 160 366 262 352"
         fill="none"
         stroke="#3d6bc4"
         strokeLinecap="round"
-        strokeOpacity="0.5"
+        strokeOpacity="0.4"
         strokeWidth="2.5"
       />
 
       {/* Grass tufts */}
       <g fill="none" stroke="#3d6bc4" strokeLinecap="round" strokeWidth="3">
-        <path d="M470 312c-4-12-2-22 5-29M479 314c2-10 7-18 14-22" />
-        <path d="M752 288c-3-12 0-21 6-28M762 290c3-9 8-16 15-19" />
+        <path d="M454 326c-4-12-2-22 5-29M463 328c2-10 7-18 14-22" />
+        <path d="M760 312c-3-12 0-21 6-28M770 314c3-9 8-16 15-19" />
       </g>
 
       {/* Hannah's shadow stays with the scene; Hannah is the replaceable slot. */}
