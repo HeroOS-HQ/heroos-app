@@ -2,10 +2,11 @@
 
 - Only the operator CLI may reach the identity provisioning and Company
   registration code.
-- The application exposes exactly two mutating HTTP routes: the administrator-
-  only Blueprint update and founder self-registration. No request can grant
-  access to an existing Company, provision anyone into one, assign a role,
-  suspend, revoke or confirm a jurisdiction.
+- The application exposes exactly four mutating HTTP routes: the administrator-
+  only Blueprint update, founder self-registration and (M2-01) the
+  administrator-only workflow Case creation and answer save. No request can
+  grant access to an existing Company, provision anyone into one, assign a
+  role, suspend, revoke or confirm a jurisdiction, and nothing deletes.
 - Founder self-registration is the only route an authenticated identity that
   HeroOS has not provisioned can reach; every other API route resolves an
   active HeroOS User first.
@@ -29,7 +30,13 @@ APP = API_ROOT / "app"
 # (method, path) of every route that may change state.
 ADMIN_BLUEPRINT_UPDATE = ("PATCH", "/companies/{company_id}/blueprint")
 FOUNDER_REGISTRATION = ("POST", "/company-registrations")
-MUTATING_ROUTES = {ADMIN_BLUEPRINT_UPDATE, FOUNDER_REGISTRATION}
+WORKFLOW_CASE_CREATE = ("POST", "/companies/{company_id}/workflows/{workflow_key}/cases")
+WORKFLOW_ANSWERS_SAVE = (
+    "PUT",
+    "/companies/{company_id}/cases/{case_id}/workflow/steps/{step_key}/answers",
+)
+ADMIN_ROUTES = {ADMIN_BLUEPRINT_UPDATE, WORKFLOW_CASE_CREATE, WORKFLOW_ANSWERS_SAVE}
+MUTATING_ROUTES = {*ADMIN_ROUTES, FOUNDER_REGISTRATION}
 
 
 def _imports(path: Path) -> set[str]:
@@ -92,7 +99,7 @@ def test_operator_scope_is_used_only_by_the_operator_services_and_cli() -> None:
     }
 
 
-def test_the_only_mutating_routes_are_admin_update_and_founder_registration() -> None:
+def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() -> None:
     mutating = {
         (method, route.path): route
         for route in _app_routes()
@@ -101,10 +108,11 @@ def test_the_only_mutating_routes_are_admin_update_and_founder_registration() ->
     }
     assert set(mutating) == MUTATING_ROUTES
 
-    admin = _dependency_calls(mutating[ADMIN_BLUEPRINT_UPDATE].dependant)
-    # Role check at authorization and again inside the write transaction.
-    assert require_company_admin in admin
-    assert get_company_admin_scope in admin
+    for route in ADMIN_ROUTES:
+        admin = _dependency_calls(mutating[route].dependant)
+        # Role check at authorization and again inside the write transaction.
+        assert require_company_admin in admin, route
+        assert get_company_admin_scope in admin, route
 
     registration = _dependency_calls(mutating[FOUNDER_REGISTRATION].dependant)
     # A verified credential and the activation switch; never a client claim.
@@ -132,4 +140,7 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/blueprint",
         "/companies/{company_id}/cases",
         "/companies/{company_id}/cases/{case_id}",
+        "/companies/{company_id}/workflows/{workflow_key}/cases",
+        "/companies/{company_id}/cases/{case_id}/workflow",
+        "/companies/{company_id}/cases/{case_id}/workflow/steps/{step_key}/answers",
     }

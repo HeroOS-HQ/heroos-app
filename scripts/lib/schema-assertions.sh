@@ -9,6 +9,7 @@
 
 EXPECTED_TABLES=(
   alembic_version
+  case_facts
   case_subjects
   cases
   companies
@@ -20,6 +21,8 @@ EXPECTED_TABLES=(
   memberships
   user_identities
   users
+  workflow_instances
+  workflow_submissions
 )
 
 EXPECTED_CONSTRAINTS=(
@@ -84,10 +87,36 @@ EXPECTED_CONSTRAINTS=(
   cases_company_id_fkey
   uq_cases_company_id_id
   fk_cases_company_id_subject_id_case_subjects
+  workflow_instances_pkey
+  fk_workflow_instances_company_id_companies
+  fk_workflow_instances_company_id_case_id_cases
+  fk_workflow_instances_created_by_user_id_users
+  uq_workflow_instances_company_id_id
+  uq_workflow_instances_company_id_case_id
+  uq_workflow_instances_company_id_request_key
+  ck_workflow_instances_workflow_key
+  ck_workflow_instances_definition_version
+  ck_workflow_instances_revision
+  workflow_submissions_pkey
+  fk_workflow_submissions_company_id_companies
+  fk_workflow_submissions_company_id_instance_id
+  fk_workflow_submissions_submitted_by_user_id_users
+  uq_workflow_submissions_company_id_instance_id_id
+  uq_workflow_submissions_instance_id_revision
+  uq_workflow_submissions_instance_id_idempotency_key
+  ck_workflow_submissions_revision
+  ck_workflow_submissions_step_key
+  case_facts_pkey
+  fk_case_facts_company_id_companies
+  fk_case_facts_company_id_instance_id_submission_id
+  uq_case_facts_submission_id_fact_key
+  ck_case_facts_fact_key
+  ck_case_facts_value_size
 )
 
 # Tenant-owned tables: one tenant_isolation policy each.
 TENANT_RLS_TABLES=(
+  case_facts
   case_subjects
   cases
   companies
@@ -96,11 +125,14 @@ TENANT_RLS_TABLES=(
   company_registrations
   membership_events
   memberships
+  workflow_instances
+  workflow_submissions
 )
 # Every table with Row-Level Security (sorted). `users` and `user_identities`
 # are global identity tables with per-role lifecycle policies instead of a
 # tenant policy; `identity_events` is owner-only (RLS, no policy) (ADR-008).
 RLS_TABLES=(
+  case_facts
   case_subjects
   cases
   companies
@@ -112,6 +144,8 @@ RLS_TABLES=(
   memberships
   user_identities
   users
+  workflow_instances
+  workflow_submissions
 )
 # Every other policy, as table:policy:permissive:command:roles.
 LIFECYCLE_POLICIES=(
@@ -264,4 +298,23 @@ assert_schema() {
     return 1
   fi
   echo "Runtime role write boundary OK (no Company creation, Membership or confirmation writes)"
+
+  # M2-01 (D1): workflow entities are append-only for the API role (no DELETE,
+  # no UPDATE except the instance revision) and invisible to the operator.
+  if [[ "$(psql_db "${db}" "SELECT has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_instances',
+        'UPDATE, DELETE, TRUNCATE')
+      OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_submissions', 'UPDATE, DELETE, TRUNCATE')
+      OR has_table_privilege('${RUNTIME_ROLE}', 'public.case_facts', 'UPDATE, DELETE, TRUNCATE')
+      OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_submissions', 'UPDATE')
+      OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.case_facts', 'UPDATE')
+      OR has_column_privilege('${RUNTIME_ROLE}', 'public.workflow_instances', 'case_id', 'UPDATE')
+      OR NOT has_column_privilege('${RUNTIME_ROLE}', 'public.workflow_instances', 'revision', 'UPDATE')
+      OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_instances', 'SELECT, INSERT, UPDATE')
+      OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_submissions', 'SELECT, INSERT, UPDATE')
+      OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.case_facts', 'SELECT, INSERT, UPDATE')
+      OR heroos_schema_contract() <> 4;")" != "f" ]]; then
+    echo "Workflow tables: unexpected privileges or schema contract." >&2
+    return 1
+  fi
+  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 4)"
 }

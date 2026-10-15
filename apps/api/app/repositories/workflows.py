@@ -1,0 +1,210 @@
+"""Company-scoped persistence of workflow Cases, submissions and facts (M2-01).
+
+Every function takes a ``CompanyScope`` and filters by ``scope.company_id``;
+PostgreSQL RLS enforces the same boundary underneath. Repositories flush but
+never commit (tenant-isolation.md §2). There is no update or delete of facts or
+submissions: answers are append-only, and the only instance update is the
+optimistic-concurrency revision bump.
+"""
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from uuid import UUID
+
+from sqlalchemy import Select, func, select, update
+
+from app.db.models import Case, CaseFact, WorkflowInstance, WorkflowSubmission
+from app.tenancy.scope import CompanyScope
+from app.workflows.conversation import SubmissionRecord
+from app.workflows.definition import WorkflowDefinition
+from app.workflows.progress import FactRecord
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowCase:
+    case: Case
+    instance: WorkflowInstance
+
+
+def create_workflow_case(
+    scope: CompanyScope,
+    definition: WorkflowDefinition,
+    *,
+    title: str,
+    request_key: UUID,
+    user_id: UUID,
+) -> WorkflowCase:
+    """A new Case with its workflow instance. Raises IntegrityError on a reused key."""
+    case = Case(company_id=scope.company_id, case_type=definition.case_type, title=title)
+    scope.session.add(case)
+    scope.session.flush()
+    instance = WorkflowInstance(
+        company_id=scope.company_id,
+        case_id=case.id,
+        workflow_key=definition.key,
+        definition_version=definition.version,
+        revision=0,
+        request_key=request_key,
+        created_by_user_id=user_id,
+    )
+    scope.session.add(instance)
+    scope.session.flush()
+    return WorkflowCase(case, instance)
+
+
+def _cases_query(scope: CompanyScope) -> Select[Case, WorkflowInstance]:
+    return (
+        select(Case, WorkflowInstance)
+        .join(
+            WorkflowInstance,
+            (WorkflowInstance.company_id == Case.company_id)
+            & (WorkflowInstance.case_id == Case.id),
+        )
+        .where(Case.company_id == scope.company_id, WorkflowInstance.company_id == scope.company_id)
+    )
+
+
+def find_by_request_key(scope: CompanyScope, request_key: UUID) -> WorkflowCase | None:
+    row = scope.session.execute(
+        _cases_query(scope).where(WorkflowInstance.request_key == request_key)
+    ).first()
+    return None if row is None else WorkflowCase(row[0], row[1])
+
+
+def get_workflow_case(scope: CompanyScope, case_id: UUID) -> WorkflowCase | None:
+    row = scope.session.execute(_cases_query(scope).where(Case.id == case_id)).first()
+    return None if row is None else WorkflowCase(row[0], row[1])
+
+
+def list_workflow_cases(scope: CompanyScope, workflow_key: str) -> list[WorkflowCase]:
+    """Most recently active first."""
+    rows = scope.session.execute(
+        _cases_query(scope)
+        .where(WorkflowInstance.workflow_key == workflow_key)
+        .order_by(WorkflowInstance.updated_at.desc(), Case.id)
+    ).all()
+    return [WorkflowCase(case, instance) for case, instance in rows]
+
+
+def facts_by_instance(
+    scope: CompanyScope, instance_ids: Sequence[UUID]
+) -> dict[UUID, list[FactRecord]]:
+    """Every stored fact of the given instances, in revision order."""
+    result: dict[UUID, list[FactRecord]] = {instance_id: [] for instance_id in instance_ids}
+    if not instance_ids:
+        return result
+    rows = scope.session.execute(
+        select(CaseFact.instance_id, WorkflowSubmission.revision, CaseFact.fact_key, CaseFact.value)
+        .join(
+            WorkflowSubmission,
+            (WorkflowSubmission.company_id == CaseFact.company_id)
+            & (WorkflowSubmission.id == CaseFact.submission_id),
+        )
+        .where(
+            CaseFact.company_id == scope.company_id,
+            WorkflowSubmission.company_id == scope.company_id,
+            CaseFact.instance_id.in_(instance_ids),
+        )
+        .order_by(WorkflowSubmission.revision, CaseFact.fact_key)
+    ).all()
+    for instance_id, revision, key, value in rows:
+        result[instance_id].append(FactRecord(revision, key, value))
+    return result
+
+
+def submissions(scope: CompanyScope, instance_id: UUID) -> list[SubmissionRecord]:
+    """The instance's saved answer groups with their facts, oldest first."""
+    rows = scope.session.scalars(
+        select(WorkflowSubmission)
+        .where(
+            WorkflowSubmission.company_id == scope.company_id,
+            WorkflowSubmission.instance_id == instance_id,
+        )
+        .order_by(WorkflowSubmission.revision)
+    ).all()
+    facts = scope.session.execute(
+        select(CaseFact.submission_id, CaseFact.fact_key, CaseFact.value).where(
+            CaseFact.company_id == scope.company_id, CaseFact.instance_id == instance_id
+        )
+    ).all()
+    by_submission: dict[UUID, dict[str, object]] = {}
+    for submission_id, key, value in facts:
+        by_submission.setdefault(submission_id, {})[key] = value
+    return [
+        SubmissionRecord(
+            id=row.id,
+            step_key=row.step_key,
+            revision=row.revision,
+            submitted_at=row.submitted_at,
+            submitted_by_user_id=row.submitted_by_user_id,
+            facts=by_submission.get(row.id, {}),
+        )
+        for row in rows
+    ]
+
+
+def find_submission(
+    scope: CompanyScope, instance_id: UUID, idempotency_key: UUID
+) -> WorkflowSubmission | None:
+    return scope.session.scalar(
+        select(WorkflowSubmission).where(
+            WorkflowSubmission.company_id == scope.company_id,
+            WorkflowSubmission.instance_id == instance_id,
+            WorkflowSubmission.idempotency_key == idempotency_key,
+        )
+    )
+
+
+def advance_revision(scope: CompanyScope, instance_id: UUID, expected: int) -> int | None:
+    """Compare-and-set the instance revision; the new revision, or None if stale.
+
+    One atomic UPDATE: a concurrent writer holding the same expected revision
+    waits for the row lock, then finds the revision changed and gets None.
+    """
+    new_revision = scope.session.execute(
+        update(WorkflowInstance)
+        .where(
+            WorkflowInstance.company_id == scope.company_id,
+            WorkflowInstance.id == instance_id,
+            WorkflowInstance.revision == expected,
+        )
+        .values(revision=WorkflowInstance.revision + 1, updated_at=func.now())
+        .returning(WorkflowInstance.revision)
+        .execution_options(synchronize_session=False)
+    ).scalar_one_or_none()
+    return new_revision
+
+
+def record_submission(
+    scope: CompanyScope,
+    instance: WorkflowInstance,
+    *,
+    step_key: str,
+    revision: int,
+    idempotency_key: UUID,
+    user_id: UUID,
+    changes: Mapping[str, object],
+) -> WorkflowSubmission:
+    """Append one answer group and its facts (call after ``advance_revision``)."""
+    submission = WorkflowSubmission(
+        company_id=scope.company_id,
+        instance_id=instance.id,
+        step_key=step_key,
+        revision=revision,
+        idempotency_key=idempotency_key,
+        submitted_by_user_id=user_id,
+    )
+    scope.session.add(submission)
+    scope.session.flush()
+    scope.session.add_all(
+        CaseFact(
+            company_id=scope.company_id,
+            instance_id=instance.id,
+            submission_id=submission.id,
+            fact_key=key,
+            value=value,
+        )
+        for key, value in changes.items()
+    )
+    scope.session.flush()
+    return submission

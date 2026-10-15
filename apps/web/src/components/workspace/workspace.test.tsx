@@ -91,7 +91,7 @@ describe("WorkspaceHome", () => {
     expect(document.body.textContent).not.toMatch(/subscri|upgrade|buy/i);
   });
 
-  it("shows the three workflows as coming soon, with nothing to click", () => {
+  it("opens Disciplinary (initial facts only) and shows the other workflows as coming soon", () => {
     render(<WorkspaceHome details={details()} />);
     const workflows = screen.getByRole("region", { name: "HR workflows" });
     expect(within(workflows).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
@@ -99,9 +99,30 @@ describe("WorkspaceHome", () => {
       "Probation",
       "Recruitment",
     ]);
-    expect(within(workflows).getAllByText("Coming soon")).toHaveLength(3);
-    expect(within(workflows).queryAllByRole("link")).toHaveLength(0);
+    // Only Disciplinary is a link, and it says how far it goes.
+    const links = within(workflows).getAllByRole("link");
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute("href", `/workspaces/${details().company.id}/cases`);
+    expect(links[0]).toHaveTextContent("Initial facts only");
+    expect(within(workflows).getAllByText("Coming soon")).toHaveLength(2);
     expect(within(workflows).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("links saved Disciplinary cases to the guided workspace, other records stay read-only", () => {
+    render(
+      <WorkspaceHome
+        details={details({
+          cases: [
+            { id: "c1", title: "[SYNTHETIC] Disciplinary", caseType: "disciplinary", createdAt: "x" },
+            { id: "c2", title: "[SYNTHETIC] Other", caseType: "general", createdAt: "x" },
+          ],
+        })}
+      />,
+    );
+    const list = screen.getByRole("list", { name: "Cases" });
+    expect(within(list).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
+      `/workspaces/${details().company.id}/cases/c1`,
+    ]);
   });
 
   it("lists saved case records only when there are some", () => {

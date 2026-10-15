@@ -38,8 +38,11 @@ TENANT_TABLES = {
     "case_subjects": "company_id",
     "cases": "company_id",
 }
+# Workflow entities (M2-01, D1): tenant-owned and append-only.
+WORKFLOW_TABLES = ("workflow_instances", "workflow_submissions", "case_facts")
 APPLICATION_TABLES = (
     *TENANT_TABLES,
+    *WORKFLOW_TABLES,
     "users",
     "user_identities",
     "identity_events",
@@ -173,7 +176,7 @@ def test_restored_rls_and_policies(restored_admin: Engine) -> None:
     rls = {
         name for name, enabled, _ in snapshot(restored_admin, CATALOG_QUERIES["tables"]) if enabled
     }
-    assert rls == set(TENANT_TABLES) | {
+    assert rls == set(TENANT_TABLES) | set(WORKFLOW_TABLES) | {
         "membership_events",
         "company_events",
         "company_registrations",
@@ -184,6 +187,7 @@ def test_restored_rls_and_policies(restored_admin: Engine) -> None:
     policies = snapshot(restored_admin, CATALOG_QUERIES["policies"])
     tenant = {
         **TENANT_TABLES,
+        **dict.fromkeys(WORKFLOW_TABLES, "company_id"),
         "membership_events": "company_id",
         "company_events": "company_id",
         "company_registrations": "company_id",
@@ -253,6 +257,9 @@ def test_restored_ownership_and_runtime_grants(
         ("memberships", "SELECT"),
         ("users", "SELECT"),
         ("user_identities", "SELECT"),
+        # Workflow entities (M2-01): append-only; the instance revision UPDATE
+        # is column-level and compared by the column_grants catalog view.
+        *((table, privilege) for table in WORKFLOW_TABLES for privilege in ("INSERT", "SELECT")),
     }
     assert set(grants) == expected
     # The identity operator's table and column grants survive the restore too.

@@ -42,6 +42,7 @@ from tests.tenant_isolation.migration_helpers import (
     B1A,
     B1B,
     C1,
+    D1,
     LEGACY_ISSUER,
     PRE_B1,
     REFERENCE,
@@ -236,10 +237,11 @@ def test_old_api_fails_closed_on_b1b(legacy_db: LegacyDatabase) -> None:
     assert getattr(exc_info.value.orig, "sqlstate", None) == "42703"
 
 
-def test_current_api_requires_the_c1_schema_contract(legacy_db: LegacyDatabase) -> None:
+def test_current_api_requires_the_d1_schema_contract(legacy_db: LegacyDatabase) -> None:
     with engine_for(legacy_db.runtime_url) as engine:
-        # Pre-B1a, B1a and B1b schemas: the current API refuses to start rather
-        # than fail per request (it maps memberships.role).
+        # Pre-B1a, B1a, B1b and C1 schemas: the current API refuses to start
+        # rather than fail per request (it maps memberships.role and, since
+        # M2-01, the workflow tables).
         with pytest.raises(IncompatibleSchemaError):
             verify_runtime_role(engine)
         b1a(legacy_db)
@@ -249,10 +251,13 @@ def test_current_api_requires_the_c1_schema_contract(legacy_db: LegacyDatabase) 
         with pytest.raises(IncompatibleSchemaError, match="contract is 2"):
             verify_runtime_role(engine)
         upgrade(legacy_db, C1)
+        with pytest.raises(IncompatibleSchemaError, match="contract is 3"):
+            verify_runtime_role(engine)
+        upgrade(legacy_db, D1)
         verify_runtime_role(engine)
         with engine.connect() as conn:
-            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 3
-    assert API_MINIMUM_SCHEMA_CONTRACT == 3
+            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 4
+    assert API_MINIMUM_SCHEMA_CONTRACT == 4
 
 
 # --- revocation and rollback --------------------------------------------------------

@@ -30,6 +30,11 @@ class CompanyScope:
         self.session.commit()
         set_tenant_context(self.session, self.company_id)
 
+    def rollback(self) -> None:
+        """Roll back, then bind the next transaction to the same Company."""
+        self.session.rollback()
+        set_tenant_context(self.session, self.company_id)
+
 
 def open_company_scope(session: Session, context: AuthenticatedCompanyContext) -> CompanyScope:
     """Scope ``session`` to the Membership-authorized Company in ``context``."""

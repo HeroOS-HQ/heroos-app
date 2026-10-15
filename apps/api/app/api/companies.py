@@ -40,6 +40,7 @@ from pydantic import (
 
 from app.auth.dependencies import CompanyContext
 from app.companies.jurisdiction import (
+    JurisdictionAssessment,
     JurisdictionReadiness,
     ReadinessReason,
     assess_jurisdiction,
@@ -171,16 +172,20 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
-def _blueprint_out(company_id: UUID, blueprint: CompanyBlueprint | None) -> BlueprintOut:
-    """Every authorized Company has a Blueprint view; a missing row reads as empty."""
-    assessment = assess_jurisdiction(blueprint)
-    jurisdiction = JurisdictionOut(
+def jurisdiction_out(assessment: JurisdictionAssessment) -> JurisdictionOut:
+    """The API view of a jurisdiction assessment (also used by workflow Cases)."""
+    return JurisdictionOut(
         readiness=assessment.readiness,
         reason=assessment.reason,
         employment_jurisdiction=assessment.jurisdiction,  # type: ignore[arg-type]
         confirmed_at=assessment.confirmed_at,
         guidance_allowed=assessment.guidance_allowed,
     )
+
+
+def _blueprint_out(company_id: UUID, blueprint: CompanyBlueprint | None) -> BlueprintOut:
+    """Every authorized Company has a Blueprint view; a missing row reads as empty."""
+    jurisdiction = jurisdiction_out(assess_jurisdiction(blueprint))
     if blueprint is None:
         return BlueprintOut(
             company_id=company_id,

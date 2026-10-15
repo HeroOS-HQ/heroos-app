@@ -155,7 +155,7 @@ def test_cli_refuses_a_schema_before_b1b(tenant_database: TenantDatabase) -> Non
 
 
 def test_cli_refuses_the_b1b_schema(tenant_database: TenantDatabase) -> None:
-    # The M1-10C CLI needs C1's grants and contract 3.
+    # The CLI needs C1's grants and exactly the current contract (4 since D1).
     with disposable_database(tenant_database, "clib1b") as admin_url:
         assert run_alembic(admin_url, "upgrade", "09cb5ec569b9").returncode == 0
         database = make_url(admin_url).database or ""
@@ -167,6 +167,23 @@ def test_cli_refuses_the_b1b_schema(tenant_database: TenantDatabase) -> None:
         result = cli(operator_url, "jurisdiction-status", "--company", str(uuid.uuid4()))
     assert result.returncode == 3
     assert "schema contract is 2" in result.stderr
+
+
+def test_cli_refuses_the_c1_schema(tenant_database: TenantDatabase) -> None:
+    # Exact contract: the CLI refuses any schema it was not written against,
+    # including the previous one (C1, contract 3), even though D1 adds nothing
+    # for the operator.
+    with disposable_database(tenant_database, "clic1") as admin_url:
+        assert run_alembic(admin_url, "upgrade", "3f6c2a9d81b4").returncode == 0
+        database = make_url(admin_url).database or ""
+        operator_url = (
+            make_url(tenant_database.operator_url)
+            .set(database=database)
+            .render_as_string(hide_password=False)
+        )
+        result = cli(operator_url, "jurisdiction-status", "--company", str(uuid.uuid4()))
+    assert result.returncode == 3
+    assert "schema contract is 3" in result.stderr
 
 
 # --- Company registration, roles and jurisdiction (M1-10C) ------------------------
