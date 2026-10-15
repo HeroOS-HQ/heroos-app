@@ -82,8 +82,9 @@ html[data-restoring] body {
 }
 
 /*
- * Motion. Everything runs once; Hannah herself is static. The CSP forbids
- * inline style attributes, so delays are expressed as classes.
+ * Motion. Entrances run once; the only ongoing motion is the slow ambient
+ * scene motion below. Hannah herself is never animated. The CSP forbids inline
+ * style attributes, so delays are expressed as classes.
  */
 @keyframes hero-rise {
   from {
@@ -155,6 +156,60 @@ html[data-restoring] body {
 }
 
 /*
+ * Ambient scene motion for the hero and closing illustrations: slow, small and
+ * on scene accents only (sun glow, clouds, a light along the path). Reduced
+ * motion turns it off below.
+ */
+@keyframes scene-glow {
+  0%,
+  100% {
+    opacity: 0.7;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes scene-drift {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(12px);
+  }
+}
+
+@keyframes scene-path-light {
+  0% {
+    stroke-dashoffset: 1;
+    opacity: 0;
+  }
+  15%,
+  80% {
+    opacity: 0.8;
+  }
+  100% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+}
+
+.scene-glow {
+  animation: scene-glow 6s ease-in-out infinite;
+}
+
+.scene-drift {
+  animation: scene-drift 18s ease-in-out infinite;
+}
+
+/* Starts after the path has drawn itself in; invisible between passes. */
+.scene-path-light {
+  stroke-dasharray: 0.08 0.92;
+  animation: scene-path-light 7s cubic-bezier(0.45, 0, 0.55, 1) 2.6s infinite backwards;
+}
+
+/*
  * Scroll reveal. Content is visible by default (no JavaScript, no problem):
  * the Reveal component only hides elements that start below the fold.
  */
@@ -194,5 +249,12 @@ html[data-restoring] body {
   [data-reveal="hidden"] {
     opacity: 1;
     transform: none;
+  }
+  .scene-glow,
+  .scene-drift {
+    animation: none;
+  }
+  .scene-path-light {
+    display: none;
   }
 }

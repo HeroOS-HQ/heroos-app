@@ -28,11 +28,14 @@ export function ClosingCta() {
           </div>
           {/*
            * Phones and tablets: a strip under the links, bleeding to the card's edges.
+           * Its height follows the card's width (padding-top 44%; an aspect-ratio
+           * box would widen itself to honour min-height), so the scene keeps Hannah's
+           * head clear of the faded top at every width; at least 10rem on phones.
            * Desktop: the column beside the text (which ends at 5rem padding + 36rem).
            * Masks fade the scene's cut edge into the card.
            */}
-          <div className="pointer-events-none relative -mx-8 -mb-14 mt-4 h-40 [mask-image:linear-gradient(to_bottom,transparent,#000_25%)] sm:-mx-14 sm:-mb-16 sm:mt-8 sm:h-52 lg:absolute lg:inset-y-0 lg:left-[41rem] lg:right-0 lg:m-0 lg:h-auto lg:[mask-image:linear-gradient(to_right,transparent,#000_18%)]">
-            <ClosingIllustration className="size-full" />
+          <div className="pointer-events-none relative -mx-8 -mb-14 mt-4 min-h-40 pt-[44%] [mask-image:linear-gradient(to_bottom,transparent,#000_25%)] sm:-mx-14 sm:-mb-16 sm:mt-8 lg:absolute lg:inset-y-0 lg:left-[41rem] lg:right-0 lg:m-0 lg:min-h-0 lg:pt-0 lg:[mask-image:linear-gradient(to_right,transparent,#000_18%)]">
+            <ClosingIllustration className="absolute inset-0 size-full" />
           </div>
         </div>
       </Reveal>
