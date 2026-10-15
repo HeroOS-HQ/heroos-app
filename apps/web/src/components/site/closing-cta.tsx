@@ -6,7 +6,7 @@ export function ClosingCta() {
   return (
     <section aria-labelledby="closing-heading" className="px-5 py-24 sm:px-8 sm:py-28 lg:py-36">
       <Reveal className="mx-auto w-full max-w-[1240px]">
-        <div className="relative overflow-hidden rounded-[2rem] border border-hero-border bg-gradient-to-br from-hero-blue-tint via-[#f3f7fe] to-hero-yellow-tint px-8 py-14 sm:px-14 sm:py-16 lg:px-20 lg:py-20">
+        <div className="relative overflow-hidden rounded-[2rem] border border-hero-border bg-gradient-to-br from-white via-[#f8faff] to-hero-yellow-tint px-8 py-14 shadow-hero-card sm:px-14 sm:py-16 lg:px-20 lg:py-20">
           <div className="relative z-10 max-w-xl">
             <h2 className="text-3xl font-extrabold tracking-[-0.02em] sm:text-4xl lg:text-[2.75rem] lg:leading-[1.15]" id="closing-heading">
               Ready to explore Hero<span className="text-hero-blue">OS</span>?
@@ -31,7 +31,7 @@ export function ClosingCta() {
            * Desktop: the column beside the text (which ends at 5rem padding + 36rem).
            * Masks fade the scene's cut edge into the card.
            */}
-          <div className="pointer-events-none relative -mx-8 -mb-14 mt-8 h-44 [mask-image:linear-gradient(to_bottom,transparent,#000_25%)] sm:-mx-14 sm:-mb-16 sm:h-52 lg:absolute lg:inset-y-0 lg:left-[41rem] lg:right-0 lg:m-0 lg:h-auto lg:[mask-image:linear-gradient(to_right,transparent,#000_18%)]">
+          <div className="pointer-events-none relative -mx-8 -mb-14 mt-4 h-40 [mask-image:linear-gradient(to_bottom,transparent,#000_25%)] sm:-mx-14 sm:-mb-16 sm:mt-8 sm:h-52 lg:absolute lg:inset-y-0 lg:left-[41rem] lg:right-0 lg:m-0 lg:h-auto lg:[mask-image:linear-gradient(to_right,transparent,#000_18%)]">
             <ClosingIllustration className="size-full" />
           </div>
         </div>
