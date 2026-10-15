@@ -1,3 +1,4 @@
+import { ClosingIllustration } from "./closing-illustration";
 import { ArrowRightIcon } from "./icons";
 import { Reveal } from "./reveal";
 
@@ -25,17 +26,14 @@ export function ClosingCta() {
               </a>
             </p>
           </div>
-          <svg
-            aria-hidden="true"
-            className="pointer-events-none absolute -right-10 top-1/2 hidden h-[130%] w-auto -translate-y-1/2 text-hero-light-blue xl:block"
-            fill="none"
-            viewBox="0 0 400 400"
-          >
-            <circle cx="200" cy="200" fill="currentColor" fillOpacity="0.1" r="190" />
-            <circle cx="200" cy="200" fill="currentColor" fillOpacity="0.1" r="130" />
-            <circle cx="150" cy="150" fill="#ffd401" r="26" />
-            <path d="M40 300C130 270 200 330 260 280S360 230 400 240" stroke="currentColor" strokeLinecap="round" strokeOpacity="0.6" strokeWidth="3" />
-          </svg>
+          {/*
+           * Phones and tablets: a strip under the links, bleeding to the card's edges.
+           * Desktop: the column beside the text (which ends at 5rem padding + 36rem).
+           * Masks fade the scene's cut edge into the card.
+           */}
+          <div className="pointer-events-none relative -mx-8 -mb-14 mt-8 h-44 [mask-image:linear-gradient(to_bottom,transparent,#000_25%)] sm:-mx-14 sm:-mb-16 sm:h-52 lg:absolute lg:inset-y-0 lg:left-[41rem] lg:right-0 lg:m-0 lg:h-auto lg:[mask-image:linear-gradient(to_right,transparent,#000_18%)]">
+            <ClosingIllustration className="size-full" />
+          </div>
         </div>
       </Reveal>
     </section>

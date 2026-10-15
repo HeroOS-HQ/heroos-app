@@ -37,9 +37,10 @@ const STEPS: Step[] = [
   },
   {
     id: "prepare",
-    title: "Prepare what's next",
-    summary: "Keep the next steps organised.",
-    detail: "Checklists, documents and follow-ups are meant to live together in one place, so nothing gets lost along the way.",
+    title: "Complete the process",
+    summary: "Follow guided steps and prepare the documents you need.",
+    detail:
+      "Once you make your decision, HeroOS is designed to guide the required actions, help keep the process organised, and prepare the documents you need.",
     icon: <ChecklistIcon />,
   },
 ];

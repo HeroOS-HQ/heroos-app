@@ -29,6 +29,16 @@ describe("LandingPage", () => {
     expect(screen.queryByText(/Practical guidance/)).toBeNull();
   });
 
+  it("shows Hannah as static, decorative artwork", () => {
+    const { container } = render(<LandingPage />);
+
+    const hannah = container.querySelector('image[href="/branding/hannah-hero-static.webp"]');
+    expect(hannah).not.toBeNull();
+    expect(hannah).not.toHaveAttribute("class");
+    expect(hannah?.closest("svg")).toHaveAttribute("aria-hidden", "true");
+    expect(container.querySelector(".float-slow")).toBeNull();
+  });
+
   it("sends every sign-in call to action to the login route as a plain link", () => {
     render(<LandingPage />);
 
@@ -118,6 +128,59 @@ describe("WorkflowJourney", () => {
     expect(tabs[0]).toHaveAttribute("aria-selected", "true");
 
     expect(screen.getByRole("tabpanel")).toHaveTextContent("Guided steps are not available yet.");
+  });
+
+  it("keeps Steps 1 to 3 and shows Step 4, Complete the process, in its card and panel", () => {
+    render(<LandingPage />);
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.map((tab) => tab.id)).toEqual([
+      "workflow-tab-describe",
+      "workflow-tab-guidance",
+      "workflow-tab-decide",
+      "workflow-tab-prepare",
+    ]);
+    const cards = [
+      ["Tell us what's happening", "Describe the situation in your own words."],
+      ["Get guidance", "Understand the context and your options."],
+      ["Make your decision", "Choose the right next step."],
+      ["Complete the process", "Follow guided steps and prepare the documents you need."],
+    ];
+    cards.forEach(([title, summary], index) => {
+      expect(tabs[index]).toHaveTextContent(title);
+      expect(tabs[index]).toHaveTextContent(summary);
+    });
+
+    fireEvent.click(tabs[3]);
+
+    const panel = screen.getByRole("tabpanel");
+    expect(panel).toHaveAttribute("aria-labelledby", "workflow-tab-prepare");
+    expect(panel).toHaveTextContent("Step 4 of 4");
+    expect(panel).toHaveTextContent(
+      "Once you make your decision, HeroOS is designed to guide the required actions, help keep the process organised, and prepare the documents you need.",
+    );
+    expect(panel).toHaveTextContent("This shows how HeroOS is meant to work. Guided steps are not available yet.");
+  });
+});
+
+describe("ClosingCta", () => {
+  it("keeps the call to action and adds a static, decorative closing scene without the signpost", () => {
+    render(<LandingPage />);
+
+    const section = screen.getByRole("region", { name: "Ready to explore HeroOS?" });
+    expect(within(section).getByText("Set up your company workspace in a few minutes.")).toBeInTheDocument();
+    expect(within(section).getByRole("link", { name: /^Get started/ })).toHaveAttribute("href", "/auth/signup");
+    expect(within(section).getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/auth/login");
+
+    const scene = section.querySelector('svg[viewBox="0 0 800 360"]');
+    expect(scene).toHaveAttribute("aria-hidden", "true");
+    expect(scene?.parentElement).toHaveClass("pointer-events-none");
+    const hannah = scene?.querySelectorAll("image");
+    expect(hannah).toHaveLength(1);
+    expect(hannah?.[0]).toHaveAttribute("href", "/branding/hannah-rear-provisional.svg");
+    expect(hannah?.[0]).not.toHaveAttribute("class");
+    expect(section.querySelector(".float-slow, .path-draw, .sun-in")).toBeNull();
+    expect(scene).not.toHaveTextContent(/PEOPLE|GUIDANCE|BETTER OUTCOMES/);
   });
 });
 
