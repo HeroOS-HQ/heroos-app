@@ -38,7 +38,8 @@ function SignBoard({ label, y, flip = false }: { label: string; y: number; flip?
     : `0,${y} 150,${y} 170,${y + 20} 150,${y + 40} 0,${y + 40}`;
   return (
     <g>
-      <polygon fill="#ffffff" points={points} stroke="#0e1e3d" strokeLinejoin="round" strokeWidth="3" />
+      <polygon fill="#0e1e3d" fillOpacity="0.08" points={points} transform="translate(3 5)" />
+      <polygon fill="#fffdf4" points={points} stroke="#0e1e3d" strokeLinejoin="round" strokeWidth="3" />
       <text
         fill="#0e1e3d"
         fontFamily="inherit"
@@ -55,6 +56,13 @@ function SignBoard({ label, y, flip = false }: { label: string; y: number; flip?
   );
 }
 
+/**
+ * The haloes, warm light and hills deliberately reach past the 560 x 520 artwork's
+ * sides and bottom (the SVG renders with overflow visible); the hero card clips
+ * them at its edges. Nothing rises above the artwork's top edge, because on narrow
+ * screens the hero copy sits right above it, and the hills fade out on the left so
+ * they never sit behind the copy on wide screens.
+ */
 export function HeroIllustration({ className }: { className?: string }) {
   return (
     <svg
@@ -68,11 +76,31 @@ export function HeroIllustration({ className }: { className?: string }) {
           <stop offset="0%" stopColor="#ffd401" stopOpacity="0.45" />
           <stop offset="100%" stopColor="#ffd401" stopOpacity="0" />
         </radialGradient>
-        <linearGradient id="hero-hill" x1="0" x2="0" y1="0" y2="1">
-          <stop offset="0%" stopColor="#5888e8" stopOpacity="0.2" />
-          <stop offset="100%" stopColor="#5888e8" stopOpacity="0" />
+        <radialGradient id="hero-warm-light">
+          <stop offset="0%" stopColor="#fff1bd" stopOpacity="0.9" />
+          <stop offset="100%" stopColor="#fff1bd" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient id="hero-hill-far" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#5888e8" stopOpacity="0.12" />
+          <stop offset="100%" stopColor="#5888e8" stopOpacity="0.03" />
         </linearGradient>
+        <linearGradient id="hero-hill-near" x1="0" x2="0" y1="0" y2="1">
+          <stop offset="0%" stopColor="#5888e8" stopOpacity="0.13" />
+          <stop offset="100%" stopColor="#5888e8" stopOpacity="0.04" />
+        </linearGradient>
+        <linearGradient id="hero-hills-fade-gradient" gradientUnits="userSpaceOnUse" x1="-70" x2="80" y1="0" y2="0">
+          <stop offset="0%" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="100%" stopColor="#ffffff" stopOpacity="1" />
+        </linearGradient>
+        <mask height="1600" id="hero-hills-fade" maskUnits="userSpaceOnUse" width="2000" x="-600" y="-400">
+          <rect fill="url(#hero-hills-fade-gradient)" height="1600" width="2000" x="-600" y="-400" />
+        </mask>
       </defs>
+
+      {/* Atmosphere: soft haloes behind Hannah and the signpost, warm light from the sun's side */}
+      <circle cx="300" cy="262" fill="#5888e8" fillOpacity="0.05" r="262" />
+      <circle cx="300" cy="262" fill="#5888e8" fillOpacity="0.06" r="190" />
+      <circle cx="540" cy="200" fill="url(#hero-warm-light)" r="200" />
 
       {/* Sun */}
       <g className="sun-in">
@@ -83,13 +111,26 @@ export function HeroIllustration({ className }: { className?: string }) {
         </g>
       </g>
 
-      {/* Clouds and hills */}
-      <ellipse cx="116" cy="410" fill="#5888e8" fillOpacity="0.14" rx="86" ry="46" />
-      <ellipse cx="86" cy="430" fill="#5888e8" fillOpacity="0.12" rx="70" ry="38" />
-      <ellipse cx="300" cy="468" fill="url(#hero-hill)" rx="255" ry="56" />
-      <ellipse cx="250" cy="486" fill="url(#hero-hill)" rx="210" ry="40" />
+      {/* Rolling hills, layered for depth, running off the card's right and bottom edges */}
+      <g mask="url(#hero-hills-fade)">
+        <ellipse cx="530" cy="472" fill="url(#hero-hill-far)" rx="340" ry="94" />
+        <ellipse cx="250" cy="502" fill="url(#hero-hill-near)" rx="390" ry="98" />
+        <ellipse cx="20" cy="566" fill="url(#hero-hill-near)" rx="360" ry="112" />
+        <path
+          d="M-20 482C100 498 220 494 340 474"
+          fill="none"
+          stroke="#3d6bc4"
+          strokeLinecap="round"
+          strokeOpacity="0.3"
+          strokeWidth="2.5"
+        />
+      </g>
 
-      {/* Pathway, drawn once on entry */}
+      {/* The ground Hannah stands on */}
+      <ellipse cx="240" cy="404" fill="#5888e8" fillOpacity="0.08" rx="140" ry="18" />
+      <ellipse cx="240" cy="408" fill="none" rx="112" ry="12" stroke="#5888e8" strokeOpacity="0.35" strokeWidth="2" />
+
+      {/* Pathway with a soft glow, drawn once on entry */}
       <path
         className="path-draw"
         d="M20 360C130 330 160 230 300 205S400 150 445 125"
@@ -97,17 +138,17 @@ export function HeroIllustration({ className }: { className?: string }) {
         pathLength="1"
         stroke="#5888e8"
         strokeLinecap="round"
-        strokeWidth="3"
+        strokeOpacity="0.14"
+        strokeWidth="12"
       />
       <path
         className="path-draw"
-        d="M30 452c80 22 160 20 240 8"
+        d="M20 360C130 330 160 230 300 205S400 150 445 125"
         fill="none"
         pathLength="1"
-        stroke="#3d6bc4"
+        stroke="#5888e8"
         strokeLinecap="round"
-        strokeOpacity="0.5"
-        strokeWidth="2.5"
+        strokeWidth="3.5"
       />
 
       {/* Signpost */}
