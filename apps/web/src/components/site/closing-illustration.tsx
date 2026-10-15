@@ -1,13 +1,13 @@
 /**
  * Closing artwork: the end of the opening scene's journey. The same soft hills
  * and blue pathway lead to a low, setting sun, and Hannah walks toward it, seen
- * from behind and smaller, farther away than in the hero. No signpost. Static
- * and decorative, so hidden from assistive technology.
+ * from behind and farther away than in the hero. No signpost. Static and
+ * decorative, so hidden from assistive technology.
  *
- * Hannah is a separate image so she can be replaced without touching the scene.
- * public/branding/hannah-rear-provisional.svg is a PROVISIONAL stand-in drawn to
- * fit the composition, not approved artwork: replace CLOSING_MASCOT with JJ's
- * final rear-view Hannah (any size; `feetY` is where her soles are in the file).
+ * Hannah is JJ's approved back-view artwork (public/branding/hannah-walking-back.webp:
+ * an exact, proportional 512 x 768 lossless WebP of the approved 1024 x 1536 PNG),
+ * a separate image so she can be swapped without touching the scene. `feetX` and
+ * `feetY` are where her planted boot meets the ground in that file.
  *
  * The 800 x 360 scene keeps its story in the bottom-right corner, so the
  * container can crop it (preserveAspectRatio "xMaxYMax slice") to a wide strip
@@ -15,25 +15,25 @@
  */
 
 const CLOSING_MASCOT = {
-  href: "/branding/hannah-rear-provisional.svg",
-  width: 120,
-  height: 200,
-  feetY: 190,
+  href: "/branding/hannah-walking-back.webp",
+  width: 512,
+  height: 768,
+  feetX: 305,
+  feetY: 735,
 };
-const MASCOT_HEIGHT = 76;
-/** Where Hannah stands: on the pathway, a little short of the sun. */
-const MASCOT_FEET = { x: 592, y: 289 };
+const MASCOT_HEIGHT = 141;
+/** Where Hannah's planted boot meets the pathway, a little short of the sun. */
+const MASCOT_FEET = { x: 630, y: 283 };
 
 function WalkingMascotSlot() {
   const scale = MASCOT_HEIGHT / CLOSING_MASCOT.height;
-  const width = CLOSING_MASCOT.width * scale;
   return (
     <image
       height={MASCOT_HEIGHT}
       href={CLOSING_MASCOT.href}
       preserveAspectRatio="xMidYMax meet"
-      width={width}
-      x={MASCOT_FEET.x - width / 2}
+      width={CLOSING_MASCOT.width * scale}
+      x={MASCOT_FEET.x - CLOSING_MASCOT.feetX * scale}
       y={MASCOT_FEET.y - CLOSING_MASCOT.feetY * scale}
     />
   );
@@ -131,7 +131,7 @@ export function ClosingIllustration({ className }: { className?: string }) {
       </g>
 
       {/* Hannah's shadow stays with the scene; Hannah is the replaceable slot. */}
-      <ellipse cx={MASCOT_FEET.x + 3} cy={MASCOT_FEET.y} fill="#0e1e3d" fillOpacity="0.1" rx="16" ry="3" />
+      <ellipse cx={MASCOT_FEET.x - 4} cy={MASCOT_FEET.y + 1} fill="#0e1e3d" fillOpacity="0.12" rx="30" ry="4.5" />
       <WalkingMascotSlot />
     </svg>
   );

@@ -29,10 +29,10 @@ describe("LandingPage", () => {
     expect(screen.queryByText(/Practical guidance/)).toBeNull();
   });
 
-  it("shows Hannah as static, decorative artwork", () => {
+  it("shows the approved front-view Hannah as static, decorative artwork", () => {
     const { container } = render(<LandingPage />);
 
-    const hannah = container.querySelector('image[href="/branding/hannah-hero-static.webp"]');
+    const hannah = container.querySelector('image[href="/branding/hannah-hero-front.webp"]');
     expect(hannah).not.toBeNull();
     expect(hannah).not.toHaveAttribute("class");
     expect(hannah?.closest("svg")).toHaveAttribute("aria-hidden", "true");
@@ -164,7 +164,7 @@ describe("WorkflowJourney", () => {
 });
 
 describe("ClosingCta", () => {
-  it("keeps the call to action and adds a static, decorative closing scene without the signpost", () => {
+  it("keeps the call to action and adds a decorative closing scene with the approved back-view Hannah and no signpost", () => {
     render(<LandingPage />);
 
     const section = screen.getByRole("region", { name: "Ready to explore HeroOS?" });
@@ -177,7 +177,7 @@ describe("ClosingCta", () => {
     expect(scene?.parentElement).toHaveClass("pointer-events-none");
     const hannah = scene?.querySelectorAll("image");
     expect(hannah).toHaveLength(1);
-    expect(hannah?.[0]).toHaveAttribute("href", "/branding/hannah-rear-provisional.svg");
+    expect(hannah?.[0]).toHaveAttribute("href", "/branding/hannah-walking-back.webp");
     expect(hannah?.[0]).not.toHaveAttribute("class");
     expect(section.querySelector(".float-slow, .path-draw, .sun-in")).toBeNull();
     expect(scene).not.toHaveTextContent(/PEOPLE|GUIDANCE|BETTER OUTCOMES/);

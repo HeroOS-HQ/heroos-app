@@ -1,33 +1,35 @@
 /**
- * Hero artwork. Hannah is JJ's final static artwork
- * (public/branding/hannah-hero-static.webp, 480 x 600, transparent), shown at
- * its native aspect ratio and deliberately without animation. Sun, pathway,
- * hills and signpost are plain SVG. Decorative, so hidden from assistive
- * technology.
+ * Hero artwork. Hannah is JJ's approved front-view artwork
+ * (public/branding/hannah-hero-front.webp: an exact, proportional 600 x 900
+ * lossless WebP of the approved 1024 x 1536 PNG), drawn as a separate image so
+ * she can be swapped without touching the scene. She is never animated. Sun,
+ * pathway, hills and signpost are plain SVG. Decorative, so hidden from
+ * assistive technology.
  */
 
-const MASCOT_WIDTH = 480;
-const MASCOT_HEIGHT = 600;
-const MASCOT_SCALE = 0.6;
-// In the 480 x 600 artwork, Hannah's boots end at y = 593 and her cape at x = 427.
-const MASCOT_FEET_Y = 593;
-const MASCOT_RIGHT_X = 427;
+const MASCOT = {
+  href: "/branding/hannah-hero-front.webp",
+  width: 600,
+  height: 900,
+  // Where her boot soles and her cape's right tip are in the 600 x 900 file.
+  feetY: 882,
+  rightX: 589,
+};
+const MASCOT_SCALE = 0.41;
 
 /**
  * Hannah standing on the ground (y = 402) in the 560 x 520 artwork space, her
  * cape ending at x = 328, clear of the signpost's leftmost tip (x = 340).
  */
 function MascotSlot() {
-  const width = MASCOT_WIDTH * MASCOT_SCALE;
-  const height = MASCOT_HEIGHT * MASCOT_SCALE;
   return (
     <image
-      height={height}
-      href="/branding/hannah-hero-static.webp"
+      height={MASCOT.height * MASCOT_SCALE}
+      href={MASCOT.href}
       preserveAspectRatio="xMidYMax meet"
-      width={width}
-      x={328 - MASCOT_RIGHT_X * MASCOT_SCALE}
-      y={402 - MASCOT_FEET_Y * MASCOT_SCALE}
+      width={MASCOT.width * MASCOT_SCALE}
+      x={328 - MASCOT.rightX * MASCOT_SCALE}
+      y={402 - MASCOT.feetY * MASCOT_SCALE}
     />
   );
 }
