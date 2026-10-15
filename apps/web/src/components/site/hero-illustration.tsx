@@ -1,33 +1,36 @@
 /**
- * Hero artwork. Hannah is JJ's final static artwork
- * (public/branding/hannah-hero-static.webp, 480 x 600, transparent), shown at
- * its native aspect ratio and deliberately without animation. Sun, pathway,
+ * Hero artwork. Hannah is JJ's approved front-view artwork
+ * (public/branding/hannah-hero-front.webp: an exact, proportional 600 x 900
+ * lossless WebP of the approved 1024 x 1536 PNG), drawn as a separate image so
+ * she can be swapped without touching the scene. She is never animated; only
+ * scene accents move (see "Ambient scene motion" in globals.css). Sun, pathway,
  * hills and signpost are plain SVG. Decorative, so hidden from assistive
  * technology.
  */
 
-const MASCOT_WIDTH = 480;
-const MASCOT_HEIGHT = 600;
-const MASCOT_SCALE = 0.6;
-// In the 480 x 600 artwork, Hannah's boots end at y = 593 and her cape at x = 427.
-const MASCOT_FEET_Y = 593;
-const MASCOT_RIGHT_X = 427;
+const MASCOT = {
+  href: "/branding/hannah-hero-front.webp",
+  width: 600,
+  height: 900,
+  // Where her boot soles and her cape's right tip are in the 600 x 900 file.
+  feetY: 882,
+  rightX: 589,
+};
+const MASCOT_SCALE = 0.41;
 
 /**
  * Hannah standing on the ground (y = 402) in the 560 x 520 artwork space, her
  * cape ending at x = 328, clear of the signpost's leftmost tip (x = 340).
  */
 function MascotSlot() {
-  const width = MASCOT_WIDTH * MASCOT_SCALE;
-  const height = MASCOT_HEIGHT * MASCOT_SCALE;
   return (
     <image
-      height={height}
-      href="/branding/hannah-hero-static.webp"
+      height={MASCOT.height * MASCOT_SCALE}
+      href={MASCOT.href}
       preserveAspectRatio="xMidYMax meet"
-      width={width}
-      x={328 - MASCOT_RIGHT_X * MASCOT_SCALE}
-      y={402 - MASCOT_FEET_Y * MASCOT_SCALE}
+      width={MASCOT.width * MASCOT_SCALE}
+      x={328 - MASCOT.rightX * MASCOT_SCALE}
+      y={402 - MASCOT.feetY * MASCOT_SCALE}
     />
   );
 }
@@ -76,6 +79,10 @@ export function HeroIllustration({ className }: { className?: string }) {
           <stop offset="0%" stopColor="#ffd401" stopOpacity="0.45" />
           <stop offset="100%" stopColor="#ffd401" stopOpacity="0" />
         </radialGradient>
+        <radialGradient id="hero-scene-wash">
+          <stop offset="0%" stopColor="#d6e3fc" stopOpacity="0.85" />
+          <stop offset="100%" stopColor="#d6e3fc" stopOpacity="0" />
+        </radialGradient>
         <radialGradient id="hero-warm-light">
           <stop offset="0%" stopColor="#fff1bd" stopOpacity="0.9" />
           <stop offset="100%" stopColor="#fff1bd" stopOpacity="0" />
@@ -98,13 +105,14 @@ export function HeroIllustration({ className }: { className?: string }) {
       </defs>
 
       {/* Atmosphere: soft haloes behind Hannah and the signpost, warm light from the sun's side */}
-      <circle cx="300" cy="262" fill="#5888e8" fillOpacity="0.05" r="262" />
-      <circle cx="300" cy="262" fill="#5888e8" fillOpacity="0.06" r="190" />
+      <circle cx="300" cy="262" fill="#5888e8" fillOpacity="0.06" r="262" />
+      <circle cx="300" cy="262" fill="#5888e8" fillOpacity="0.08" r="190" />
+      <circle cx="300" cy="300" fill="url(#hero-scene-wash)" r="250" />
       <circle cx="540" cy="200" fill="url(#hero-warm-light)" r="200" />
 
       {/* Sun */}
       <g className="sun-in">
-        <circle cx="470" cy="76" r="78" fill="url(#hero-sun-glow)" />
+        <circle className="scene-glow" cx="470" cy="76" r="92" fill="url(#hero-sun-glow)" />
         <circle cx="470" cy="76" r="24" fill="#ffd401" />
         <g stroke="#ffd401" strokeLinecap="round" strokeWidth="5">
           <path d="M470 28v-12M470 124v12M422 76h-12M518 76h12M436 42l-9-9M504 110l9 9M504 42l9-9M436 110l-9 9" />
@@ -127,8 +135,9 @@ export function HeroIllustration({ className }: { className?: string }) {
       </g>
 
       {/* The ground Hannah stands on */}
-      <ellipse cx="240" cy="404" fill="#5888e8" fillOpacity="0.08" rx="140" ry="18" />
-      <ellipse cx="240" cy="408" fill="none" rx="112" ry="12" stroke="#5888e8" strokeOpacity="0.35" strokeWidth="2" />
+      <ellipse cx="240" cy="404" fill="#5888e8" fillOpacity="0.1" rx="150" ry="20" />
+      <ellipse cx="240" cy="408" fill="none" rx="158" ry="20" stroke="#5888e8" strokeOpacity="0.22" strokeWidth="1.5" />
+      <ellipse cx="240" cy="408" fill="none" rx="112" ry="12" stroke="#5888e8" strokeOpacity="0.4" strokeWidth="2" />
 
       {/* Pathway with a soft glow, drawn once on entry */}
       <path
@@ -149,6 +158,16 @@ export function HeroIllustration({ className }: { className?: string }) {
         stroke="#5888e8"
         strokeLinecap="round"
         strokeWidth="3.5"
+      />
+      {/* A soft light travelling along the path toward the sun (ambient; off for reduced motion) */}
+      <path
+        className="scene-path-light"
+        d="M20 360C130 330 160 230 300 205S400 150 445 125"
+        fill="none"
+        pathLength="1"
+        stroke="#ffffff"
+        strokeLinecap="round"
+        strokeWidth="3"
       />
 
       {/* Signpost */}

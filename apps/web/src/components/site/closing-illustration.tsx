@@ -1,13 +1,14 @@
 /**
  * Closing artwork: the end of the opening scene's journey. The same soft hills
  * and blue pathway lead to a low, setting sun, and Hannah walks toward it, seen
- * from behind and smaller, farther away than in the hero. No signpost. Static
- * and decorative, so hidden from assistive technology.
+ * from behind and farther away than in the hero. No signpost. Decorative, so
+ * hidden from assistive technology; only scene accents move (clouds, glow, a
+ * light along the path), never Hannah, and not at all with reduced motion.
  *
- * Hannah is a separate image so she can be replaced without touching the scene.
- * public/branding/hannah-rear-provisional.svg is a PROVISIONAL stand-in drawn to
- * fit the composition, not approved artwork: replace CLOSING_MASCOT with JJ's
- * final rear-view Hannah (any size; `feetY` is where her soles are in the file).
+ * Hannah is JJ's approved back-view artwork (public/branding/hannah-walking-back.webp:
+ * an exact, proportional 512 x 768 lossless WebP of the approved 1024 x 1536 PNG),
+ * a separate image so she can be swapped without touching the scene. `feetX` and
+ * `feetY` are where her planted boot meets the ground in that file.
  *
  * The 800 x 360 scene keeps its story in the bottom-right corner, so the
  * container can crop it (preserveAspectRatio "xMaxYMax slice") to a wide strip
@@ -15,25 +16,25 @@
  */
 
 const CLOSING_MASCOT = {
-  href: "/branding/hannah-rear-provisional.svg",
-  width: 120,
-  height: 200,
-  feetY: 190,
+  href: "/branding/hannah-walking-back.webp",
+  width: 512,
+  height: 768,
+  feetX: 305,
+  feetY: 735,
 };
-const MASCOT_HEIGHT = 76;
-/** Where Hannah stands: on the pathway, a little short of the sun. */
-const MASCOT_FEET = { x: 592, y: 289 };
+const MASCOT_HEIGHT = 141;
+/** Where Hannah's planted boot meets the pathway, a little short of the sun. */
+const MASCOT_FEET = { x: 630, y: 283 };
 
 function WalkingMascotSlot() {
   const scale = MASCOT_HEIGHT / CLOSING_MASCOT.height;
-  const width = CLOSING_MASCOT.width * scale;
   return (
     <image
       height={MASCOT_HEIGHT}
       href={CLOSING_MASCOT.href}
       preserveAspectRatio="xMidYMax meet"
-      width={width}
-      x={MASCOT_FEET.x - width / 2}
+      width={CLOSING_MASCOT.width * scale}
+      x={MASCOT_FEET.x - CLOSING_MASCOT.feetX * scale}
       y={MASCOT_FEET.y - CLOSING_MASCOT.feetY * scale}
     />
   );
@@ -60,8 +61,8 @@ export function ClosingIllustration({ className }: { className?: string }) {
           <stop offset="100%" stopColor="#ffd98a" stopOpacity="0" />
         </radialGradient>
         <radialGradient id="closing-cloud">
-          <stop offset="0%" stopColor="#ffdca0" stopOpacity="0.75" />
-          <stop offset="100%" stopColor="#ffdca0" stopOpacity="0" />
+          <stop offset="0%" stopColor="#ffcf8a" stopOpacity="0.8" />
+          <stop offset="100%" stopColor="#ffcf8a" stopOpacity="0" />
         </radialGradient>
         <linearGradient id="closing-hill" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0%" stopColor="#5888e8" stopOpacity="0.24" />
@@ -78,13 +79,13 @@ export function ClosingIllustration({ className }: { className?: string }) {
       </defs>
 
       {/* Airy sky: soft haloes around the low sun and a golden glow along the horizon */}
-      <circle cx="700" cy="254" fill="#5888e8" fillOpacity="0.06" r="232" />
-      <circle cx="700" cy="254" fill="#5888e8" fillOpacity="0.06" r="152" />
-      <ellipse cx="680" cy="258" fill="url(#closing-horizon-glow)" rx="400" ry="104" />
-      <circle cx="700" cy="252" fill="url(#closing-sun-glow)" r="118" />
+      <circle cx="724" cy="254" fill="#5888e8" fillOpacity="0.07" r="236" />
+      <circle cx="724" cy="254" fill="#5888e8" fillOpacity="0.07" r="156" />
+      <ellipse cx="700" cy="258" fill="url(#closing-horizon-glow)" rx="410" ry="108" />
+      <circle className="scene-glow" cx="724" cy="252" fill="url(#closing-sun-glow)" r="124" />
 
       {/* Soft clouds near the horizon */}
-      <g fill="url(#closing-cloud)">
+      <g className="scene-drift" fill="url(#closing-cloud)">
         <ellipse cx="548" cy="216" rx="74" ry="8" />
         <ellipse cx="590" cy="206" rx="42" ry="5" />
         <ellipse cx="782" cy="226" rx="60" ry="7" />
@@ -92,7 +93,7 @@ export function ClosingIllustration({ className }: { className?: string }) {
       </g>
 
       {/* Setting sun */}
-      <circle clipPath="url(#closing-sky)" cx="700" cy="262" fill="#ffd401" r="42" />
+      <circle clipPath="url(#closing-sky)" cx="724" cy="266" fill="#ffd401" r="48" />
 
       {/* Rolling hills, far to near */}
       <path
@@ -106,15 +107,25 @@ export function ClosingIllustration({ className }: { className?: string }) {
       {/* Winding pathway to the sun, with a soft glow */}
       <g fill="none" stroke="#5888e8" strokeLinecap="round" strokeLinejoin="round">
         <path
-          d="M-10 352C90 336 170 352 270 336C370 320 450 314 530 302C590 293 640 280 672 266C684 261 692 258 700 256"
+          d="M-10 352C90 336 170 352 270 336C370 320 450 314 530 302C590 293 650 281 690 270C706 265 716 260 724 257"
           strokeOpacity="0.16"
           strokeWidth="12"
         />
         <path
-          d="M-10 352C90 336 170 352 270 336C370 320 450 314 530 302C590 293 640 280 672 266C684 261 692 258 700 256"
+          d="M-10 352C90 336 170 352 270 336C370 320 450 314 530 302C590 293 650 281 690 270C706 265 716 260 724 257"
           strokeWidth="4"
         />
       </g>
+      {/* A soft light travelling along the path into the sunset (ambient; off for reduced motion) */}
+      <path
+        className="scene-path-light"
+        d="M-10 352C90 336 170 352 270 336C370 320 450 314 530 302C590 293 650 281 690 270C706 265 716 260 724 257"
+        fill="none"
+        pathLength="1"
+        stroke="#ffffff"
+        strokeLinecap="round"
+        strokeWidth="3"
+      />
       <path
         d="M14 356C110 346 160 366 262 352"
         fill="none"
@@ -131,7 +142,7 @@ export function ClosingIllustration({ className }: { className?: string }) {
       </g>
 
       {/* Hannah's shadow stays with the scene; Hannah is the replaceable slot. */}
-      <ellipse cx={MASCOT_FEET.x + 3} cy={MASCOT_FEET.y} fill="#0e1e3d" fillOpacity="0.1" rx="16" ry="3" />
+      <ellipse cx={MASCOT_FEET.x - 4} cy={MASCOT_FEET.y + 1} fill="#0e1e3d" fillOpacity="0.12" rx="30" ry="4.5" />
       <WalkingMascotSlot />
     </svg>
   );

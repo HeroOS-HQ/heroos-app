@@ -29,14 +29,18 @@ describe("LandingPage", () => {
     expect(screen.queryByText(/Practical guidance/)).toBeNull();
   });
 
-  it("shows Hannah as static, decorative artwork", () => {
+  it("shows the approved front-view Hannah as static, decorative artwork; only scene accents move", () => {
     const { container } = render(<LandingPage />);
 
-    const hannah = container.querySelector('image[href="/branding/hannah-hero-static.webp"]');
+    const hannah = container.querySelector('image[href="/branding/hannah-hero-front.webp"]');
     expect(hannah).not.toBeNull();
     expect(hannah).not.toHaveAttribute("class");
-    expect(hannah?.closest("svg")).toHaveAttribute("aria-hidden", "true");
+    const scene = hannah?.closest("svg");
+    expect(scene).toHaveAttribute("aria-hidden", "true");
     expect(container.querySelector(".float-slow")).toBeNull();
+    const moving = [...(scene?.querySelectorAll(".scene-glow, .scene-drift, .scene-path-light") ?? [])];
+    expect(moving.length).toBeGreaterThan(0);
+    for (const element of moving) expect(element.tagName.toLowerCase()).not.toBe("image");
   });
 
   it("sends every sign-in call to action to the login route as a plain link", () => {
@@ -164,7 +168,7 @@ describe("WorkflowJourney", () => {
 });
 
 describe("ClosingCta", () => {
-  it("keeps the call to action and adds a static, decorative closing scene without the signpost", () => {
+  it("keeps the call to action and adds a decorative closing scene with the approved back-view Hannah and no signpost", () => {
     render(<LandingPage />);
 
     const section = screen.getByRole("region", { name: "Ready to explore HeroOS?" });
@@ -177,9 +181,12 @@ describe("ClosingCta", () => {
     expect(scene?.parentElement).toHaveClass("pointer-events-none");
     const hannah = scene?.querySelectorAll("image");
     expect(hannah).toHaveLength(1);
-    expect(hannah?.[0]).toHaveAttribute("href", "/branding/hannah-rear-provisional.svg");
+    expect(hannah?.[0]).toHaveAttribute("href", "/branding/hannah-walking-back.webp");
     expect(hannah?.[0]).not.toHaveAttribute("class");
     expect(section.querySelector(".float-slow, .path-draw, .sun-in")).toBeNull();
+    const moving = [...(scene?.querySelectorAll(".scene-glow, .scene-drift, .scene-path-light") ?? [])];
+    expect(moving.length).toBeGreaterThan(0);
+    for (const element of moving) expect(element.tagName.toLowerCase()).not.toBe("image");
     expect(scene).not.toHaveTextContent(/PEOPLE|GUIDANCE|BETTER OUTCOMES/);
   });
 });
