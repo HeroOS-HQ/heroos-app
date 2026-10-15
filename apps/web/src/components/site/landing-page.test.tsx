@@ -131,6 +131,27 @@ describe("WorkflowJourney", () => {
   });
 });
 
+describe("ClosingCta", () => {
+  it("keeps the call to action and adds a static, decorative closing scene without the signpost", () => {
+    render(<LandingPage />);
+
+    const section = screen.getByRole("region", { name: "Ready to explore HeroOS?" });
+    expect(within(section).getByText("Set up your company workspace in a few minutes.")).toBeInTheDocument();
+    expect(within(section).getByRole("link", { name: /^Get started/ })).toHaveAttribute("href", "/auth/signup");
+    expect(within(section).getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/auth/login");
+
+    const scene = section.querySelector('svg[viewBox="0 0 800 360"]');
+    expect(scene).toHaveAttribute("aria-hidden", "true");
+    expect(scene?.parentElement).toHaveClass("pointer-events-none");
+    const hannah = scene?.querySelectorAll("image");
+    expect(hannah).toHaveLength(1);
+    expect(hannah?.[0]).toHaveAttribute("href", "/branding/hannah-rear-provisional.svg");
+    expect(hannah?.[0]).not.toHaveAttribute("class");
+    expect(section.querySelector(".float-slow, .path-draw, .sun-in")).toBeNull();
+    expect(scene).not.toHaveTextContent(/PEOPLE|GUIDANCE|BETTER OUTCOMES/);
+  });
+});
+
 describe("SiteHeader", () => {
   it("opens and closes the mobile menu, closing on selection and Escape", () => {
     render(<SiteHeader variant="landing" />);
