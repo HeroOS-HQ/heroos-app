@@ -1,7 +1,8 @@
 # Disciplinary Intake, Jurisdiction Routing and Safety Screening (M2-02)
 
-**Status:** Implemented on a feature branch (M2-02). Not deployed. Development
-content: not legally approved.\
+**Status:** Implemented (M2-02, PR #30, merged as `80adbae`). Deployed to the
+temporary staging environment for controlled testing with the sensitive
+screening **disabled** (§7.1). Development content: not legally approved.\
 **Owner:** Technical Lead\
 **Milestone:** M2 — Workflow Platform\
 **Related:** [Workflow Case Foundation](workflow-foundation.md) (M2-01),
@@ -182,6 +183,23 @@ only until the first M2-02 Case exists (M2-01 can't serve definition v2: its
 Disciplinary list and those cases fail). D2 can be downgraded only while
 `workflow_evaluations` is empty, and only after the API is back on M2-01.
 After that: roll forward.
+
+### 7.1 Staging deployment record (2026-10-16)
+
+| Step | Result |
+| --- | --- |
+| Pre-migration backup | Logical backup of the staging database at D1, validated by a full restore into a throwaway container (fingerprints identical) |
+| Rehearsal | D2 applied to a restored copy of that backup, all checks passed; downgrade to D1 and re-upgrade rehearsed |
+| D2 on staging | Applied 2026-10-16 11:44Z (`75ec6db8b6c1` → `e64497d997d8`, contract 5); existing data unchanged; RLS, policy, grants (runtime SELECT/INSERT only, nothing for the operator) and constraints verified |
+| M2-01 API on D2 | Unauthenticated smoke test passed before the API rollout |
+| Merge | PR #30 squash-merged as `80adbae` (tree identical to the reviewed head) |
+| API (Render) | `80adbae` deployed manually by the Technical Lead (Auto-Deploy off; environment unchanged); smoke test passed |
+| `HEROOS_SENSITIVE_SCREENING` | Not set on Render (confirmed by the Technical Lead): the screening is disabled |
+| Web (Vercel) | Not deployed by the merge: Vercel's Hobby plan can't deploy a private organization repository, and the repository was private at the time. With the repository public again, the docs-only merge that adds this record triggers the Production deploy (app code identical to `80adbae`); its revision and verification are recorded in the deployment report |
+| Browser acceptance | Pending at the time of writing: needs an administrator sign-in |
+
+Operator CLI: after D2 it must run from code at or after `80adbae` (it requires
+contract 5 exactly).
 
 ## 8. Open decisions (JJ)
 
