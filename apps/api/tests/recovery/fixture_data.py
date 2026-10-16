@@ -29,6 +29,7 @@ from app.db.models import (
     Membership,
     User,
     UserIdentity,
+    WorkflowEvaluation,
     WorkflowInstance,
     WorkflowSubmission,
 )
@@ -63,6 +64,23 @@ SUBMISSION_KEY_A = UUID("ab000000-0000-4000-8000-00000000000a")
 SUBMISSION_KEY_B = UUID("bb000000-0000-4000-8000-00000000000b")
 FACT_A = UUID("ac000000-0000-4000-8000-00000000000a")
 FACT_B = UUID("bc000000-0000-4000-8000-00000000000b")
+EVALUATION_A = UUID("ad000000-0000-4000-8000-00000000000a")
+EVALUATION_B = UUID("bd000000-0000-4000-8000-00000000000b")
+# A synthetic intake evaluation trace (M2-02): codes and enumerated answers only.
+EVALUATION_RESULTS = [
+    {
+        "rule": "case_jurisdiction",
+        "order": 1,
+        "applies_in": [],
+        "provisional": False,
+        "enforced": True,
+        "outcome": "fired",
+        "action": "block",
+        "reason": "company_unconfirmed",
+        "shown": True,
+        "inputs": {"company.readiness": "unconfirmed"},
+    }
+]
 ISSUER = "urn:heroos:recovery-test"
 # M1-10C state a restore must keep: A has an administrator and a current DIFC
 # confirmation; B is a member-only Company with an unconfirmed "Other" answer.
@@ -152,10 +170,10 @@ def build() -> list[object]:
                 title=f"Synthetic Recovery Case {label}",
             )
         )
-        instance, request_key, submission, submission_key, fact = (
-            (INSTANCE_A, REQUEST_KEY_A, SUBMISSION_A, SUBMISSION_KEY_A, FACT_A)
+        instance, request_key, submission, submission_key, fact, evaluation = (
+            (INSTANCE_A, REQUEST_KEY_A, SUBMISSION_A, SUBMISSION_KEY_A, FACT_A, EVALUATION_A)
             if label == "A"
-            else (INSTANCE_B, REQUEST_KEY_B, SUBMISSION_B, SUBMISSION_KEY_B, FACT_B)
+            else (INSTANCE_B, REQUEST_KEY_B, SUBMISSION_B, SUBMISSION_KEY_B, FACT_B, EVALUATION_B)
         )
         rows.append(
             WorkflowInstance(
@@ -188,6 +206,23 @@ def build() -> list[object]:
                 submission_id=submission,
                 fact_key="incident.history",
                 value="new",
+            )
+        )
+        rows.append(
+            WorkflowEvaluation(
+                id=evaluation,
+                company_id=company,
+                instance_id=instance,
+                submission_id=submission,
+                definition_version=2,
+                ruleset_version="disciplinary-intake.1",
+                ruleset_digest="0" * 64,
+                status="awaiting_jurisdiction",
+                hold="jurisdiction",
+                hold_reason="company_jurisdiction_unconfirmed",
+                jurisdiction=None,
+                screening="not_applicable",
+                results=EVALUATION_RESULTS,
             )
         )
     return rows

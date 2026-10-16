@@ -1,22 +1,31 @@
-"""Company-scoped persistence of workflow Cases, submissions and facts (M2-01).
+"""Company-scoped persistence of workflow Cases, submissions, facts and evaluations.
 
 Every function takes a ``CompanyScope`` and filters by ``scope.company_id``;
 PostgreSQL RLS enforces the same boundary underneath. Repositories flush but
-never commit (tenant-isolation.md §2). There is no update or delete of facts or
-submissions: answers are append-only, and the only instance update is the
-optimistic-concurrency revision bump.
+never commit (tenant-isolation.md §2). There is no update or delete of facts,
+submissions or evaluations: they are append-only, and the only instance update
+is the optimistic-concurrency revision bump.
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import Select, func, select, update
 
-from app.db.models import Case, CaseFact, WorkflowInstance, WorkflowSubmission
+from app.db.models import (
+    Case,
+    CaseFact,
+    WorkflowEvaluation,
+    WorkflowInstance,
+    WorkflowSubmission,
+)
 from app.tenancy.scope import CompanyScope
 from app.workflows.conversation import SubmissionRecord
 from app.workflows.definition import WorkflowDefinition
+from app.workflows.history import EvaluationRecord
+from app.workflows.intake import EarlierEscalation, HoldReason, IntakeEvaluation
 from app.workflows.progress import FactRecord
 
 
@@ -220,3 +229,88 @@ def record_submission(
     )
     scope.session.flush()
     return submission
+
+
+def record_evaluation(
+    scope: CompanyScope,
+    submission: WorkflowSubmission,
+    evaluation: IntakeEvaluation,
+    results: Sequence[Mapping[str, object]],
+) -> WorkflowEvaluation:
+    """Append the intake evaluation a submission produced (same transaction)."""
+    row = WorkflowEvaluation(
+        company_id=scope.company_id,
+        instance_id=submission.instance_id,
+        submission_id=submission.id,
+        definition_version=evaluation.definition_version,
+        ruleset_version=evaluation.ruleset_version,
+        ruleset_digest=evaluation.ruleset_digest,
+        status=evaluation.status,
+        hold=None if evaluation.hold is None else evaluation.hold.kind,
+        hold_reason=None if evaluation.hold is None else evaluation.hold.reason,
+        jurisdiction=evaluation.jurisdiction.jurisdiction,
+        screening=evaluation.screening,
+        results=list(results),
+    )
+    scope.session.add(row)
+    scope.session.flush()
+    return row
+
+
+def evaluations(scope: CompanyScope, instance_id: UUID) -> dict[UUID, EvaluationRecord]:
+    """The instance's stored evaluations by submission id."""
+    rows = scope.session.scalars(
+        select(WorkflowEvaluation).where(
+            WorkflowEvaluation.company_id == scope.company_id,
+            WorkflowEvaluation.instance_id == instance_id,
+        )
+    ).all()
+    return {
+        row.submission_id: EvaluationRecord(
+            submission_id=row.submission_id,
+            status=row.status,
+            hold=row.hold,
+            hold_reason=row.hold_reason,
+            jurisdiction=row.jurisdiction,
+            screening=row.screening,
+            results=list(row.results),
+        )
+        for row in rows
+    }
+
+
+def first_escalations(
+    scope: CompanyScope, instance_ids: Sequence[UUID]
+) -> dict[UUID, EarlierEscalation]:
+    """Per instance, the first stored evaluation that held it for specialist review.
+
+    Escalations are never released by changed answers (app.workflows.intake),
+    so every later evaluation and read keeps the Case held from this one on.
+    """
+    if not instance_ids:
+        return {}
+    rows = scope.session.execute(
+        select(
+            WorkflowEvaluation.instance_id,
+            WorkflowEvaluation.hold_reason,
+            WorkflowEvaluation.evaluated_at,
+        )
+        .join(
+            WorkflowSubmission,
+            (WorkflowSubmission.company_id == WorkflowEvaluation.company_id)
+            & (WorkflowSubmission.id == WorkflowEvaluation.submission_id),
+        )
+        .where(
+            WorkflowEvaluation.company_id == scope.company_id,
+            WorkflowSubmission.company_id == scope.company_id,
+            WorkflowEvaluation.instance_id.in_(instance_ids),
+            WorkflowEvaluation.hold == "specialist_review",
+        )
+        .order_by(WorkflowSubmission.revision)
+    ).all()
+    first: dict[UUID, EarlierEscalation] = {}
+    for instance_id, reason, evaluated_at in rows:
+        if instance_id not in first:
+            # The CHECK constraint ties a specialist_review hold to a reason code.
+            first[instance_id] = EarlierEscalation(cast(HoldReason, reason), evaluated_at)
+    return first

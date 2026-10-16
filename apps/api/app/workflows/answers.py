@@ -3,6 +3,11 @@
 Answers are validated, never normalized: what is stored is exactly what the
 client sent. A ``None`` value clears an answer. Error messages are fixed text
 and never contain the submitted value (it can be HR case content).
+
+A question that is only asked after another answer (``AskWhen``) accepts an
+answer only while it is asked, judged on the saved answers merged with this
+submission; clearing is always accepted. Questions whose options the server
+builds per Case (the jurisdiction confirmation) are checked against those.
 """
 
 from collections.abc import Mapping
@@ -10,7 +15,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Final
 
-from app.workflows.definition import NOT_SURE, Question, Step
+from app.workflows.definition import NOT_SURE, Option, Question, Step
 
 # Earliest incident date accepted. A guard against typos, not a legal limit.
 EARLIEST_DATE: Final = date(1990, 1, 1)
@@ -54,7 +59,9 @@ def _date_error(value: str, question: Question, today: date) -> str | None:
     return None
 
 
-def _answer_error(value: object, question: Question, today: date) -> str | None:
+def _answer_error(
+    value: object, question: Question, today: date, options: tuple[Option, ...]
+) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
@@ -63,15 +70,24 @@ def _answer_error(value: object, question: Question, today: date) -> str | None:
         return _text_error(value, question)
     if question.kind == "date":
         return _date_error(value, question, today)
-    if value not in {option.value for option in question.options}:
+    if value not in {option.value for option in options}:
         return "must be one of the listed options"
     return None
 
 
 def validate_answers(
-    step: Step, answers: Mapping[str, object], *, today: date
+    step: Step,
+    answers: Mapping[str, object],
+    *,
+    today: date,
+    current: Mapping[str, object] | None = None,
+    options: Mapping[str, tuple[Option, ...]] | None = None,
 ) -> tuple[dict[str, str | None], list[FieldError]]:
-    """The accepted answers (fact key -> value, ``None`` = clear) or the errors."""
+    """The accepted answers (fact key -> value, ``None`` = clear) or the errors.
+
+    ``current``: the Case's saved answers (for ``AskWhen``); ``options``: the
+    server-built options of questions that have them.
+    """
     errors: list[FieldError] = []
     accepted: dict[str, str | None] = {}
     for key, value in answers.items():
@@ -79,9 +95,21 @@ def validate_answers(
         if question is None:
             errors.append(FieldError(key, "is not a question of this step"))
             continue
-        message = _answer_error(value, question, today)
+        choices = (options or {}).get(key, question.options)
+        message = _answer_error(value, question, today, choices)
         if message is not None:
             errors.append(FieldError(key, message))
         else:
             accepted[key] = value  # type: ignore[assignment]  # str or None, checked above
+    merged = {**(current or {}), **accepted}
+    for key, value in accepted.items():
+        question = step.question(key)
+        assert question is not None
+        condition = question.ask_when
+        if (
+            value is not None
+            and condition is not None
+            and merged.get(condition.key) not in (condition.values)
+        ):
+            errors.append(FieldError(key, "is not asked for the current answers"))
     return ({}, errors) if errors else (accepted, [])

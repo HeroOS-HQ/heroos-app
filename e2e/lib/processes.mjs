@@ -92,6 +92,9 @@ export function createApi({ repoRoot, runDir, port, tls, issuer, audience, clien
             HEROOS_OIDC_AUDIENCE: audience,
             HEROOS_OIDC_CLIENT_IDS: clientIds.join(","),
             HEROOS_SELF_REGISTRATION_ENABLED: selfRegistration ? "true" : "false",
+            // The harness holds synthetic data only: the sensitive screening may
+            // be collected (deployed environments default to disabled).
+            HEROOS_SENSITIVE_SCREENING: "synthetic_demo",
             DATABASE_URL: databaseUrl,
             // Trust only this run's CA for the OIDC discovery and JWKS fetches.
             SSL_CERT_FILE: tls.ca,

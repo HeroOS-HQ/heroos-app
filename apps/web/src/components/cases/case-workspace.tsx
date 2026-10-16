@@ -14,13 +14,22 @@ import { Conversation } from "./conversation";
 
 /**
  * CASE_READY: the guided Case workspace. Left: the Company's Disciplinary
- * Cases. Centre: the conversation and, for administrators, the composer.
- * Right (below the conversation on smaller screens): progress, jurisdiction
- * readiness, known facts and missing information.
+ * Cases. Centre: the conversation and, for administrators, the question
+ * groups (one step at a time). Right (below the conversation on smaller
+ * screens): progress, hold, jurisdiction, cautions, facts, missing and
+ * uncertain answers, and the case history.
  *
  * The view comes from the API and is replaced by the API's answer after each
  * save; nothing here computes workflow state.
  */
+
+/** The step to open first: the first answerable one with questions left. */
+function firstOpenStep(view: WorkflowView): string | undefined {
+  const open = view.steps.find(
+    (step) => step.available && step.questions.some((question) => view.missing.includes(question.key)),
+  );
+  return (open ?? view.steps.find((step) => step.available) ?? view.steps[0])?.key;
+}
 export function CaseWorkspace({
   companyId,
   cases,
@@ -33,12 +42,20 @@ export function CaseWorkspace({
   fetcher?: typeof fetch;
 }) {
   const [view, setView] = useState(initialView);
+  const [selected, setSelected] = useState(() => firstOpenStep(initialView));
   const casesHref = `/workspaces/${encodeURIComponent(companyId)}/cases`;
   const caseId = view.case.id;
-  const step = view.steps[0];
-  const missingInStep = step ? step.questions.filter((question) => view.missing.includes(question.key)).length : 0;
-  const answered = view.steps.reduce((sum, s) => sum + s.questions.length, 0) - view.missing.length;
-  const total = view.steps.reduce((sum, s) => sum + s.questions.length, 0);
+  const step = view.steps.find((item) => item.key === selected) ?? view.steps[0];
+  const total = view.asked.length;
+  const answered = total - view.missing.length;
+  const stepIndex = step ? view.steps.indexOf(step) : -1;
+  const nextStep = view.steps
+    .slice(stepIndex + 1)
+    .find((item) => item.available && item.questions.some((question) => view.missing.includes(question.key)));
+  const choose = (key: string) => {
+    setSelected(key);
+    requestAnimationFrame(() => document.getElementById("composer-heading")?.focus());
+  };
   // The sidebar shows the current Case's live title and status.
   const sidebar = cases.some((item) => item.id === caseId)
     ? cases.map((item) => (item.id === caseId ? { ...item, status: view.status } : item))
@@ -116,11 +133,16 @@ export function CaseWorkspace({
           </div>
           <p className="text-sm text-hero-muted">
             Created <time dateTime={view.case.createdAt}>{formatDay(view.case.createdAt)}</time> · {answered} of {total}{" "}
-            initial questions answered
+            intake questions answered
             <a className="ml-2 font-bold text-hero-blue-ink underline xl:hidden" href="#case-details">
               Progress and details
             </a>
           </p>
+          {view.sensitiveScreening === "synthetic_demo" ? (
+            <p className="text-sm font-semibold text-hero-navy">
+              Demo environment: use made-up examples only, never real employee information.
+            </p>
+          ) : null}
         </header>
 
         <section aria-labelledby="conversation-heading" className="mt-6">
@@ -134,22 +156,67 @@ export function CaseWorkspace({
           aria-label="Your answers"
           className="mt-8 rounded-3xl border border-hero-border bg-white p-5 shadow-hero-card sm:p-7"
         >
-          {step && view.canEdit ? (
+          <nav aria-label="Question groups" className="-mx-1 mb-6 overflow-x-auto px-1 pb-1">
+            <ol className="flex min-w-max gap-2 sm:min-w-0 sm:flex-wrap">
+              {view.steps.map((item, index) => {
+                const progress = view.progress.find((entry) => entry.key === item.key);
+                const current = item.key === step?.key;
+                return (
+                  <li key={item.key}>
+                    <button
+                      aria-current={current ? "step" : undefined}
+                      className={`flex min-h-11 flex-col items-start rounded-2xl border px-3.5 py-2 text-left transition-colors duration-150 ${
+                        current
+                          ? "border-hero-blue bg-hero-blue-tint text-hero-navy"
+                          : "border-hero-border bg-white text-hero-navy hover:bg-hero-bg"
+                      }`}
+                      onClick={() => choose(item.key)}
+                      type="button"
+                    >
+                      <span className="text-sm font-bold">
+                        {index + 1}. {item.title}
+                      </span>
+                      <span className="text-xs text-hero-muted">
+                        {item.available ? (progress?.detail ?? "") : "Not available now"}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          </nav>
+          {!view.canEdit ? (
+            <Notice title="View only">
+              You can follow this case. Only company administrators can add or change its answers.
+            </Notice>
+          ) : step && !step.available ? (
+            <div>
+              <h2
+                className="text-lg font-extrabold tracking-[-0.01em] text-hero-navy outline-none"
+                id="composer-heading"
+                tabIndex={-1}
+              >
+                {step.title}
+              </h2>
+              <p className="mt-1 text-[0.9375rem] leading-relaxed text-hero-navy/85">{step.intro}</p>
+              <Notice className="mt-4" title="Not available right now">
+                {step.unavailableReason ?? "This step can't be answered in the case's current state."}
+              </Notice>
+            </div>
+          ) : step ? (
             <AnswersForm
               answers={view.answers}
               caseId={caseId}
               companyId={companyId}
               fetcher={fetcher}
-              missingCount={missingInStep}
+              key={step.key}
+              demoOnly={view.sensitiveScreening === "synthetic_demo"}
+              next={nextStep ? { title: nextStep.title, go: () => choose(nextStep.key) } : null}
               onSaved={setView}
               revision={view.workflow.revision}
               step={step}
             />
-          ) : (
-            <Notice title="View only">
-              You can follow this case. Only company administrators can add or change its answers.
-            </Notice>
-          )}
+          ) : null}
         </section>
       </div>
 

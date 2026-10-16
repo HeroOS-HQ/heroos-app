@@ -19,10 +19,12 @@ export const PROGRESS_COPY: Record<ProgressStatus, { label: string; tone: Tone }
 /** Tone of a Case status chosen by the API; unknown codes stay neutral. */
 export function caseStatusTone(code: string): Tone {
   switch (code) {
-    case "initial_facts_completed":
+    case "intake_recorded":
       return "positive";
     case "awaiting_jurisdiction":
-    case "jurisdiction_unsupported":
+    case "screening_not_cleared":
+    case "screening_unavailable":
+    case "held_for_specialist_review":
       return "caution";
     default:
       return "neutral";

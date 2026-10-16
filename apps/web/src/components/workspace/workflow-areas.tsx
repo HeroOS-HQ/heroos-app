@@ -25,7 +25,7 @@ const AREAS = [
 
 /**
  * The three V1 HR workflows. Disciplinary opens its Cases for Company
- * administrators (M2-01: the initial facts only, stated on the card); for other
+ * administrators (M2-02: intake and safety screening, stated on the card); for other
  * members it is shown as administrator-only, with no link. The others are
  * honestly not available yet: no links, no buttons, nothing that suggests a
  * working feature. The API enforces access whatever this shows.
@@ -40,8 +40,8 @@ export function WorkflowAreas({ companyId, isAdmin }: { companyId: string; isAdm
             HR workflows
           </h2>
           <p className="mt-1 text-[0.9375rem] leading-relaxed text-hero-muted">
-            Guided workflows are being built step by step. Disciplinary has its first step; the others will appear
-            here when they&apos;re ready.
+            Guided workflows are being built step by step. Disciplinary has its intake; the others will appear here
+            when they&apos;re ready.
           </p>
         </div>
       </div>
@@ -57,7 +57,7 @@ export function WorkflowAreas({ companyId, isAdmin }: { companyId: string; isAdm
                   <span className="inline-flex size-10 items-center justify-center rounded-xl bg-white text-hero-blue">
                     <Icon className="size-5" />
                   </span>
-                  <StatusBadge tone="neutral">Initial facts only</StatusBadge>
+                  <StatusBadge tone="neutral">Intake only</StatusBadge>
                 </div>
                 <h3 className="mt-4 text-base font-extrabold text-hero-navy">{title}</h3>
                 <p className="mt-1 text-sm leading-relaxed text-hero-muted">{description}</p>

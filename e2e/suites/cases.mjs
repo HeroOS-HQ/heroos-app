@@ -1,4 +1,6 @@
-// M2-01: the Disciplinary case journey with the real components together.
+// M2-01: the Disciplinary case journey with the real components together
+// (a Company whose jurisdiction isn't confirmed: the M2-02 intake is paused;
+// the intake itself is e2e/suites/intake.mjs).
 // Browser (founder = company administrator): workspace -> Disciplinary ->
 // empty list -> New case (double click) -> guided workspace -> answers saved
 // -> reload -> sign out and in -> still there; then a member's view-only
@@ -9,6 +11,14 @@ import { newFounder, quote } from "./common.mjs";
 const TITLE = "[SYNTHETIC E2E] Attendance concern";
 const NARRATIVE = "[SYNTHETIC E2E] A team member left the site early on two shifts without telling anyone.";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+// Once the initial facts are complete, a case opens on the next question group
+// with questions left; open "Initial facts" explicitly to see its answers.
+async function openInitialFacts(page) {
+  await page.waitForHydrated('nav[aria-label="Question groups"] button');
+  await page.clickText("button", "1. Initial facts");
+  await page.waitForHydrated("#q-incident-narrative");
+}
 
 export async function run(ctx) {
   const { check, fixtures, webOrigin } = ctx;
@@ -31,8 +41,8 @@ export async function run(ctx) {
   await page.goto(`${webOrigin}${companyPath}`);
   await page.waitForText("Open Disciplinary cases");
   const areas = await page.eval(`[...document.querySelectorAll('section[aria-labelledby="workflows-heading"] li')].map((li) => li.innerText.replace(/\\s+/g, " "))`);
-  check("CASE-1", "the workspace home opens Disciplinary (initial facts only); Probation and Recruitment stay coming soon",
-    areas.length === 3 && areas[0].includes("Initial facts only") && areas.slice(1).every((t) => t.includes("Coming soon")), JSON.stringify(areas));
+  check("CASE-1", "the workspace home opens Disciplinary (intake only); Probation and Recruitment stay coming soon",
+    areas.length === 3 && areas[0].includes("Intake only") && areas.slice(1).every((t) => t.includes("Coming soon")), JSON.stringify(areas));
 
   await page.click(`a[href="${companyPath}/cases"]`);
   await page.waitForText("No Disciplinary cases yet");
@@ -51,8 +61,8 @@ export async function run(ctx) {
   check("CASE-3", "a double-clicked Create makes exactly one case, typed disciplinary by the server", UUID.test(caseId) && instances[0][0] === "1" && instances[0][1] === "disciplinary", JSON.stringify(instances));
 
   const opened = await page.text();
-  check("CASE-4", "the guided workspace says it is not AI, asks the initial questions, and shows unconfirmed jurisdiction and stages coming later",
-    opened.includes("not an AI assistant") && opened.includes("What happened?") && opened.includes("Jurisdiction not confirmed yet") &&
+  check("CASE-4", "the guided workspace says it is not AI, asks the initial questions, and pauses on the unconfirmed jurisdiction with stages coming later",
+    opened.includes("not an AI assistant") && opened.includes("What happened?") && opened.includes("Paused: jurisdiction not confirmed") &&
       opened.includes("Needs information") && opened.includes("Coming later") && opened.includes("Expert review"),
     opened.slice(0, 200));
   await ctx.screenshot(page, "case-new-1440");
@@ -76,7 +86,8 @@ export async function run(ctx) {
     ]),
     JSON.stringify(facts));
   const saved = await page.text();
-  check("CASE-6", "the saved answers appear as the employer's turn and progress follows them", saved.includes("You") && saved.includes("Initial facts in progress") && saved.includes("4 of 5"));
+  check("CASE-6", "the saved answers appear as the employer's turn and progress follows them",
+    saved.includes("You") && saved.includes("Awaiting jurisdiction confirmation") && saved.includes("4 of 5 answered"));
 
   await page.goto(`${webOrigin}${companyPath}/cases/${caseId}`);
   await page.waitForHydrated("#q-incident-narrative");
@@ -90,10 +101,13 @@ export async function run(ctx) {
   await page.waitForText("Your answers are saved to this case.");
   const complete = await page.text();
   const completeView = await ctx.apiFetch(`/companies/${founder.companyId}/cases/${caseId}/workflow`, { token: founder.token });
-  check("CASE-8", "with every answer given but the jurisdiction unconfirmed, the case waits: no jurisdiction-specific progression",
+  const unavailable = (completeView.json?.steps ?? []).filter((s) => !s.available).map((s) => s.key);
+  check("CASE-8", "with every initial answer given but the company jurisdiction unconfirmed, the case is paused: jurisdiction-dependent steps are unavailable",
     complete.includes("Awaiting jurisdiction confirmation") && complete.includes("Blocked") &&
-      completeView.json?.jurisdiction?.guidance_allowed === false && completeView.json?.steps?.length === 1 &&
-      completeView.json?.progress?.find((p) => p.key === "next_stages")?.status === "coming_later",
+      completeView.json?.jurisdiction?.guidance_allowed === false &&
+      JSON.stringify(unavailable) === JSON.stringify(["jurisdiction", "safety_screening"]) &&
+      completeView.json?.intake?.hold?.reason === "company_jurisdiction_unconfirmed" &&
+      completeView.json?.progress?.find((p) => p.key === "next_stages")?.status === "blocked",
     JSON.stringify(completeView.json?.status));
 
   await page.clickText("button", "Sign out");
@@ -102,19 +116,19 @@ export async function run(ctx) {
   await page.goto(`${webOrigin}${companyPath}/cases`);
   await page.waitForText(TITLE);
   await page.goto(`${webOrigin}${companyPath}/cases/${caseId}`);
-  await page.waitForHydrated("#q-incident-narrative");
+  await openInitialFacts(page);
   const again = await page.eval(`document.getElementById("q-incident-narrative").value`);
   check("CASE-9", "after signing out and in again, the case and its answers are still there", again === NARRATIVE);
 
   await page.viewport(390, 844);
   await page.goto(`${webOrigin}${companyPath}/cases/${caseId}`);
-  await page.waitForHydrated("#q-incident-narrative");
+  await openInitialFacts(page);
   const overflow = await page.overflow();
   check("CASE-10", "the guided workspace fits a 390 px phone without horizontal scrolling", overflow <= 0, `overflow ${overflow}px`);
   await ctx.screenshot(page, "case-saved-390");
   await page.viewport(1440, 900);
   await page.goto(`${webOrigin}${companyPath}/cases/${caseId}`);
-  await page.waitForHydrated("#q-incident-narrative");
+  await openInitialFacts(page);
   await ctx.screenshot(page, "case-saved-1440");
 
   // ===== Duplicate creation through the BFF (concurrent, one key) =====

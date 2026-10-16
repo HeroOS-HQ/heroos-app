@@ -12,9 +12,10 @@ export const caseHref = (companyId: string, caseId: string) =>
 /** What this first version does, and doesn't, so nothing suggests more. */
 export function SliceNotice({ className }: { className?: string }) {
   return (
-    <Notice className={className} title="Early version: initial facts only">
-      HeroOS guides you through structured questions and saves your answers. Conditions and safeguard checks, legal
-      assessment, documents and expert review aren&apos;t available yet, and nothing you enter is assessed or decided.
+    <Notice className={className} title="Early version: intake only">
+      HeroOS guides you through the intake: structured questions, the case&apos;s jurisdiction and a safety screening,
+      with fixed checks that can pause a case for specialist advice. Classification, options and decisions, documents
+      and expert review aren&apos;t available yet, and nothing you enter is assessed or decided.
     </Notice>
   );
 }
@@ -89,7 +90,7 @@ export function CasesDashboard({
                   <span className="min-w-0 flex-1">
                     <span className="block break-words text-base font-bold text-hero-navy">{item.title}</span>
                     <span className="mt-1 block text-sm text-hero-muted">
-                      {item.answered} of {item.total} initial questions answered · Last updated{" "}
+                      {item.answered} of {item.total} intake questions answered · Last updated{" "}
                       <time dateTime={item.updatedAt}>{formatDay(item.updatedAt)}</time>
                     </span>
                   </span>

@@ -6,7 +6,10 @@ import { NOT_SURE, type Question, type Step } from "./model";
  * only. The HeroOS API validates again and decides what is stored.
  *
  * Only changed answers are sent. Emptying a question that has a saved answer
- * clears it (`null`); answers are trimmed, never otherwise rewritten.
+ * clears it (`null`); answers are trimmed, never otherwise rewritten. A
+ * follow-up question (`askWhen`) is shown and sent only while the answer it
+ * depends on (saved, or changed in the draft) asks for it; a saved answer to a
+ * follow-up that is no longer asked is left as it is (the API ignores it).
  */
 
 export type Draft = Record<string, string>;
@@ -19,6 +22,22 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function draftFrom(step: Step, answers: Record<string, string>): Draft {
   return Object.fromEntries(step.questions.map((question) => [question.key, answers[question.key] ?? ""]));
+}
+
+/** The answers as they would be after saving this draft (empty = cleared). */
+export function mergedAnswers(step: Step, draft: Draft, saved: Record<string, string>): Record<string, string> {
+  const merged = { ...saved };
+  for (const question of step.questions) {
+    const value = (draft[question.key] ?? "").trim();
+    if (value === "") delete merged[question.key];
+    else merged[question.key] = value;
+  }
+  return merged;
+}
+
+/** Whether a question is asked, given the answers it may depend on. */
+export function isAsked(question: Question, answers: Record<string, string>): boolean {
+  return question.askWhen === null || question.askWhen.values.includes(answers[question.askWhen.key] ?? "");
 }
 
 /** `YYYY-MM-DD` for a date in the user's own calendar. */
@@ -54,7 +73,9 @@ export function buildAnswers(
 ): { answers: AnswerPatch; errors: AnswerErrors } {
   const answers: AnswerPatch = {};
   const errors: AnswerErrors = {};
+  const merged = mergedAnswers(step, draft, saved);
   for (const question of step.questions) {
+    if (!isAsked(question, merged)) continue;
     const raw = draft[question.key] ?? "";
     const value = question.kind === "text" ? raw.trim() : raw;
     const before = saved[question.key];

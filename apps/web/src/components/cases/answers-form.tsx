@@ -5,16 +5,29 @@ import { useEffect, useRef, useState } from "react";
 import { AlertIcon } from "@/components/site/icons";
 import { Notice } from "@/components/ui/notice";
 import { buttonPrimary, buttonQuiet, fieldError, hint as hintClass, input, label as labelClass } from "@/components/ui/styles";
-import { type AnswerErrors, buildAnswers, changedCount, type Draft, draftFrom, isoDay } from "@/lib/workflows/answers";
+import {
+  type AnswerErrors,
+  buildAnswers,
+  changedCount,
+  type Draft,
+  draftFrom,
+  isAsked,
+  isoDay,
+  mergedAnswers,
+} from "@/lib/workflows/answers";
 import { isWorkflowView, NOT_SURE, type Question, type Step, type WorkflowView } from "@/lib/workflows/model";
 
 /**
- * The composer: one step's structured questions. It sends only changed
- * answers, with the revision they were based on (`expectedRevision`) and a
- * submission key. Retrying the identical change after a lost response reuses
- * the key, so the API applies it once; anything else gets a new key. A stale
- * revision (another window or administrator saved first) is refused by the API
- * and the employer is asked to reload. The API enforces the administrator role.
+ * The composer: one step's structured questions (a question group). It sends
+ * only changed answers, with the revision they were based on
+ * (`expectedRevision`) and a submission key. Retrying the identical change
+ * after a lost response reuses the key, so the API applies it once; anything
+ * else gets a new key. A stale revision (another window or administrator saved
+ * first) is refused by the API and the employer is asked to reload. The API
+ * enforces the administrator role and decides which steps can be answered.
+ *
+ * Follow-up questions appear as soon as the answer they depend on is given in
+ * the draft, and are left out (never sent) when it changes away.
  */
 
 type Failure = "session_expired" | "forbidden" | "invalid" | "conflict" | "unavailable" | "not_found";
@@ -32,7 +45,7 @@ const FAILURES: Record<Failure, { title: string; body: string }> = {
   invalid: { title: "Some answers need attention", body: "HeroOS couldn't accept the highlighted answers." },
   conflict: {
     title: "This case has changed since you opened it",
-    body: "Another window or administrator saved answers first. Reload the case to see the latest answers, then make your changes again.",
+    body: "Another window or administrator saved answers first, or this step can't be answered right now. Reload the case to see its current state, then make your changes again.",
   },
   not_found: { title: "This case can't be found", body: "It may not be available to you any more. Reload the page." },
   unavailable: {
@@ -183,8 +196,9 @@ export function AnswersForm({
   step,
   answers,
   revision,
-  missingCount,
   onSaved,
+  next,
+  demoOnly = false,
   fetcher,
 }: {
   companyId: string;
@@ -192,8 +206,11 @@ export function AnswersForm({
   step: Step;
   answers: Record<string, string>;
   revision: number;
-  missingCount: number;
   onSaved: (view: WorkflowView) => void;
+  /** The next step with questions left, offered after a save. */
+  next?: { title: string; go: () => void } | null;
+  /** The environment holds made-up demo data only (decided by the API). */
+  demoOnly?: boolean;
   fetcher?: typeof fetch;
 }) {
   const [draft, setDraft] = useState<Draft>(() => draftFrom(step, answers));
@@ -205,7 +222,10 @@ export function AnswersForm({
 
   // Rendering never reads the clock (the server and browser dates can differ);
   // "today" is taken when the employer saves.
-  const dirty = step.questions.some((question) => {
+  const merged = mergedAnswers(step, draft, answers);
+  const visible = step.questions.filter((question) => isAsked(question, merged));
+  const missingCount = visible.filter((question) => merged[question.key] === undefined).length;
+  const dirty = visible.some((question) => {
     const value = draft[question.key] ?? "";
     return (question.kind === "text" ? value.trim() : value) !== (answers[question.key] ?? "");
   });
@@ -231,7 +251,7 @@ export function AnswersForm({
     if (inFlight.current) return;
     const built = buildAnswers(step, draft, answers, isoDay(new Date()));
     setErrors(built.errors);
-    const firstError = step.questions.find((question) => built.errors[question.key]);
+    const firstError = visible.find((question) => built.errors[question.key]);
     if (firstError) {
       requestAnimationFrame(() => document.getElementById(fieldId(firstError.key))?.focus());
       return;
@@ -269,7 +289,7 @@ export function AnswersForm({
         const fields = Array.isArray(body?.fields) ? (body.fields as unknown[]).filter((f): f is string => typeof f === "string") : [];
         setErrors(
           Object.fromEntries(
-            step.questions
+            visible
               .filter((question) => fields.includes(question.key))
               .map((question) => [question.key, "HeroOS couldn't accept this answer. Please check it."]),
           ),
@@ -298,12 +318,12 @@ export function AnswersForm({
   }
 
   const saving = status.kind === "saving";
-  const heading =
-    missingCount === step.questions.length
-      ? "Answer the initial questions"
+  const lead =
+    missingCount === visible.length
+      ? "Answer what you know; leave the rest for later."
       : missingCount > 0
-        ? "Add the remaining answers"
-        : "Review or update your answers";
+        ? `${missingCount} still to answer. Answer what you know; leave the rest for later.`
+        : "Everything here is answered. You can review or correct any answer.";
   return (
     <form
       aria-labelledby="composer-heading"
@@ -315,14 +335,27 @@ export function AnswersForm({
       }}
     >
       <div>
-        <h2 className="text-lg font-extrabold tracking-[-0.01em] text-hero-navy" id="composer-heading">
-          {heading}
+        <h2 className="text-lg font-extrabold tracking-[-0.01em] text-hero-navy outline-none" id="composer-heading" tabIndex={-1}>
+          {step.title}
         </h2>
-        <p className="mt-1 text-[0.9375rem] leading-relaxed text-hero-muted">
-          Answer what you know; leave the rest for later. Emptying an answer removes it when you save.
+        <p className="mt-1 text-[0.9375rem] leading-relaxed text-hero-navy/85">{step.intro}</p>
+        <p className="mt-2 text-[0.9375rem] leading-relaxed text-hero-muted">
+          {lead} Emptying an answer removes it when you save.
         </p>
+        {step.sensitive && demoOnly ? (
+          <Notice className="mt-3" title="Demo environment: made-up examples only" tone="caution">
+            These questions are about health and other sensitive circumstances. Don&apos;t answer them about a real
+            employee: use made-up examples only.
+          </Notice>
+        ) : null}
+        {step.provisional ? (
+          <p className="mt-3 rounded-xl border border-hero-border bg-hero-bg px-3 py-2 text-sm leading-relaxed text-hero-navy/85">
+            <span className="font-bold">Provisional.</span> These screening questions haven&apos;t been legally
+            reviewed yet. They help decide when to pause and seek specialist advice; they aren&apos;t legal advice.
+          </p>
+        ) : null}
       </div>
-      {step.questions.map((question) => (
+      {visible.map((question) => (
         <QuestionField
           disabled={saving}
           error={errors[question.key]}
@@ -337,6 +370,14 @@ export function AnswersForm({
         {status.kind === "saved" ? (
           <Notice title="Saved" tone="success">
             Your answers are saved to this case.
+            {next ? (
+              <>
+                {" "}
+                <button className="font-bold underline" onClick={next.go} type="button">
+                  Continue to {next.title}
+                </button>
+              </>
+            ) : null}
           </Notice>
         ) : status.kind === "unchanged" ? (
           <Notice title="Nothing new to save">Your answers already match what&apos;s saved.</Notice>

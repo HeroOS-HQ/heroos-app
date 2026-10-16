@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 
-import { AlertIcon, CheckIcon } from "@/components/site/icons";
+import { AlertIcon, CheckIcon, ShieldIcon } from "@/components/site/icons";
 import { formatDayTime } from "@/lib/workflows/copy";
-import type { Message } from "@/lib/workflows/model";
+import type { CautionMessage, HoldMessage, Message } from "@/lib/workflows/model";
 
 /**
  * The guided conversation, oldest first. Every HeroOS message is text the API
@@ -27,8 +27,56 @@ const TONE_CLASSES = {
   info: "border-[#cfe0f8] bg-hero-blue-tint",
   caution: "border-[#f1df8d] bg-hero-yellow-tint",
   success: "border-[#b8dcc6] bg-hero-success-tint",
+  hold: "border-[#e9b4c0] bg-hero-danger-tint",
   plain: "border-hero-border bg-white",
 } as const;
+
+/** Marks content whose source rule is still under legal review. */
+export function ProvisionalTag() {
+  return (
+    <span className="inline-flex items-center rounded-full border border-hero-border bg-white px-2 py-0.5 text-xs font-bold text-hero-muted">
+      Provisional: not legal advice
+    </span>
+  );
+}
+
+/** A caution: information for the employer that doesn't block the case. */
+export function CautionCard({ caution }: { caution: CautionMessage }) {
+  return (
+    <>
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-bold">
+        <AlertIcon className="size-4 shrink-0" />
+        <span>Caution: {caution.title}</span>
+        {caution.provisional ? <ProvisionalTag /> : null}
+      </p>
+      <Body>{caution.body}</Body>
+    </>
+  );
+}
+
+/** A hold: the case is paused (block) or needs specialist review first (escalate). */
+export function HoldCard({ hold }: { hold: HoldMessage }) {
+  return (
+    <>
+      <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-bold">
+        <ShieldIcon className="size-4 shrink-0" />
+        <span>{hold.title}</span>
+        {hold.provisional ? <ProvisionalTag /> : null}
+      </p>
+      {hold.items.length > 0 ? (
+        <div className="mt-2">
+          <p className="text-sm font-bold">Reported in the screening</p>
+          <ul className="mt-1 flex list-disc flex-col gap-0.5 pl-5 text-[0.9375rem]">
+            {hold.items.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <Body>{hold.body}</Body>
+    </>
+  );
+}
 
 function HeroBubble({
   children,
@@ -92,6 +140,18 @@ export function ConversationMessage({ message }: { message: Message }) {
             ))}
           </ul>
           <Body>{message.body}</Body>
+        </HeroBubble>
+      );
+    case "caution":
+      return (
+        <HeroBubble tone="caution">
+          <CautionCard caution={message} />
+        </HeroBubble>
+      );
+    case "hold":
+      return (
+        <HeroBubble tone={message.action === "escalate" ? "hold" : "caution"}>
+          <HoldCard hold={message} />
         </HeroBubble>
       );
     case "status_notice":

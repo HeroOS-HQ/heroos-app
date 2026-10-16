@@ -91,7 +91,7 @@ describe("WorkspaceHome", () => {
     expect(document.body.textContent).not.toMatch(/subscri|upgrade|buy/i);
   });
 
-  it("opens Disciplinary (initial facts only) and shows the other workflows as coming soon", () => {
+  it("opens Disciplinary (intake only) and shows the other workflows as coming soon", () => {
     render(<WorkspaceHome details={details()} />);
     const workflows = screen.getByRole("region", { name: "HR workflows" });
     expect(within(workflows).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
@@ -103,7 +103,7 @@ describe("WorkspaceHome", () => {
     const links = within(workflows).getAllByRole("link");
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", `/workspaces/${details().company.id}/cases`);
-    expect(links[0]).toHaveTextContent("Initial facts only");
+    expect(links[0]).toHaveTextContent("Intake only");
     expect(within(workflows).getAllByText("Coming soon")).toHaveLength(2);
     expect(within(workflows).queryAllByRole("button")).toHaveLength(0);
   });

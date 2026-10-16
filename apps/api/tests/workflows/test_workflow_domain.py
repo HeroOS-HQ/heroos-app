@@ -1,9 +1,15 @@
-"""The M2-01 workflow domain without a database: definition, validation,
-progress and conversation. Proves the slice stores answers as given, derives
-progress only from them and the live jurisdiction readiness, and never says
-anything that reads as an assessment, a sanction or a legal conclusion.
+"""The workflow domain without a database (M2-01, extended by M2-02): definitions,
+validation and the conversation.
+
+Proves the definitions store answers as given, that Disciplinary v2 serves
+M2-01 Cases without reinterpreting any saved answer, that conditional and
+server-built questions are validated against the Case's state, and that nothing
+HeroOS says reads as an assessment, a recommendation, a finding about the
+employee or a promise of expert review. The intake rules themselves are in
+test_intake.py.
 """
 
+import re
 import uuid
 from dataclasses import fields
 from datetime import UTC, date, datetime
@@ -17,23 +23,25 @@ from app.companies.jurisdiction import (
 )
 from app.workflows import conversation
 from app.workflows.answers import validate_answers
+from app.workflows.conditions import DISCIPLINARY_INTAKE
 from app.workflows.definition import (
+    CASE_JURISDICTION_KEY,
     DISCIPLINARY_V1,
+    DISCIPLINARY_V2,
+    INCIDENT_CONTEXT,
+    INITIAL_FACTS,
+    JURISDICTION,
     NOT_SURE,
+    SAFETY_SCREENING,
     WORKFLOWS,
     current_definition,
     definition_for,
 )
-from app.workflows.progress import (
-    FactRecord,
-    answered_count,
-    case_status,
-    latest_answers,
-    progress,
-)
+from app.workflows.intake import EarlierEscalation, evaluate_intake, question_options
+from app.workflows.progress import FactRecord, latest_answers
 
 TODAY = date(2026, 10, 15)
-STEP = DISCIPLINARY_V1.steps[0]
+STEP = INITIAL_FACTS
 COMPLETE = {
     "incident.narrative": "A team member left the site early on two shifts.\nNo one was told.",
     "incident.date": "2026-10-10",
@@ -47,7 +55,13 @@ UNCONFIRMED = JurisdictionAssessment(
 AWAITING = JurisdictionAssessment(
     JurisdictionReadiness.UNCONFIRMED, ReadinessReason.AWAITING_CONFIRMATION
 )
-CONFIRMED = JurisdictionAssessment(
+FEDERAL = JurisdictionAssessment(
+    JurisdictionReadiness.SUPPORTED_CONFIRMED,
+    ReadinessReason.CONFIRMED,
+    jurisdiction="uae_federal",
+    confirmed_at=datetime(2026, 10, 1, tzinfo=UTC),
+)
+DIFC = JurisdictionAssessment(
     JurisdictionReadiness.SUPPORTED_CONFIRMED,
     ReadinessReason.CONFIRMED,
     jurisdiction="difc",
@@ -62,15 +76,10 @@ UNSUPPORTED = JurisdictionAssessment(
 VIEWER = uuid.uuid4()
 
 
-# --- definition -----------------------------------------------------------------------
+# --- definitions ----------------------------------------------------------------------
 
 
 def test_disciplinary_v1_asks_exactly_the_five_initial_questions() -> None:
-    assert current_definition("disciplinary") is DISCIPLINARY_V1
-    assert definition_for("disciplinary", 1) is DISCIPLINARY_V1
-    assert current_definition("probation") is None
-    assert definition_for("disciplinary", 2) is None
-    assert DISCIPLINARY_V1.case_type == "disciplinary"
     assert [s.key for s in DISCIPLINARY_V1.steps] == ["initial_facts"]
     assert [(q.key, q.kind) for q in STEP.questions] == [
         ("incident.narrative", "text"),
@@ -85,48 +94,187 @@ def test_disciplinary_v1_asks_exactly_the_five_initial_questions() -> None:
     assert [o.value for o in evidence.options] == ["yes", "no", NOT_SURE]
 
 
-def _authored_text() -> list[str]:
+def test_v2_is_current_and_adds_the_intake_after_the_unchanged_initial_facts() -> None:
+    assert current_definition("disciplinary") is DISCIPLINARY_V2
+    assert current_definition("probation") is None
+    assert DISCIPLINARY_V2.case_type == "disciplinary"
+    assert [s.key for s in DISCIPLINARY_V2.steps] == [
+        "initial_facts",
+        "jurisdiction",
+        "incident_context",
+        "safety_screening",
+    ]
+    # The very same step: every M2-01 question, option and limit is unchanged.
+    assert DISCIPLINARY_V2.steps[0] is DISCIPLINARY_V1.steps[0]
+    keys = [q.key for s in DISCIPLINARY_V2.steps for q in s.questions]
+    assert len(keys) == len(set(keys))
+
+
+def test_v2_serves_m2_01_cases_and_nothing_unknown() -> None:
+    # A Case keeps the version it started with; v2 declares v1 Cases
+    # compatible because it reinterprets none of their answers.
+    assert DISCIPLINARY_V2.serves_versions == {1}
+    assert definition_for("disciplinary", 1) is DISCIPLINARY_V2
+    assert definition_for("disciplinary", 2) is DISCIPLINARY_V2
+    assert definition_for("disciplinary", 3) is None
+    assert definition_for("probation", 1) is None
+    for question in DISCIPLINARY_V1.steps[0].questions:
+        assert DISCIPLINARY_V2.question(question.key) == question
+
+
+def test_intake_questions_allow_not_sure_and_never_ask_for_details() -> None:
+    for step in (INCIDENT_CONTEXT, SAFETY_SCREENING):
+        for question in step.questions:
+            assert question.kind == "choice"
+            assert NOT_SURE in [o.value for o in question.options], question.key
+    # Nine screening factors, each Yes / No / Not sure, nothing free-text.
+    assert len(SAFETY_SCREENING.questions) == 9
+    assert all(
+        [o.value for o in q.options] == ["yes", "no", NOT_SURE] for q in SAFETY_SCREENING.questions
+    )
+    assert "Don't add any details" in SAFETY_SCREENING.intro
+
+
+def test_follow_up_questions_are_asked_only_after_the_answer_that_needs_them() -> None:
+    connection = INCIDENT_CONTEXT.question("context.work_connection")
+    documented = INCIDENT_CONTEXT.question("history.documented_action")
+    assert connection is not None and documented is not None
+    assert connection.ask_when is not None
+    assert (connection.ask_when.key, connection.ask_when.values) == (
+        "context.location",
+        ("outside_work",),
+    )
+    # Reuses the M2-01 answer instead of asking "raised before?" again.
+    assert documented.ask_when is not None
+    assert (documented.ask_when.key, documented.ask_when.values) == (
+        "incident.history",
+        ("raised_before",),
+    )
+
+
+def test_the_case_jurisdiction_options_come_from_the_company_confirmation() -> None:
+    question = JURISDICTION.questions[0]
+    assert question.key == CASE_JURISDICTION_KEY
+    assert question.options == ()
+    assert [(o.value, o.label) for o in question_options(question, FEDERAL)] == [
+        ("uae_federal", "Yes, UAE Federal (MOHRE)"),
+        ("different", "No, a different jurisdiction applies"),
+        (NOT_SURE, "Not sure"),
+    ]
+    assert [o.value for o in question_options(question, DIFC)][0] == "difc"
+    # No confirmed, supported Company jurisdiction: nothing to confirm.
+    for assessment in (UNCONFIRMED, AWAITING, UNSUPPORTED):
+        assert question_options(question, assessment) == ()
+
+
+# --- wording --------------------------------------------------------------------------
+
+
+EARLIER = EarlierEscalation("high_risk_factors", datetime(2026, 10, 16, 9, 0, tzinfo=UTC))
+
+
+def _all_states() -> list[tuple[dict[str, object], JurisdictionAssessment]]:
+    """Answers and readiness covering every hold, caution and screening state."""
+    base: dict[str, object] = {**COMPLETE}
+    fed = {**base, CASE_JURISDICTION_KEY: "uae_federal"}
+    context = {
+        "context.location": "outside_work",
+        "context.work_connection": "no",
+        "history.same_incident_sanction": "yes",
+        "context.policy_awareness": "no",
+        "evidence.witnesses": NOT_SURE,
+    }
+    clear = {q.key: "no" for q in SAFETY_SCREENING.questions}
+    return [
+        ({}, UNCONFIRMED),
+        ({}, AWAITING),
+        (base, UNSUPPORTED),
+        (base, FEDERAL),
+        ({**base, CASE_JURISDICTION_KEY: "different"}, FEDERAL),
+        ({**base, CASE_JURISDICTION_KEY: NOT_SURE}, FEDERAL),
+        ({**base, CASE_JURISDICTION_KEY: "difc"}, FEDERAL),
+        ({**base, CASE_JURISDICTION_KEY: "difc"}, DIFC),
+        ({**fed, **context, **clear}, FEDERAL),
+        ({**fed, **context, **clear, "screening.sick_leave": NOT_SURE}, FEDERAL),
+        ({**fed, **context, **clear, "screening.whistleblower": "yes"}, FEDERAL),
+    ]
+
+
+def _statements() -> list[str]:
+    """Everything HeroOS *says* (not what it asks), in every state."""
     texts: list[str] = []
     for definition in WORKFLOWS.values():
         texts += [definition.title, definition.welcome_title, definition.welcome]
         texts += list(definition.not_available)
-        for step in definition.steps:
-            texts += [step.title, step.intro]
-            for question in step.questions:
-                texts += [question.prompt, question.label, question.help or ""]
-                texts += [option.label for option in question.options]
-    for assessment in (UNCONFIRMED, AWAITING, CONFIRMED, UNSUPPORTED):
-        notice = conversation.jurisdiction_notice(assessment)
-        texts += [notice.title, notice.body]
+        texts += [step.intro for step in definition.steps]
+    variants = (
+        {"screening_enabled": True},
+        {"screening_enabled": False},
+        {"screening_enabled": True, "earlier_escalation": EARLIER},
+    )
+    for answers, company in _all_states():
+        for variant in variants:
+            evaluation = evaluate_intake(DISCIPLINARY_V2, answers, company, **variant)  # type: ignore[arg-type]
+            for message in conversation.compose(
+                DISCIPLINARY_V2, [], evaluation, company, viewer_user_id=VIEWER
+            ):
+                if isinstance(message, conversation.QuestionGroup | conversation.CautionNotice):
+                    continue  # questions ask; cautions are checked separately
+                texts += [getattr(message, "title", ""), getattr(message, "body", "")]
+                texts += list(getattr(message, "items", ()))
     return texts
+
+
+def _questions() -> list[str]:
+    texts: list[str] = []
+    for step in DISCIPLINARY_V2.steps:
+        for question in step.questions:
+            texts += [question.prompt, question.label, question.help or ""]
+            texts += [option.label for option in question.options]
+    return texts
+
+
+def _cautions() -> list[str]:
+    return [f"{title} {body}" for title, body in conversation.caution_notices().values()]
 
 
 @pytest.mark.parametrize(
     "word",
-    [
-        "penalt",
-        "sanction",
-        "dismiss",
-        "terminat",
-        "guilt",
-        "misconduct",
-        "serious",
-        "warning",
-        "recommend",
-        "lawful",
-        "eligible",
-    ],
+    ["penalt", "terminat", "guilt", "misconduct", "serious", "recommend", "lawful", "eligible"],
 )
-def test_authored_text_never_assesses_or_recommends(word: str) -> None:
-    # The slice collects facts only. Words like these would read as a
-    # classification, an outcome or advice that nothing here has produced.
-    offending = [text for text in _authored_text() if word in f" {text.lower()} "]
+def test_nothing_heroos_writes_assesses_or_recommends(word: str) -> None:
+    # Facts and checks only: words like these would read as a classification,
+    # an outcome, approval or advice that nothing here has produced.
+    offending = [t for t in _statements() + _questions() + _cautions() if word in f" {t.lower()} "]
     assert offending == []
 
 
+@pytest.mark.parametrize("word", ["sanction", "dismiss", "warning"])
+def test_outcome_words_appear_only_where_a_question_or_a_caution_needs_them(word: str) -> None:
+    # The screening must ask about a dismissal being considered and the
+    # incident context about an earlier sanction or written warning; a caution
+    # may explain the one-sanction rule. HeroOS's own statements never use
+    # these words.
+    assert [t for t in _statements() if word in t.lower()] == []
+
+
+def test_no_message_promises_an_expert_or_names_an_internal_rule() -> None:
+    texts = _statements() + _cautions()
+    for phrase in ("will contact", "will review", "we'll", "ticket", "HeroOS team", "call HeroOS"):
+        assert [t for t in texts if phrase.lower() in t.lower()] == []
+    # Nothing claims a hold was cleared, approved or released by anyone.
+    for phrase in ("cleared by", "approved by", "has been released", "hold lifted", "expert has"):
+        assert [t for t in texts if phrase in t.lower()] == []
+    for rule in DISCIPLINARY_INTAKE.rules:
+        assert [t for t in texts + _questions() if rule.key in t] == []
+    # No identifier-like tokens (reference codes) in anything a customer reads.
+    identifier = re.compile(r"\b[A-Z]{2,}(?:-[A-Z0-9]{2,})+\b")
+    assert [t for t in texts + _questions() if identifier.search(t)] == []
+
+
 def test_welcome_says_the_workflow_is_guided_not_ai() -> None:
-    assert "not an AI assistant" in DISCIPLINARY_V1.welcome
-    assert "doesn't analyse" in DISCIPLINARY_V1.welcome
+    assert "not an AI assistant" in DISCIPLINARY_V2.welcome
+    assert "doesn't analyse" in DISCIPLINARY_V2.welcome
 
 
 # --- validation -----------------------------------------------------------------------
@@ -194,7 +342,76 @@ def test_tomorrow_is_tolerated_for_time_zones() -> None:
     assert errors == []
 
 
-# --- progress -------------------------------------------------------------------------
+def test_a_follow_up_is_accepted_only_while_it_is_asked() -> None:
+    connection = {"context.work_connection": "yes"}
+    # Not asked: no location yet, or "at work".
+    for current in ({}, {"context.location": "at_work"}):
+        accepted, errors = validate_answers(
+            INCIDENT_CONTEXT, connection, today=TODAY, current=current
+        )
+        assert accepted == {}
+        assert [(e.key, e.message) for e in errors] == [
+            ("context.work_connection", "is not asked for the current answers")
+        ]
+    # Asked: saved earlier, or answered in the same group.
+    for current, answers in (
+        ({"context.location": "outside_work"}, connection),
+        ({}, {"context.location": "outside_work", **connection}),
+    ):
+        _, errors = validate_answers(INCIDENT_CONTEXT, answers, today=TODAY, current=current)
+        assert errors == []
+    # The parent changed in the same group: the follow-up is no longer asked.
+    _, errors = validate_answers(
+        INCIDENT_CONTEXT,
+        {"context.location": "at_work", **connection},
+        today=TODAY,
+        current={"context.location": "outside_work"},
+    )
+    assert [e.key for e in errors] == ["context.work_connection"]
+    # Clearing is always accepted.
+    accepted, errors = validate_answers(
+        INCIDENT_CONTEXT, {"context.work_connection": None}, today=TODAY, current={}
+    )
+    assert (accepted, errors) == ({"context.work_connection": None}, [])
+
+
+def test_a_follow_up_can_depend_on_another_steps_answer() -> None:
+    documented = {"history.documented_action": "verbal_only"}
+    _, errors = validate_answers(
+        INCIDENT_CONTEXT, documented, today=TODAY, current={"incident.history": "new"}
+    )
+    assert [e.key for e in errors] == ["history.documented_action"]
+    _, errors = validate_answers(
+        INCIDENT_CONTEXT, documented, today=TODAY, current={"incident.history": "raised_before"}
+    )
+    assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("company", "value", "ok"),
+    [
+        (FEDERAL, "uae_federal", True),
+        (FEDERAL, "different", True),
+        (FEDERAL, NOT_SURE, True),
+        # A Case can't pick a jurisdiction the Company's confirmation doesn't support.
+        (FEDERAL, "difc", False),
+        (DIFC, "uae_federal", False),
+        (DIFC, "difc", True),
+        (FEDERAL, "adgm", False),
+        (UNCONFIRMED, "uae_federal", False),
+    ],
+)
+def test_the_case_jurisdiction_accepts_only_the_server_built_options(
+    company: JurisdictionAssessment, value: str, ok: bool
+) -> None:
+    options = {CASE_JURISDICTION_KEY: question_options(JURISDICTION.questions[0], company)}
+    _, errors = validate_answers(
+        JURISDICTION, {CASE_JURISDICTION_KEY: value}, today=TODAY, options=options
+    )
+    assert (errors == []) is ok
+
+
+# --- conversation ---------------------------------------------------------------------
 
 
 def test_latest_answers_replays_revisions_and_clears() -> None:
@@ -207,60 +424,16 @@ def test_latest_answers_replays_revisions_and_clears() -> None:
     assert latest_answers(facts) == {"incident.history": "raised_before"}
 
 
-@pytest.mark.parametrize(
-    ("answers", "jurisdiction", "code", "facts_status", "facts_detail", "jurisdiction_status"),
-    [
-        ({}, UNCONFIRMED, "case_created", "needs_information", "Not started", "blocked"),
-        (
-            {"incident.history": "new"},
-            CONFIRMED,
-            "initial_facts_in_progress",
-            "in_progress",
-            "1 of 5 answered",
-            "completed",
-        ),
-        (
-            COMPLETE,
-            UNCONFIRMED,
-            "awaiting_jurisdiction",
-            "completed",
-            "All 5 questions answered",
-            "blocked",
-        ),
-        (COMPLETE, UNSUPPORTED, "jurisdiction_unsupported", "completed", None, "blocked"),
-        (COMPLETE, CONFIRMED, "initial_facts_completed", "completed", None, "completed"),
-    ],
-)
-def test_progress_and_status_follow_answers_and_live_jurisdiction(
-    answers: dict[str, object],
-    jurisdiction: JurisdictionAssessment,
-    code: str,
-    facts_status: str,
-    facts_detail: str | None,
-    jurisdiction_status: str,
-) -> None:
-    assert case_status(DISCIPLINARY_V1, answers, jurisdiction).code == code
-    items = {item.key: item for item in progress(DISCIPLINARY_V1, answers, jurisdiction)}
-    assert list(items) == ["case_created", "initial_facts", "jurisdiction", "next_stages"]
-    assert items["case_created"].status == "completed"
-    assert items["initial_facts"].status == facts_status
-    if facts_detail is not None:
-        assert items["initial_facts"].detail == facts_detail
-    assert items["jurisdiction"].status == jurisdiction_status
-    # Later stages are never reported as anything but "coming later".
-    assert items["next_stages"].status == "coming_later"
-    assert answered_count(DISCIPLINARY_V1, answers) == len(answers)
-
-
-# --- conversation ---------------------------------------------------------------------
-
-
 def _submission(
-    revision: int, facts: dict[str, object], *, by: uuid.UUID = VIEWER
+    revision: int,
+    facts: dict[str, object],
+    *,
+    by: uuid.UUID = VIEWER,
+    step: str = "initial_facts",
 ) -> conversation.SubmissionRecord:
     return conversation.SubmissionRecord(
         id=uuid.uuid4(),
-        step_key="initial_facts",
+        step_key=step,
         revision=revision,
         submitted_at=datetime(2026, 10, 15, 9, revision, tzinfo=UTC),
         submitted_by_user_id=by,
@@ -268,26 +441,51 @@ def _submission(
     )
 
 
+def _compose(
+    submissions: list[conversation.SubmissionRecord], company: JurisdictionAssessment
+) -> list[conversation.Message]:
+    answers = latest_answers(
+        FactRecord(s.revision, k, v) for s in submissions for k, v in s.facts.items()
+    )
+    evaluation = evaluate_intake(DISCIPLINARY_V2, answers, company, screening_enabled=True)
+    return conversation.compose(
+        DISCIPLINARY_V2, submissions, evaluation, company, viewer_user_id=VIEWER
+    )
+
+
 def test_a_new_case_welcomes_asks_and_explains_what_is_not_available() -> None:
-    messages = conversation.compose(DISCIPLINARY_V1, [], UNCONFIRMED, viewer_user_id=VIEWER)
-    assert [m.kind for m in messages] == [
-        "information",
-        "question_group",
-        "missing_information",
-        "status_notice",
-        "status_notice",
+    messages = _compose([], FEDERAL)
+    assert [(m.kind, m.id) for m in messages] == [
+        ("information", "welcome"),
+        ("question_group", "step:initial_facts"),
+        ("status_notice", "jurisdiction"),
+        ("missing_information", "missing:initial_facts"),
+        ("question_group", "step:jurisdiction"),
+        ("question_group", "step:incident_context"),
+        ("status_notice", "next_stages"),
     ]
-    welcome, group, missing, jurisdiction, later = messages
+    group = messages[1]
     assert isinstance(group, conversation.QuestionGroup)
     assert group.questions == tuple(q.prompt for q in STEP.questions)
-    assert isinstance(missing, conversation.MissingInformation)
-    assert len(missing.items) == 5
-    assert isinstance(jurisdiction, conversation.StatusNotice)
-    assert jurisdiction.id == "jurisdiction" and jurisdiction.tone == "caution"
-    assert "can't continue" in jurisdiction.body
+    assert messages[2].title == "Confirm the jurisdiction for this case"  # type: ignore[union-attr]
+    later = messages[-1]
     assert isinstance(later, conversation.StatusNotice)
-    assert later.id == "next_stages"
     assert "Nothing in this case has been assessed or decided" in later.body
+    # Follow-up questions aren't asked before the answer that needs them.
+    context = messages[5]
+    assert isinstance(context, conversation.QuestionGroup)
+    assert "Is the conduct connected to work in any way?" not in context.questions
+
+
+def test_an_unconfirmed_company_pauses_jurisdiction_dependent_steps() -> None:
+    messages = _compose([], AWAITING)
+    kinds = [(m.kind, m.id) for m in messages]
+    assert ("hold", "hold") in kinds
+    assert ("question_group", "step:jurisdiction") not in kinds
+    hold = next(m for m in messages if isinstance(m, conversation.HoldNotice))
+    assert hold.action == "block"
+    assert "confirms it separately" in hold.body
+    assert "Your answers stay saved." in hold.body
 
 
 def test_submissions_become_employer_turns_with_neutral_acknowledgements() -> None:
@@ -299,23 +497,10 @@ def test_submissions_become_employer_turns_with_neutral_acknowledgements() -> No
             {k: v for k, v in COMPLETE.items() if k != "incident.history"},
             by=other_admin,
         ),
+        _submission(3, {CASE_JURISDICTION_KEY: "uae_federal"}, step="jurisdiction"),
     ]
-    messages = conversation.compose(DISCIPLINARY_V1, submissions, CONFIRMED, viewer_user_id=VIEWER)
-    kinds = [m.kind for m in messages]
-    assert kinds == [
-        "information",
-        "question_group",
-        "answer_confirmation",
-        "status_notice",
-        "answer_confirmation",
-        "status_notice",
-        "information",
-        "status_notice",
-        "status_notice",
-    ]
-    first, second = messages[2], messages[4]
-    assert isinstance(first, conversation.AnswerConfirmation)
-    assert isinstance(second, conversation.AnswerConfirmation)
+    messages = _compose(submissions, FEDERAL)
+    first, second, third = (m for m in messages if isinstance(m, conversation.AnswerConfirmation))
     assert first.by_viewer is True and second.by_viewer is False
     # Items follow the question order; answers read back as given.
     assert [(i.key, i.display) for i in first.items] == [
@@ -323,12 +508,22 @@ def test_submissions_become_employer_turns_with_neutral_acknowledgements() -> No
         ("incident.history", "This is a new issue"),
     ]
     assert ("incident.date", "10 October 2026") in [(i.key, i.display) for i in second.items]
-    assert messages[3].body.startswith("2 of 5 initial questions answered")  # type: ignore[union-attr]
-    assert messages[5].body == "All initial questions are answered."  # type: ignore[union-attr]
-    complete = messages[6]
-    assert isinstance(complete, conversation.Information)
-    assert "hasn't assessed them" in complete.body
-    assert messages[7].title == "Jurisdiction confirmed"  # type: ignore[union-attr]
+    assert [(i.key, i.display) for i in third.items] == [
+        (CASE_JURISDICTION_KEY, "Yes, UAE Federal (MOHRE)")
+    ]
+    saved = [m for m in messages if m.id.startswith("saved:")]
+    assert [m.body for m in saved] == [  # type: ignore[union-attr]
+        "Your answers to “Initial facts” are saved.",
+        "Your answers to “Initial facts” are saved.",
+        "Your answers to “Employment jurisdiction” are saved.",
+    ]
+    jurisdiction = next(m for m in messages if m.id == "jurisdiction")
+    assert jurisdiction.title == "Jurisdiction confirmed for this case"  # type: ignore[union-attr]
+    # Uncertain answers are listed, never read as "No".
+    uncertain = next(m for m in messages if m.id == "uncertain")
+    assert isinstance(uncertain, conversation.MissingInformation)
+    # The date was "Not sure" at first, then given; only the evidence stays uncertain.
+    assert uncertain.items == ("Supporting evidence",)
 
 
 def test_a_cleared_answer_reads_as_removed_and_is_missing_again() -> None:
@@ -336,34 +531,11 @@ def test_a_cleared_answer_reads_as_removed_and_is_missing_again() -> None:
         _submission(1, dict(COMPLETE)),
         _submission(2, {"incident.date": None}),
     ]
-    messages = conversation.compose(
-        DISCIPLINARY_V1, submissions, UNCONFIRMED, viewer_user_id=VIEWER
-    )
-    cleared = messages[4]
-    assert isinstance(cleared, conversation.AnswerConfirmation)
+    messages = _compose(submissions, FEDERAL)
+    cleared = [m for m in messages if isinstance(m, conversation.AnswerConfirmation)][1]
     assert [(i.key, i.display) for i in cleared.items] == [("incident.date", None)]
-    missing = [m for m in messages if isinstance(m, conversation.MissingInformation)]
-    assert [m.items for m in missing] == [("When did the incident happen?",)]
-
-
-@pytest.mark.parametrize(
-    ("assessment", "title", "phrase"),
-    [
-        (UNCONFIRMED, "Jurisdiction not confirmed yet", "Company details"),
-        (AWAITING, "Jurisdiction not confirmed yet", "confirms it separately"),
-        (UNSUPPORTED, "Jurisdiction not supported yet", "can't continue"),
-        (CONFIRMED, "Jurisdiction confirmed", "isn't available yet"),
-    ],
-)
-def test_jurisdiction_notice_reflects_readiness_without_naming_rules(
-    assessment: JurisdictionAssessment, title: str, phrase: str
-) -> None:
-    notice = conversation.jurisdiction_notice(assessment)
-    assert notice.title == title
-    assert phrase in notice.body
-    # The notice never names a legal regime or article.
-    for name in ("DIFC", "MOHRE", "Federal", "Article"):
-        assert name not in notice.body
+    missing = next(m for m in messages if m.id == "missing:initial_facts")
+    assert missing.items == ("When did the incident happen?",)  # type: ignore[union-attr]
 
 
 def test_messages_are_plain_data() -> None:
@@ -374,5 +546,7 @@ def test_messages_are_plain_data() -> None:
         conversation.AnswerConfirmation,
         conversation.MissingInformation,
         conversation.StatusNotice,
+        conversation.CautionNotice,
+        conversation.HoldNotice,
     ):
         assert "kind" in {f.name for f in fields(message_type)}
