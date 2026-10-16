@@ -11,6 +11,7 @@ from app.db.models.workflow import (
     CaseFact,
     WorkflowEvaluation,
     WorkflowInstance,
+    WorkflowProgressEvent,
     WorkflowSubmission,
 )
 
@@ -29,5 +30,6 @@ __all__ = [
     "UserIdentity",
     "WorkflowEvaluation",
     "WorkflowInstance",
+    "WorkflowProgressEvent",
     "WorkflowSubmission",
 ]

@@ -1,10 +1,11 @@
-"""Company-scoped persistence of workflow Cases, submissions, facts and evaluations.
+"""Company-scoped persistence of workflow Cases, submissions, facts, evaluations
+and progress events.
 
 Every function takes a ``CompanyScope`` and filters by ``scope.company_id``;
 PostgreSQL RLS enforces the same boundary underneath. Repositories flush but
 never commit (tenant-isolation.md §2). There is no update or delete of facts,
-submissions or evaluations: they are append-only, and the only instance update
-is the optimistic-concurrency revision bump.
+submissions, evaluations or progress events: they are append-only, and the
+only instance update is the optimistic-concurrency revision bump.
 """
 
 from collections.abc import Mapping, Sequence
@@ -12,13 +13,14 @@ from dataclasses import dataclass
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import Select, func, select, update
+from sqlalchemy import Select, case, func, select, update
 
 from app.db.models import (
     Case,
     CaseFact,
     WorkflowEvaluation,
     WorkflowInstance,
+    WorkflowProgressEvent,
     WorkflowSubmission,
 )
 from app.tenancy.scope import CompanyScope
@@ -27,6 +29,9 @@ from app.workflows.definition import WorkflowDefinition
 from app.workflows.history import EvaluationRecord
 from app.workflows.intake import EarlierEscalation, HoldReason, IntakeEvaluation
 from app.workflows.progress import FactRecord
+from app.workflows.progression.bundle import RuleBundle
+from app.workflows.progression.engine import Decision, EventKind
+from app.workflows.progression.records import StoredEvent
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,3 +319,138 @@ def first_escalations(
             # The CHECK constraint ties a specialist_review hold to a reason code.
             first[instance_id] = EarlierEscalation(cast(HoldReason, reason), evaluated_at)
     return first
+
+
+def _stored_event(row: WorkflowProgressEvent) -> StoredEvent:
+    return StoredEvent(
+        id=row.id,
+        # The CHECK constraints tie both columns to the engine's vocabularies.
+        kind=cast(EventKind, row.kind),
+        transition=row.transition,
+        pathway=row.pathway,
+        previous_pathway=row.previous_pathway,
+        stage=row.stage,
+        decision=cast(Decision, row.decision),
+        reasons=list(row.reasons),
+        acknowledged=[str(key) for key in row.acknowledged],
+        revision=row.revision,
+        request_key=row.request_key,
+        actor_user_id=row.actor_user_id,
+        bundle_version=row.bundle_version,
+        occurred_at=row.occurred_at,
+    )
+
+
+# Within one revision: the event that produced it, then refusals, then escalations.
+_KIND_ORDER = case(
+    (WorkflowProgressEvent.kind == "transition_rejected", 1),
+    (WorkflowProgressEvent.kind == "escalation_recorded", 2),
+    else_=0,
+)
+
+
+def progress_events(scope: CompanyScope, instance_id: UUID) -> list[StoredEvent]:
+    """The instance's progress events in causal order.
+
+    By instance revision (every position change produces one; refusals and
+    escalations carry the revision they were decided at), then the event that
+    produced the revision, then refusals and escalations in time order.
+    """
+    rows = scope.session.scalars(
+        select(WorkflowProgressEvent)
+        .where(
+            WorkflowProgressEvent.company_id == scope.company_id,
+            WorkflowProgressEvent.instance_id == instance_id,
+        )
+        .order_by(
+            WorkflowProgressEvent.revision,
+            _KIND_ORDER,
+            WorkflowProgressEvent.occurred_at,
+            WorkflowProgressEvent.id,
+        )
+    ).all()
+    return [_stored_event(row) for row in rows]
+
+
+def progress_events_by_instance(
+    scope: CompanyScope, instance_ids: Sequence[UUID]
+) -> dict[UUID, list[StoredEvent]]:
+    result: dict[UUID, list[StoredEvent]] = {instance_id: [] for instance_id in instance_ids}
+    if not instance_ids:
+        return result
+    rows = scope.session.scalars(
+        select(WorkflowProgressEvent)
+        .where(
+            WorkflowProgressEvent.company_id == scope.company_id,
+            WorkflowProgressEvent.instance_id.in_(instance_ids),
+        )
+        .order_by(
+            WorkflowProgressEvent.revision,
+            _KIND_ORDER,
+            WorkflowProgressEvent.occurred_at,
+            WorkflowProgressEvent.id,
+        )
+    ).all()
+    for row in rows:
+        result[row.instance_id].append(_stored_event(row))
+    return result
+
+
+def find_progress_event(
+    scope: CompanyScope, instance_id: UUID, request_key: UUID
+) -> StoredEvent | None:
+    row = scope.session.scalar(
+        select(WorkflowProgressEvent).where(
+            WorkflowProgressEvent.company_id == scope.company_id,
+            WorkflowProgressEvent.instance_id == instance_id,
+            WorkflowProgressEvent.request_key == request_key,
+        )
+    )
+    return None if row is None else _stored_event(row)
+
+
+def record_progress_event(
+    scope: CompanyScope,
+    instance_id: UUID,
+    *,
+    kind: EventKind,
+    transition: str,
+    pathway: str | None,
+    previous_pathway: str | None,
+    stage: str | None,
+    decision: Decision,
+    reasons: Sequence[Mapping[str, object]],
+    acknowledged: Sequence[str],
+    revision: int,
+    request_key: UUID | None,
+    submission_id: UUID | None,
+    user_id: UUID,
+    bundle: RuleBundle,
+    definition_version: int,
+    intake_status: str,
+) -> StoredEvent:
+    """Append one progress event (in the caller's transaction, under the instance lock)."""
+    row = WorkflowProgressEvent(
+        company_id=scope.company_id,
+        instance_id=instance_id,
+        kind=kind,
+        transition=transition,
+        pathway=pathway,
+        previous_pathway=previous_pathway,
+        stage=stage,
+        decision=decision,
+        reasons=list(reasons),
+        acknowledged=list(acknowledged),
+        revision=revision,
+        request_key=request_key,
+        submission_id=submission_id,
+        actor_user_id=user_id,
+        bundle_id=bundle.bundle_id,
+        bundle_version=bundle.version,
+        bundle_digest=bundle.digest,
+        definition_version=definition_version,
+        intake_status=intake_status,
+    )
+    scope.session.add(row)
+    scope.session.flush()
+    return _stored_event(row)

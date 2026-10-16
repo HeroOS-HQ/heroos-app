@@ -1,0 +1,276 @@
+{
+  "schema": "heroos.rule-bundle/1",
+  "bundle": "synthetic-progression",
+  "version": "synthetic.1",
+  "provenance": "synthetic",
+  "workflow": "disciplinary",
+  "definition_versions": [2],
+  "serves_versions": [],
+  "notice": {
+    "title": "Synthetic test rules",
+    "body": "This environment runs fictional test rules that exercise the workflow engine. They aren't HR or legal guidance and don't reflect any approved HeroOS methodology."
+  },
+  "jurisdictions": {
+    "uae_federal": {
+      "pathways": [
+        {
+          "pathway": "less_serious",
+          "entry": ["test_check_in"],
+          "select_rules": [
+            {
+              "key": "test_select_history_caution",
+              "action": "warn",
+              "when": {"answer": "incident.history", "in": ["raised_before"]},
+              "provisional": true,
+              "message": {
+                "title": "Test caution: the issue was raised before",
+                "body": "A fictional caution shown when the issue was raised before. It exists only to exercise warnings and acknowledgments."
+              }
+            }
+          ],
+          "stages": [
+            {
+              "key": "test_check_in",
+              "title": "Test stage 1: Check-in conversation",
+              "summary": "A fictional first stage: record whether a test check-in conversation took place.",
+              "optional": false,
+              "terminal": false,
+              "next": ["test_written_note"],
+              "checklist": [
+                {"item": "conversation_held", "prompt": "Has the test check-in conversation taken place?", "label": "Test check-in held"},
+                {"item": "employee_heard", "prompt": "Did the employee have a chance to give their view in the test conversation?", "label": "Employee's view heard (test)"}
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_check_in_confirmed",
+                  "action": "block",
+                  "require": {
+                    "all": [
+                      {"answer": "progress.test_check_in.conversation_held", "in": ["yes"]},
+                      {"answer": "progress.test_check_in.employee_heard", "in": ["yes"]}
+                    ]
+                  },
+                  "provisional": true,
+                  "message": {
+                    "title": "Test requirement not met",
+                    "body": "Both test check-in answers must be Yes before this fictional stage can be completed."
+                  }
+                }
+              ]
+            },
+            {
+              "key": "test_written_note",
+              "title": "Test stage 2: Written note",
+              "summary": "A fictional second stage: record whether a test note was shared with the employee.",
+              "optional": false,
+              "terminal": false,
+              "next": ["test_final_review"],
+              "checklist": [
+                {"item": "note_shared", "prompt": "Was the test note shared with the employee?", "label": "Test note shared"}
+              ],
+              "start_rules": [
+                {
+                  "key": "test_note_after_check_in",
+                  "action": "block",
+                  "require": {"stage_completed": "test_check_in"},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test order: check-in first",
+                    "body": "The fictional check-in stage must be completed before the test note."
+                  }
+                }
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_note_confirmed",
+                  "action": "block",
+                  "require": {"answer": "progress.test_written_note.note_shared", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test requirement not met",
+                    "body": "The test note must have been shared before this fictional stage can be completed."
+                  }
+                },
+                {
+                  "key": "test_note_evidence_caution",
+                  "action": "warn",
+                  "when": {"answer": "incident.evidence_available", "in": ["no", "not_sure"], "unknown": []},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test caution: no supporting evidence confirmed",
+                    "body": "A fictional caution shown when supporting evidence isn't confirmed. It exists only to exercise warnings."
+                  }
+                }
+              ]
+            },
+            {
+              "key": "test_final_review",
+              "title": "Test stage 3: Final review",
+              "summary": "A fictional last stage. Completing it ends the test workflow; it decides nothing about the employee.",
+              "optional": false,
+              "terminal": true,
+              "next": [],
+              "checklist": [
+                {"item": "review_done", "prompt": "Has the test review been carried out?", "label": "Test review done"},
+                {"item": "outside_help_needed", "prompt": "Does this test case need outside help?", "label": "Outside help needed (test)"}
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_review_confirmed",
+                  "action": "block",
+                  "require": {"answer": "progress.test_final_review.review_done", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test requirement not met",
+                    "body": "The test review must be done before this fictional stage can be completed."
+                  }
+                },
+                {
+                  "key": "test_outside_help",
+                  "action": "escalate",
+                  "when": {"answer": "progress.test_final_review.outside_help_needed", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test escalation: specialist review needed",
+                    "body": "A fictional escalation: this test case needs specialist review before it can continue. HeroOS hasn't contacted anyone."
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "pathway": "serious",
+          "entry": ["test_notice"],
+          "stages": [
+            {
+              "key": "test_notice",
+              "title": "Test stage A: Written notice",
+              "summary": "A fictional first stage of the test serious pathway.",
+              "optional": false,
+              "terminal": false,
+              "next": ["test_pause", "test_meeting"],
+              "checklist": [
+                {"item": "notice_given", "prompt": "Was the test notice given to the employee?", "label": "Test notice given"}
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_notice_confirmed",
+                  "action": "block",
+                  "require": {"answer": "progress.test_notice.notice_given", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test requirement not met",
+                    "body": "The test notice must have been given before this fictional stage can be completed."
+                  }
+                }
+              ]
+            },
+            {
+              "key": "test_pause",
+              "title": "Test stage B (optional): Paid pause",
+              "summary": "A fictional optional stage. It can be skipped by starting the test meeting instead.",
+              "optional": true,
+              "terminal": false,
+              "next": ["test_meeting"],
+              "checklist": [
+                {"item": "pause_paid", "prompt": "Is the test pause fully paid?", "label": "Test pause fully paid"}
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_unpaid_pause",
+                  "action": "escalate",
+                  "require": {"answer": "progress.test_pause.pause_paid", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test escalation: unpaid pause",
+                    "body": "A fictional escalation for a test pause that isn't confirmed as fully paid."
+                  }
+                }
+              ]
+            },
+            {
+              "key": "test_meeting",
+              "title": "Test stage C: Meeting",
+              "summary": "A fictional meeting stage of the test serious pathway.",
+              "optional": false,
+              "terminal": false,
+              "next": ["test_record"],
+              "checklist": [
+                {"item": "meeting_held", "prompt": "Was the test meeting held?", "label": "Test meeting held"}
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_meeting_confirmed",
+                  "action": "block",
+                  "require": {"answer": "progress.test_meeting.meeting_held", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test requirement not met",
+                    "body": "The test meeting must have been held before this fictional stage can be completed."
+                  }
+                }
+              ]
+            },
+            {
+              "key": "test_record",
+              "title": "Test stage D: Employer's record",
+              "summary": "A fictional last stage. Completing it ends the test workflow; it decides nothing about the employee.",
+              "optional": false,
+              "terminal": true,
+              "next": [],
+              "checklist": [
+                {"item": "record_kept", "prompt": "Has the employer kept a test record?", "label": "Test record kept"}
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_record_confirmed",
+                  "action": "block",
+                  "require": {"answer": "progress.test_record.record_kept", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test requirement not met",
+                    "body": "The test record must be kept before this fictional stage can be completed."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "difc": {
+      "pathways": [
+        {
+          "pathway": "less_serious",
+          "entry": ["test_difc_review"],
+          "stages": [
+            {
+              "key": "test_difc_review",
+              "title": "Test DIFC stage: Review",
+              "summary": "A fictional DIFC-only stage, different from every UAE Federal test stage.",
+              "optional": false,
+              "terminal": true,
+              "next": [],
+              "checklist": [
+                {"item": "difc_check", "prompt": "Has the DIFC-only test check been done?", "label": "DIFC test check done"}
+              ],
+              "complete_rules": [
+                {
+                  "key": "test_difc_check_confirmed",
+                  "action": "block",
+                  "require": {"answer": "progress.test_difc_review.difc_check", "in": ["yes"]},
+                  "provisional": true,
+                  "message": {
+                    "title": "Test requirement not met",
+                    "body": "The DIFC-only test check must be done before this fictional stage can be completed."
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

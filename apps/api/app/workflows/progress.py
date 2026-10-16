@@ -7,7 +7,7 @@ operator confirmation can change at any time), through
 "coming later", never as pending results.
 """
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -100,7 +100,12 @@ def _screening_item(step: Step, evaluation: IntakeEvaluation) -> ProgressItem:
             return _step_item(step, evaluation)
 
 
-def progress(definition: WorkflowDefinition, evaluation: IntakeEvaluation) -> list[ProgressItem]:
+def progress(
+    definition: WorkflowDefinition,
+    evaluation: IntakeEvaluation,
+    later: Sequence[ProgressItem] | None = None,
+) -> list[ProgressItem]:
+    """``later``: the progression's own items (M2-03), replacing "Next stages"."""
     items = [ProgressItem("case_created", "Case created", "completed", "Saved")]
     for step in definition.steps:
         if step.gate is StepGate.COMPANY_JURISDICTION_CONFIRMED:
@@ -109,7 +114,9 @@ def progress(definition: WorkflowDefinition, evaluation: IntakeEvaluation) -> li
             items.append(_screening_item(step, evaluation))
         else:
             items.append(_step_item(step, evaluation))
-    if evaluation.hold is not None:
+    if later is not None:
+        items += later
+    elif evaluation.hold is not None:
         items.append(ProgressItem("next_stages", "Next stages", "blocked", "On hold"))
     else:
         items.append(

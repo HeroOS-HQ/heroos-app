@@ -24,6 +24,16 @@ The safety screening (health-related questions) is offered only when the
 deployment enables it for synthetic demo data (``HEROOS_SENSITIVE_SCREENING``);
 otherwise its step can't be answered and no intake can be completed.
 
+Progression (M2-03): the view's ``progression`` block is recomputed on every
+read from the installed rule bundle, the intake evaluation, the answers and
+the append-only progress events (``app.workflows.progression``). The employer
+records a pathway (``POST .../progression/pathway``) and asks for stage
+transitions (``POST .../progression/transitions``); the backend applies a
+transition only if the rules allow it now, records every refusal, and never
+moves the Case otherwise. Stage checklists are saved through the step answers
+route like any answer group. Without an installed bundle, every progression
+write is refused (409) and the view says progression isn't available.
+
 Responses:
 
 - 401 / 403 exactly as the Company routes (403 also for any member).
@@ -32,18 +42,23 @@ Responses:
 - 409 ``Conflict``: a reused creation ``request_key`` with different details,
   a stale ``expected_revision`` (the answers changed since they were read), or
   a step that can't be answered in the Case's current state (its jurisdiction
-  isn't confirmed, or no approved screening covers it).
+  isn't confirmed, or no approved screening covers it). Progression: no
+  installed or no matching rules, a reused ``request_key`` for another
+  transition, or acknowledged warnings that aren't exactly the ones that apply.
 - 422: invalid input; field locations only, submitted values are never echoed.
 
 Idempotency: Case creation replays on the same ``request_key`` (200 with the
 same Case); answer saves replay on the same ``submission_key`` (200, nothing
-written twice). Nothing here classifies, assesses or decides anything about the
-incident or the employee.
+written twice); progression requests replay on the same ``request_key`` (200
+with the recorded outcome, applied or refused). Nothing here classifies,
+assesses or decides anything about the incident or the employee.
 """
 
 import logging
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Final, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
@@ -60,6 +75,7 @@ from pydantic import (
 from sqlalchemy.exc import IntegrityError
 
 from app.api.companies import JurisdictionOut, jurisdiction_out, refuse_untidy_text
+from app.api.progression import ProgressionOut, progression_out
 from app.auth.dependencies import CompanyContext
 from app.companies.jurisdiction import JurisdictionAssessment, assess_jurisdiction
 from app.core.config import SensitiveScreening
@@ -72,7 +88,10 @@ from app.tenancy.scope import CompanyScope
 from app.workflows import conversation
 from app.workflows.answers import validate_answers
 from app.workflows.conditions import RuleSet
+from app.workflows.conversation import StatusNotice, SubmissionRecord
 from app.workflows.definition import (
+    Question,
+    Step,
     StepGate,
     WorkflowDefinition,
     current_definition,
@@ -88,6 +107,17 @@ from app.workflows.intake import (
     ruleset_for,
 )
 from app.workflows.progress import FactRecord, latest_answers, progress
+from app.workflows.progression.bundle import JurisdictionProgram, RuleBundle
+from app.workflows.progression.engine import (
+    EventKind,
+    ProgressionEvaluation,
+    TransitionEvaluation,
+    evaluate_progression,
+    resolve_attempt,
+)
+from app.workflows.progression.presentation import progress_items
+from app.workflows.progression.records import StoredEvent
+from app.workflows.progression.spec import PROGRESSIONS, ProgressionSpec
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +137,45 @@ def screening_policy(request: Request) -> SensitiveScreening:
 
 
 ScreeningPolicy = Annotated[SensitiveScreening, Depends(screening_policy)]
+
+
+def installed_rule_bundle(request: Request) -> RuleBundle | None:
+    """The rule bundle loaded and verified at startup; None if none is installed."""
+    bundle: RuleBundle | None = request.app.state.rule_bundle
+    return bundle
+
+
+InstalledRules = Annotated[RuleBundle | None, Depends(installed_rule_bundle)]
+
+RuleKey = Annotated[StrictStr, StringConstraints(pattern=r"^[a-z][a-z_]{0,59}$")]
+# More than any transition can raise; a bound on the request, not a product rule.
+MAX_ACKNOWLEDGED = 40
+
+
+class PathwayIn(BaseModel):
+    """The employer's pathway choice (their own judgement, recorded as a decision)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: Annotated[StrictInt, Field(ge=0)]
+    # Client-generated per request; a retry sends the same key.
+    request_key: UUID
+    pathway: Annotated[StrictStr, StringConstraints(pattern=r"^[a-z][a-z_]{0,29}$")]
+    # The warning codes shown with this choice; must match exactly.
+    acknowledged_warnings: Annotated[list[RuleKey], Field(max_length=MAX_ACKNOWLEDGED)] = []
+
+
+class TransitionIn(BaseModel):
+    """A requested stage transition (a key offered in the view)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: Annotated[StrictInt, Field(ge=0)]
+    request_key: UUID
+    transition: Annotated[
+        StrictStr, StringConstraints(pattern=r"^(start|complete):[a-z][a-z_]{0,49}$")
+    ]
+    acknowledged_warnings: Annotated[list[RuleKey], Field(max_length=MAX_ACKNOWLEDGED)] = []
 
 
 class CaseCreate(BaseModel):
@@ -394,6 +463,8 @@ class WorkflowViewOut(BaseModel):
     not_available: list[str]
     conversation: list[MessageOut]
     history: list[HistoryItemOut]
+    # Workflow progression (M2-03): pathway, stages, transitions and their history.
+    progression: ProgressionOut
 
 
 def _not_found() -> HTTPException:
@@ -501,30 +572,140 @@ def _caution_out(caution: conversation.CautionNotice) -> CautionOut:
     )
 
 
-def _view(
+@dataclass(frozen=True, slots=True)
+class _CaseState:
+    """Everything one request reads about a Case, evaluated once."""
+
+    definition: WorkflowDefinition
+    submissions: list[SubmissionRecord]
+    answers: dict[str, object]
+    company: JurisdictionAssessment
+    earlier: EarlierEscalation | None
+    intake: IntakeEvaluation
+    spec: ProgressionSpec | None
+    events: list[StoredEvent]
+    progression: ProgressionEvaluation | None
+
+
+def _evaluate_case(
     scope: CompanyScope,
     item: workflows.WorkflowCase,
-    context: CompanyContext,
     policy: SensitiveScreening,
-) -> WorkflowViewOut:
+    bundle: RuleBundle | None,
+) -> _CaseState:
     definition = _definition(item.instance)
-    ruleset = ruleset_for(definition)
     submissions = workflows.submissions(scope, item.instance.id)
     answers = latest_answers(
         FactRecord(s.revision, key, value) for s in submissions for key, value in s.facts.items()
     )
-    known = {q.key for s in definition.steps for q in s.questions}
     company = _jurisdiction(scope)
     earlier = workflows.first_escalations(scope, [item.instance.id]).get(item.instance.id)
-    evaluation = evaluate_intake(
+    intake = evaluate_intake(
         definition,
         answers,
         company,
         screening_enabled=policy == "synthetic_demo",
         earlier_escalation=earlier,
     )
+    spec = PROGRESSIONS.get(definition.key)
+    events = workflows.progress_events(scope, item.instance.id) if spec is not None else []
+    progression = (
+        None
+        if spec is None
+        else evaluate_progression(spec, bundle, intake, answers, [e.engine() for e in events])
+    )
+    return _CaseState(
+        definition, submissions, answers, company, earlier, intake, spec, events, progression
+    )
+
+
+def _checklist_steps(program: JurisdictionProgram | None) -> list[Step]:
+    """Every stage checklist of the installed rules for this Case's jurisdiction."""
+    if program is None:
+        return []
+    return [s.checklist_step() for p in program.pathways for s in p.stages if s.checklist]
+
+
+_NEXT_LEAD: Final[Mapping[str, str]] = {
+    "incompatible": "This case is paused because the rules it started under have changed.",
+    "held": "This case is on hold, so no stage is available for it.",
+    "paused": "The next stages open once the jurisdiction for this case is confirmed.",
+    "intake_incomplete": "The next stages open once the intake is recorded.",
+    "not_covered": "HeroOS has no approved stages for this case's jurisdiction yet.",
+    "awaiting_pathway": (
+        "Choose a pathway under “Next steps”. It's your decision as the employer: HeroOS "
+        "doesn't classify the incident."
+    ),
+    "undetermined": (
+        "You recorded that the pathway can't be determined yet, so no stage is available. You "
+        "can change your choice under “Next steps”."
+    ),
+    "pathway_not_covered": (
+        "HeroOS has no approved stages for your chosen pathway in this jurisdiction yet."
+    ),
+    "ready": (
+        "Follow the stages under “Next steps”. HeroOS checks each step against fixed rules; you "
+        "decide when to move on."
+    ),
+    "in_stage": (
+        "Follow the stages under “Next steps”. HeroOS checks each step against fixed rules; you "
+        "decide when to move on."
+    ),
+    "no_further_stage": (
+        "Every stage HeroOS can guide for this pathway so far is complete. What comes next "
+        "isn't available in HeroOS yet: you decide it outside the app."
+    ),
+    "closed": "The last stage of this workflow is complete.",
+}
+
+
+def _next_notice(spec: ProgressionSpec, evaluation: ProgressionEvaluation) -> StatusNotice | None:
+    """The conversation's closing notice once progression rules are installed."""
+    if evaluation.status == "unavailable":
+        return None
+    later = ", ".join(item.lower() for item in spec.not_available)
+    return StatusNotice(
+        "next_stages",
+        "info",
+        "What happens next",
+        f"{_NEXT_LEAD[evaluation.status]} Not available yet: {later}. Nothing in this case has "
+        "been assessed or decided by HeroOS.",
+    )
+
+
+def _view(
+    scope: CompanyScope,
+    item: workflows.WorkflowCase,
+    context: CompanyContext,
+    policy: SensitiveScreening,
+    bundle: RuleBundle | None,
+    *,
+    attempt: StoredEvent | None = None,
+) -> WorkflowViewOut:
+    state = _evaluate_case(scope, item, policy, bundle)
+    definition = state.definition
+    ruleset = ruleset_for(definition)
+    submissions = state.submissions
+    answers = state.answers
+    company = state.company
+    earlier = state.earlier
+    evaluation = state.intake
+    progression = state.progression
+    spec = state.spec
+    if spec is None or progression is None:  # pragma: no cover - every workflow has one
+        raise RuntimeError("workflow progression is not defined")
+    checklists = _checklist_steps(progression.program)
+    # Intake answers and the installed rules' checklist answers.
+    known = {q.key for s in (*definition.steps, *checklists) for q in s.questions}
+    labels = {q.key: q.label for s in (*definition.steps, *checklists) for q in s.questions}
     messages = conversation.compose(
-        definition, submissions, evaluation, company, viewer_user_id=context.user_id
+        definition,
+        submissions,
+        evaluation,
+        company,
+        viewer_user_id=context.user_id,
+        extra_steps=checklists,
+        next_notice=_next_notice(spec, progression),
     )
     history = compose_history(
         definition,
@@ -533,6 +714,7 @@ def _view(
         submissions=submissions,
         evaluations=workflows.evaluations(scope, item.instance.id),
         viewer_user_id=context.user_id,
+        extra_steps=checklists,
     )
     hold = (
         None
@@ -593,14 +775,14 @@ def _view(
         answer_labels={
             key: conversation.display_answer(question, answers[key]) or ""
             for key in answers
-            if (question := definition.question(key)) is not None
+            if (question := _question(definition, checklists, key)) is not None
         },
         asked=list(evaluation.asked),
         missing=list(evaluation.missing),
         uncertain=list(evaluation.uncertain),
         progress=[
             ProgressOut(key=p.key, label=p.label, status=p.status, detail=p.detail)
-            for p in progress(definition, evaluation)
+            for p in progress(definition, evaluation, progress_items(spec, progression))
         ],
         status=StatusOut(code=evaluation.status, label=evaluation.status_label),
         jurisdiction=jurisdiction_out(company),
@@ -629,9 +811,27 @@ def _view(
             next_stage_open=evaluation.next_stage_open,
         ),
         sensitive_screening=policy,
-        not_available=list(definition.not_available),
+        not_available=list(
+            definition.not_available if progression.status == "unavailable" else spec.not_available
+        ),
         conversation=[_message_out(message) for message in messages],
         history=[_history_out(entry) for entry in history],
+        progression=progression_out(
+            spec,
+            progression,
+            state.events,
+            labels,
+            viewer_user_id=context.user_id,
+            attempt=attempt,
+        ),
+    )
+
+
+def _question(
+    definition: WorkflowDefinition, checklists: Sequence[Step], key: str
+) -> Question | None:
+    return definition.question(key) or next(
+        (q for s in checklists for q in s.questions if q.key == key), None
     )
 
 
@@ -768,12 +968,16 @@ def create_workflow_case(
 
 @router.get("/cases/{case_id}/workflow", response_model=WorkflowViewOut)
 def get_case_workflow(
-    case_id: UUID, scope: CompanyAdminDb, context: CompanyContext, policy: ScreeningPolicy
+    case_id: UUID,
+    scope: CompanyAdminDb,
+    context: CompanyContext,
+    policy: ScreeningPolicy,
+    bundle: InstalledRules,
 ) -> WorkflowViewOut:
     item = workflows.get_workflow_case(scope, case_id)
     if item is None:
         raise _not_found()
-    return _view(scope, item, context, policy)
+    return _view(scope, item, context, policy, bundle)
 
 
 def _reload(scope: CompanyScope, case_id: UUID) -> workflows.WorkflowCase:
@@ -784,6 +988,64 @@ def _reload(scope: CompanyScope, case_id: UUID) -> workflows.WorkflowCase:
     return item
 
 
+def _reasons(transition: TransitionEvaluation) -> list[dict[str, object]]:
+    """The stored trace of a decision: every result, as codes (never an answer)."""
+    return [
+        {
+            "rule": r.rule,
+            "source": r.source,
+            "action": r.action,
+            "fired": r.fired,
+            "reason": r.reason,
+            "provisional": r.provisional,
+            "unknown": list(r.unknown),
+        }
+        for r in transition.results
+    ]
+
+
+def _record_escalations(
+    scope: CompanyScope,
+    item: workflows.WorkflowCase,
+    progression: ProgressionEvaluation,
+    *,
+    bundle: RuleBundle,
+    definition: WorkflowDefinition,
+    intake: IntakeEvaluation,
+    revision: int,
+    submission_id: UUID | None,
+    user_id: UUID,
+) -> int:
+    """Record every transition the rules newly escalate (sticky from now on)."""
+    if not progression.open:
+        return 0
+    recorded = 0
+    for transition in progression.transitions:
+        if not transition.new_escalation or transition.key in progression.state.escalated:
+            continue
+        workflows.record_progress_event(
+            scope,
+            item.instance.id,
+            kind="escalation_recorded",
+            transition=transition.key,
+            pathway=transition.pathway,
+            previous_pathway=None,
+            stage=transition.stage,
+            decision="escalate",
+            reasons=_reasons(transition),
+            acknowledged=[],
+            revision=revision,
+            request_key=None,
+            submission_id=submission_id,
+            user_id=user_id,
+            bundle=bundle,
+            definition_version=definition.version,
+            intake_status=intake.status,
+        )
+        recorded += 1
+    return recorded
+
+
 @router.put("/cases/{case_id}/workflow/steps/{step_key}/answers", response_model=WorkflowViewOut)
 def save_step_answers(
     case_id: UUID,
@@ -792,6 +1054,7 @@ def save_step_answers(
     scope: CompanyAdminDb,
     context: CompanyContext,
     policy: ScreeningPolicy,
+    bundle: InstalledRules,
 ) -> WorkflowViewOut:
     # Lock the instance first: concurrent saves of this Case run one after the
     # other, so the replay check, the revision check, the facts and the
@@ -802,23 +1065,33 @@ def save_step_answers(
         raise _not_found()
     definition = _definition(item.instance)
     step = definition.step(step_key)
-    if step is None:
+    stage = None
+    if step is None and bundle is not None:
+        # A stage checklist of the installed rules (M2-03)?
+        for program in bundle.jurisdictions.values():
+            stage = stage or program.stage(step_key)
+    if step is None and (stage is None or not stage.checklist):
         raise _not_found()
 
     instance_id = item.instance.id
     if workflows.find_submission(scope, instance_id, body.submission_key) is not None:
         # A retry of a save that already succeeded: answered before any check
         # that depends on the current state, which that save may have changed.
-        return _view(scope, item, context, policy)
+        return _view(scope, item, context, policy, bundle)
 
-    current = latest_answers(workflows.facts_by_instance(scope, [instance_id])[instance_id])
-    company = _jurisdiction(scope)
+    state = _evaluate_case(scope, item, policy, bundle)
+    current = state.answers
+    company = state.company
     enabled = policy == "synthetic_demo"
-    earlier = workflows.first_escalations(scope, [instance_id]).get(instance_id)
-    before = evaluate_intake(
-        definition, current, company, screening_enabled=enabled, earlier_escalation=earlier
-    )
-    if step.key not in before.available_steps:
+    earlier = state.earlier
+    before = state.intake
+    if step is None:
+        # Only the checklist of the stage in progress, while progression is open.
+        checklist = None if state.progression is None else state.progression.checklist_step
+        if checklist is None or checklist.key != step_key:
+            raise _conflict()
+        step = checklist
+    elif step.key not in before.available_steps:
         raise _conflict()
     accepted, errors = validate_answers(
         step,
@@ -839,14 +1112,14 @@ def save_step_answers(
 
     changes = {key: value for key, value in accepted.items() if current.get(key) != value}
     if not changes:
-        return _view(scope, item, context, policy)
+        return _view(scope, item, context, policy, bundle)
 
     revision = workflows.advance_revision(scope, instance_id, body.expected_revision)
     if revision is None:
         # Another save committed first. Same key: that save was this one.
         scope.rollback()
         if workflows.find_submission(scope, instance_id, body.submission_key) is not None:
-            return _view(scope, _reload(scope, case_id), context, policy)
+            return _view(scope, _reload(scope, case_id), context, policy, bundle)
         raise _conflict()
     submission = workflows.record_submission(
         scope,
@@ -857,10 +1130,10 @@ def save_step_answers(
         user_id=context.user_id,
         changes=changes,
     )
-    after = {**current, **changes}
+    after = {k: v for k, v in {**current, **changes}.items() if v is not None}
     evaluation = evaluate_intake(
         definition,
-        {k: v for k, v in after.items() if v is not None},
+        after,
         company,
         screening_enabled=enabled,
         earlier_escalation=earlier,
@@ -868,10 +1141,226 @@ def save_step_answers(
     workflows.record_evaluation(
         scope, submission, evaluation, evaluation_results(evaluation, ruleset_for(definition))
     )
+    escalated = 0
+    if bundle is not None and state.spec is not None:
+        # Changed answers can make a rule escalate a transition: record it now.
+        progression = evaluate_progression(
+            state.spec, bundle, evaluation, after, [e.engine() for e in state.events]
+        )
+        escalated = _record_escalations(
+            scope,
+            item,
+            progression,
+            bundle=bundle,
+            definition=definition,
+            intake=evaluation,
+            revision=revision,
+            submission_id=submission.id,
+            user_id=context.user_id,
+        )
     scope.commit()
     if evaluation.hold is not None and evaluation.hold != before.hold:
         # The kind only: never the reason or an answer (HR case content).
         logger.info(
             "Workflow case held (company_id=%s, hold=%s)", scope.company_id, evaluation.hold.kind
         )
-    return _view(scope, _reload(scope, case_id), context, policy)
+    if escalated:
+        logger.info("Workflow transition escalated (company_id=%s)", scope.company_id)
+    return _view(scope, _reload(scope, case_id), context, policy, bundle)
+
+
+_APPLIED_KIND: Final[Mapping[str, EventKind]] = {
+    "pathway": "pathway_selected",
+    "start": "stage_started",
+    "complete": "stage_completed",
+}
+
+
+def _replayed_transition(
+    scope: CompanyScope,
+    item: workflows.WorkflowCase,
+    key: str,
+    request_key: UUID,
+    context: CompanyContext,
+) -> StoredEvent | None:
+    """The recorded outcome of this same request, or 409 for a key reused otherwise."""
+    event = workflows.find_progress_event(scope, item.instance.id, request_key)
+    if event is None:
+        return None
+    if event.transition != key or event.actor_user_id != context.user_id:
+        raise _conflict()
+    return event
+
+
+def _request_transition(
+    case_id: UUID,
+    key: str,
+    *,
+    expected_revision: int,
+    request_key: UUID,
+    acknowledged: Sequence[str],
+    scope: CompanyScope,
+    context: CompanyContext,
+    policy: SensitiveScreening,
+    bundle: RuleBundle | None,
+) -> WorkflowViewOut:
+    """Decide a requested transition under the instance lock; record the outcome."""
+    item = workflows.get_workflow_case(scope, case_id, for_update=True)
+    if item is None:
+        raise _not_found()
+    replay = _replayed_transition(scope, item, key, request_key, context)
+    if replay is not None:
+        # Answered before anything state-dependent: that request may have changed it.
+        return _view(scope, item, context, policy, bundle, attempt=replay)
+
+    state = _evaluate_case(scope, item, policy, bundle)
+    progression, spec = state.progression, state.spec
+    if progression is None or spec is None:
+        raise _not_found()
+    if bundle is None or progression.status in ("unavailable", "incompatible"):
+        # No rules to decide with: nothing is evaluated, nothing is recorded.
+        raise _conflict()
+    attempt = resolve_attempt(progression, spec, key)
+    if attempt is None:
+        raise _not_found()
+    if expected_revision != item.instance.revision:
+        raise _conflict()
+
+    instance_id = item.instance.id
+    common = {
+        "bundle": bundle,
+        "definition_version": state.definition.version,
+        "intake_status": state.intake.status,
+        "request_key": request_key,
+        "submission_id": None,
+        "user_id": context.user_id,
+        "reasons": _reasons(attempt),
+    }
+    if attempt.allowed:
+        # A warning never passes unacknowledged; acknowledging others isn't accepted.
+        if sorted(set(acknowledged)) != sorted(attempt.warnings) or len(acknowledged) != len(
+            set(acknowledged)
+        ):
+            raise _conflict()
+        revision = workflows.advance_revision(scope, instance_id, expected_revision)
+        if revision is None:
+            # Another write committed first. Same key: that request was this one.
+            scope.rollback()
+            reloaded = _reload(scope, case_id)
+            replay = _replayed_transition(scope, reloaded, key, request_key, context)
+            if replay is not None:
+                return _view(scope, reloaded, context, policy, bundle, attempt=replay)
+            raise _conflict()
+        event = workflows.record_progress_event(
+            scope,
+            instance_id,
+            kind=_APPLIED_KIND[attempt.kind],
+            transition=key,
+            pathway=attempt.pathway,
+            previous_pathway=progression.state.pathway if attempt.kind == "pathway" else None,
+            stage=attempt.stage,
+            decision=attempt.decision,
+            acknowledged=list(attempt.warnings),
+            revision=revision,
+            **common,  # type: ignore[arg-type]
+        )
+        # Escalations that apply from the new position are recorded at once.
+        after = evaluate_progression(
+            spec,
+            bundle,
+            state.intake,
+            state.answers,
+            [*(e.engine() for e in state.events), event.engine()],
+        )
+        _record_escalations(
+            scope,
+            item,
+            after,
+            bundle=bundle,
+            definition=state.definition,
+            intake=state.intake,
+            revision=revision,
+            submission_id=None,
+            user_id=context.user_id,
+        )
+    else:
+        # Refused: recorded, and the Case doesn't move (no revision change).
+        event = workflows.record_progress_event(
+            scope,
+            instance_id,
+            kind="transition_rejected",
+            transition=key,
+            pathway=attempt.pathway,
+            previous_pathway=None,
+            stage=attempt.stage,
+            decision=attempt.decision,
+            acknowledged=[],
+            revision=item.instance.revision,
+            **common,  # type: ignore[arg-type]
+        )
+        _record_escalations(
+            scope,
+            item,
+            progression,
+            bundle=bundle,
+            definition=state.definition,
+            intake=state.intake,
+            revision=item.instance.revision,
+            submission_id=None,
+            user_id=context.user_id,
+        )
+    scope.commit()
+    # The event kind and decision only: never a stage, rule or answer.
+    logger.info(
+        "Workflow progression %s (company_id=%s, decision=%s)",
+        event.kind,
+        scope.company_id,
+        event.decision,
+    )
+    return _view(scope, _reload(scope, case_id), context, policy, bundle, attempt=event)
+
+
+@router.post("/cases/{case_id}/workflow/progression/pathway", response_model=WorkflowViewOut)
+def select_pathway(
+    case_id: UUID,
+    body: PathwayIn,
+    scope: CompanyAdminDb,
+    context: CompanyContext,
+    policy: ScreeningPolicy,
+    bundle: InstalledRules,
+) -> WorkflowViewOut:
+    """Record the employer's pathway choice, if the rules allow it now."""
+    return _request_transition(
+        case_id,
+        f"pathway:{body.pathway}",
+        expected_revision=body.expected_revision,
+        request_key=body.request_key,
+        acknowledged=body.acknowledged_warnings,
+        scope=scope,
+        context=context,
+        policy=policy,
+        bundle=bundle,
+    )
+
+
+@router.post("/cases/{case_id}/workflow/progression/transitions", response_model=WorkflowViewOut)
+def request_transition(
+    case_id: UUID,
+    body: TransitionIn,
+    scope: CompanyAdminDb,
+    context: CompanyContext,
+    policy: ScreeningPolicy,
+    bundle: InstalledRules,
+) -> WorkflowViewOut:
+    """Start or complete a stage, if the rules allow it now (refusals are recorded)."""
+    return _request_transition(
+        case_id,
+        body.transition,
+        expected_revision=body.expected_revision,
+        request_key=body.request_key,
+        acknowledged=body.acknowledged_warnings,
+        scope=scope,
+        context=context,
+        policy=policy,
+        bundle=bundle,
+    )

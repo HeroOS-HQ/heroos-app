@@ -31,6 +31,7 @@ from app.db.models import (
     UserIdentity,
     WorkflowEvaluation,
     WorkflowInstance,
+    WorkflowProgressEvent,
     WorkflowSubmission,
 )
 
@@ -66,6 +67,10 @@ FACT_A = UUID("ac000000-0000-4000-8000-00000000000a")
 FACT_B = UUID("bc000000-0000-4000-8000-00000000000b")
 EVALUATION_A = UUID("ad000000-0000-4000-8000-00000000000a")
 EVALUATION_B = UUID("bd000000-0000-4000-8000-00000000000b")
+PROGRESS_A = UUID("ae000000-0000-4000-8000-00000000000a")
+PROGRESS_B = UUID("be000000-0000-4000-8000-00000000000b")
+PROGRESS_KEY_A = UUID("af000000-0000-4000-8000-00000000000a")
+PROGRESS_KEY_B = UUID("bf000000-0000-4000-8000-00000000000b")
 # A synthetic intake evaluation trace (M2-02): codes and enumerated answers only.
 EVALUATION_RESULTS = [
     {
@@ -175,6 +180,9 @@ def build() -> list[object]:
             if label == "A"
             else (INSTANCE_B, REQUEST_KEY_B, SUBMISSION_B, SUBMISSION_KEY_B, FACT_B, EVALUATION_B)
         )
+        progress, progress_key = (
+            (PROGRESS_A, PROGRESS_KEY_A) if label == "A" else (PROGRESS_B, PROGRESS_KEY_B)
+        )
         rows.append(
             WorkflowInstance(
                 id=instance,
@@ -223,6 +231,31 @@ def build() -> list[object]:
                 jurisdiction=None,
                 screening="not_applicable",
                 results=EVALUATION_RESULTS,
+            )
+        )
+        # A refused transition (M2-03): codes only, nothing moved.
+        rows.append(
+            WorkflowProgressEvent(
+                id=progress,
+                company_id=company,
+                instance_id=instance,
+                kind="transition_rejected",
+                transition="pathway:less_serious",
+                pathway="less_serious",
+                previous_pathway=None,
+                stage=None,
+                decision="block",
+                reasons=[{"rule": "jurisdiction_paused", "source": "engine", "fired": True}],
+                acknowledged=[],
+                revision=1,
+                request_key=progress_key,
+                submission_id=None,
+                actor_user_id=user,
+                bundle_id="synthetic-progression",
+                bundle_version="synthetic.1",
+                bundle_digest="0" * 64,
+                definition_version=2,
+                intake_status="awaiting_jurisdiction",
             )
         )
     return rows

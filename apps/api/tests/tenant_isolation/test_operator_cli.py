@@ -155,7 +155,7 @@ def test_cli_refuses_a_schema_before_b1b(tenant_database: TenantDatabase) -> Non
 
 
 def test_cli_refuses_the_b1b_schema(tenant_database: TenantDatabase) -> None:
-    # The CLI needs C1's grants and exactly the current contract (5 since D2).
+    # The CLI needs C1's grants and exactly the current contract (6 since D3).
     with disposable_database(tenant_database, "clib1b") as admin_url:
         assert run_alembic(admin_url, "upgrade", "09cb5ec569b9").returncode == 0
         database = make_url(admin_url).database or ""

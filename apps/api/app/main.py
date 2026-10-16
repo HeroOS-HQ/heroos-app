@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -11,6 +12,9 @@ from app.db.runtime_role import verify_runtime_role
 from app.db.session import engine
 from app.observability import configure_logging, install_observability
 from app.storage.dependencies import get_private_object_storage
+from app.workflows.progression.bundle import RuleBundle, load_bundle
+
+logger = logging.getLogger(__name__)
 
 # Structured JSON logs on stdout before anything else logs. This also disables
 # Uvicorn's raw access log (it records query strings); the application's
@@ -32,6 +36,27 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # (superuser, BYPASSRLS or table owner).
     verify_runtime_role(engine)
     yield
+
+
+def load_rule_bundle(config: Settings) -> RuleBundle | None:
+    """The configured workflow-progression rule bundle, verified; None if none is configured.
+
+    A configured bundle that is missing, doesn't match its pinned SHA-256 or
+    fails validation raises (startup stops): nothing falls back to other rules.
+    The log names the bundle and version only, never its content.
+    """
+    path, pin = config.heroos_rule_bundle_path, config.heroos_rule_bundle_sha256
+    if path is None or pin is None:
+        logger.info("Workflow progression rules not installed")
+        return None
+    bundle = load_bundle(path, pin, production=config.heroos_env == "production")
+    logger.info(
+        "Workflow progression rules loaded (bundle=%s, version=%s, provenance=%s)",
+        bundle.bundle_id,
+        bundle.version,
+        bundle.provenance,
+    )
+    return bundle
 
 
 async def health() -> dict[str, str]:
@@ -58,6 +83,8 @@ def create_app(config: Settings) -> FastAPI:
     application.state.self_registration_enabled = config.heroos_self_registration_enabled
     # The Disciplinary safety screening: off unless enabled for synthetic demo data.
     application.state.sensitive_screening = config.heroos_sensitive_screening
+    # Workflow progression rules: verified at startup, never re-read while running.
+    application.state.rule_bundle = load_rule_bundle(config)
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)
     application.include_router(onboarding.router)

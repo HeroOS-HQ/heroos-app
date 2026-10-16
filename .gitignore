@@ -56,3 +56,10 @@ private-objects/
 *.pgdump
 *.backup
 backups/
+
+# Private rule bundles (workflow progression content, M2-03). They belong in
+# server-side storage only, never in this repository; this is a second guard
+# (docs/architecture/workflow-progression.md). Name private bundles
+# *.private-bundle.json.
+*.private-bundle.json
+private-rule-bundles/
