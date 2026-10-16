@@ -6,9 +6,10 @@
 //   pre-M1-10B API (371dd50) on the demo schema (97d4200fe7a2)
 //   -> backup -> B1a (guarded arguments) -> M1-10B API (169261d) -> B1b -> C1
 //   -> M1-10C API (2f0fad8) -> D1 (M2-01 workflow tables) -> M2-01 API (e4378f7)
-//   -> D2 (M2-02 intake evaluations) -> current API
+//   -> D2 (M2-02 intake evaluations) -> M2-02 API (80adbae)
+//   -> D3 (M2-03 progress events) -> current API
 //   -> appoint administrators -> downgrade guards
-//   -> backup/restore of the D2 database and of the pre-B1a backup.
+//   -> backup/restore of the D3 database and of the pre-B1a backup.
 //
 // Nothing here touches the main end-to-end database.
 import { execFile, spawn } from "node:child_process";
@@ -23,10 +24,13 @@ const B1B = "09cb5ec569b9";
 const C1 = "3f6c2a9d81b4";
 const D1 = "75ec6db8b6c1";
 const D2 = "e64497d997d8";
+const D3 = "8d217d768395";
 // The last API generation before D1 (M1-10C roles and jurisdiction readiness).
 const M110C_API = "2f0fad8";
 // The last API generation before D2 (M2-01 workflow Cases, contract >= 4).
 const M201_API = "e4378f7";
+// The last API generation before D3 (M2-02 intake, contract >= 5).
+const M202_API = "80adbae";
 const A = "d3e0a000-0000-4000-8000-0000000000e1";
 const B = "d3e0b000-0000-4000-8000-0000000000e1";
 const USER_A = "d3e0a000-0000-4000-8000-00000000a0e1";
@@ -101,7 +105,7 @@ export async function run(ctx) {
   await legacyApi.stop();
   const currentOnStage = ctx.makeApi({ databaseUrl: ctx.urls.runtime(stage), label: "api-current-stage" });
   const refusedB1a = await currentOnStage.startExpectingRefusal();
-  check("MIG-8", "the current API refuses to start on B1a (schema contract 1 < 5)", refusedB1a !== null && /contract is 1/.test(refusedB1a), (refusedB1a ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-8", "the current API refuses to start on B1a (schema contract 1 < 6)", refusedB1a !== null && /contract is 1/.test(refusedB1a), (refusedB1a ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
 
   // --- step 3: the M1-10B API ------------------------------------------------------------------
   const m110bDir = await exportRevision("169261d");
@@ -123,7 +127,7 @@ export async function run(ctx) {
   check("MIG-11", "the pre-M1-10B API fails closed on B1b (never serves data): refuses to start or answers non-200",
     legacyAfterB1b.refused || legacyAfterB1b.status !== 200, JSON.stringify(legacyAfterB1b));
   const refusedB1b = await currentOnStage.startExpectingRefusal();
-  check("MIG-12", "the current API still refuses on B1b (contract 2 < 5)", refusedB1b !== null && /contract is 2/.test(refusedB1b));
+  check("MIG-12", "the current API still refuses on B1b (contract 2 < 6)", refusedB1b !== null && /contract is 2/.test(refusedB1b));
 
   // --- step 5: C1 --------------------------------------------------------------------------------
   const c1 = await alembic(stage, "upgrade", C1);
@@ -141,7 +145,7 @@ export async function run(ctx) {
 
   // --- step 6: the M1-10C API on C1 (the generation that runs before M2) ----------------------
   const refusedC1 = await currentOnStage.startExpectingRefusal();
-  check("MIG-30", "the current API refuses to start on C1 (schema contract 3 < 5)", refusedC1 !== null && /contract is 3/.test(refusedC1), (refusedC1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-30", "the current API refuses to start on C1 (schema contract 3 < 6)", refusedC1 !== null && /contract is 3/.test(refusedC1), (refusedC1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
   const m110cDir = await exportRevision(M110C_API);
   const m110cApi = ctx.makeApi({ apiDir: m110cDir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M110C_API}` });
   await m110cApi.start();
@@ -161,25 +165,39 @@ export async function run(ctx) {
   check("MIG-32", "the M1-10C API keeps working on D1 (migrate first, then deploy the API)", (await probe(m110cApi, "alpha", A)) === 200 && (await probe(m110cApi, "alpha", B)) === 403);
   await m110cApi.stop();
   const refusedD1 = await currentOnStage.startExpectingRefusal();
-  check("MIG-36", "the current API refuses to start on D1 (schema contract 4 < 5)", refusedD1 !== null && /contract is 4/.test(refusedD1), (refusedD1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-36", "the current API refuses to start on D1 (schema contract 4 < 6)", refusedD1 !== null && /contract is 4/.test(refusedD1), (refusedD1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
   const m201Dir = await exportRevision(M201_API);
   const m201Api = ctx.makeApi({ apiDir: m201Dir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M201_API}` });
   await m201Api.start();
   const m201List = async () => (await fetch(`${m201Api.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } })).status;
   check("MIG-37", "the M2-01 API (e4378f7) serves D1: own Company 200, the other 403, Disciplinary 403 for a member", (await probe(m201Api, "alpha", A)) === 200 && (await probe(m201Api, "alpha", B)) === 403 && (await m201List()) === 403);
 
-  // --- step 8: D2 (M2-02 intake evaluations), then the current API -----------------------------
+  // --- step 8: D2 (M2-02 intake evaluations), then the M2-02 API --------------------------------
   const d2 = await alembic(stage, "upgrade", D2);
   const afterD2 = await db.ownerQuery("SELECT (SELECT count(*) FROM companies), (SELECT count(*) FROM users), (SELECT count(*) FROM memberships), (SELECT count(*) FROM cases)");
   check("MIG-38", "D2 applies (contract 5) and leaves existing data unchanged", d2.code === 0 && (await contract()) === "5" && JSON.stringify(afterD2) === JSON.stringify(preserved), d2.err.slice(-300));
   check("MIG-39", "the M2-01 API keeps working on D2 (migrate first, then deploy the API)", (await probe(m201Api, "alpha", A)) === 200 && (await probe(m201Api, "alpha", B)) === 403 && (await m201List()) === 403);
   await m201Api.stop();
+  const refusedD2 = await currentOnStage.startExpectingRefusal();
+  check("MIG-42", "the current API refuses to start on D2 (schema contract 5 < 6)", refusedD2 !== null && /contract is 5/.test(refusedD2), (refusedD2 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  const m202Dir = await exportRevision(M202_API);
+  const m202Api = ctx.makeApi({ apiDir: m202Dir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M202_API}` });
+  await m202Api.start();
+  const m202List = async () => (await fetch(`${m202Api.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } })).status;
+  check("MIG-43", "the M2-02 API (80adbae) serves D2: own Company 200, the other 403, Disciplinary 403 for a member", (await probe(m202Api, "alpha", A)) === 200 && (await probe(m202Api, "alpha", B)) === 403 && (await m202List()) === 403);
+
+  // --- step 9: D3 (M2-03 progress events), then the current API ---------------------------------
+  const d3 = await alembic(stage, "upgrade", D3);
+  const afterD3 = await db.ownerQuery("SELECT (SELECT count(*) FROM companies), (SELECT count(*) FROM users), (SELECT count(*) FROM memberships), (SELECT count(*) FROM cases)");
+  check("MIG-44", "D3 applies (contract 6) and leaves existing data unchanged", d3.code === 0 && (await contract()) === "6" && JSON.stringify(afterD3) === JSON.stringify(preserved), d3.err.slice(-300));
+  check("MIG-45", "the M2-02 API keeps working on D3 (migrate first, then deploy the API)", (await probe(m202Api, "alpha", A)) === 200 && (await probe(m202Api, "alpha", B)) === 403 && (await m202List()) === 403);
+  await m202Api.stop();
   await currentOnStage.start();
   const workflowList = await fetch(`${currentOnStage.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } });
-  check("MIG-33", "the current API starts on D2; the not-yet-appointed demo member gets no Disciplinary access (403, administrators only)",
+  check("MIG-33", "the current API starts on D3; the not-yet-appointed demo member gets no Disciplinary access (403, administrators only)",
     workflowList.status === 403 && (await probe(currentOnStage, "alpha", A)) === 200 && (await probe(currentOnStage, "alpha", B)) === 403);
 
-  // --- step 9: appoint administrators through the trusted procedure -------------------------
+  // --- step 10: appoint administrators through the trusted procedure ------------------------
   const membershipA = await db.ownerValue(`SELECT id FROM memberships WHERE company_id = '${A}'`);
   const appointed = await db.operator(["set-role", "--company", A, "--membership", membershipA, "--role", "company_admin"]);
   const afterAppoint = await fetch(`${currentOnStage.url}/companies/${A}/blueprint`, { method: "PATCH", headers: { Authorization: `Bearer ${tokens.alpha}`, "Content-Type": "application/json" }, body: JSON.stringify({ industry: "Retail and services" }) });
@@ -188,7 +206,7 @@ export async function run(ctx) {
 
   // --- rollback restrictions -------------------------------------------------------------------
   const downgrade = await alembic(stage, "downgrade", B1B);
-  check("MIG-23", "C1 cannot be downgraded once a role change exists (roll forward only; the whole downgrade is refused)", downgrade.code !== 0 && (await revision()) === D2, downgrade.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
+  check("MIG-23", "C1 cannot be downgraded once a role change exists (roll forward only; the whole downgrade is refused)", downgrade.code !== 0 && (await revision()) === D3, downgrade.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
   const adminList = await fetch(`${currentOnStage.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } });
   check("MIG-35", "once appointed, the administrator sees an empty Disciplinary list (existing cases are not workflow Cases)",
     adminList.status === 200 && JSON.stringify(await adminList.json()) === "[]");
@@ -199,14 +217,14 @@ export async function run(ctx) {
   });
   const d1Down = await alembic(stage, "downgrade", C1);
   check("MIG-34", "D1 cannot be downgraded once a workflow Case exists (roll forward only; PRIV-020)",
-    created.status === 201 && d1Down.code !== 0 && (await revision()) === D2 && (await db.ownerValue("SELECT count(*) FROM workflow_instances")) === "1",
+    created.status === 201 && d1Down.code !== 0 && (await revision()) === D3 && (await db.ownerValue("SELECT count(*) FROM workflow_instances")) === "1",
     d1Down.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
-  // D2 holds no evaluation yet (the Case has no saved answers): reversible, then re-applied.
+  // D2 and D3 hold nothing yet (the Case has no saved answers or progress): reversible, then re-applied.
   const d2Down = await alembic(stage, "downgrade", D1);
   const downContract = await contract();
-  const d2Up = await alembic(stage, "upgrade", D2);
-  check("MIG-40", "D2 can be downgraded while no evaluation exists (contract 4) and re-applied (contract 5)",
-    d2Down.code === 0 && downContract === "4" && d2Up.code === 0 && (await revision()) === D2 && (await contract()) === "5", `${d2Down.err.slice(-200)} ${d2Up.err.slice(-200)}`);
+  const d2Up = await alembic(stage, "upgrade", D3);
+  check("MIG-40", "D3 and D2 can be downgraded while no progress event or evaluation exists (contract 4) and re-applied (contract 6)",
+    d2Down.code === 0 && downContract === "4" && d2Up.code === 0 && (await revision()) === D3 && (await contract()) === "6", `${d2Down.err.slice(-200)} ${d2Up.err.slice(-200)}`);
   const caseId = (await db.ownerValue("SELECT case_id FROM workflow_instances"));
   const saved = await fetch(`${currentOnStage.url}/companies/${A}/cases/${caseId}/workflow/steps/initial_facts/answers`, {
     method: "PUT",
@@ -215,10 +233,27 @@ export async function run(ctx) {
   });
   const d2Refused = await alembic(stage, "downgrade", D1);
   check("MIG-41", "D2 cannot be downgraded once an evaluation exists (roll forward only; PRIV-020)",
-    saved.status === 200 && d2Refused.code !== 0 && (await revision()) === D2 && (await db.ownerValue("SELECT count(*) FROM workflow_evaluations")) === "1",
+    saved.status === 200 && d2Refused.code !== 0 && (await revision()) === D3 && (await db.ownerValue("SELECT count(*) FROM workflow_evaluations")) === "1",
     d2Refused.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
+  // D3 alone still holds nothing: reversible to D2 (contract 5), then re-applied.
+  const d3Down = await alembic(stage, "downgrade", D2);
+  const d3DownContract = await contract();
+  const d3Up = await alembic(stage, "upgrade", D3);
+  check("MIG-46", "D3 can be downgraded while no progress event exists (contract 5) and re-applied (contract 6)",
+    d3Down.code === 0 && d3DownContract === "5" && d3Up.code === 0 && (await revision()) === D3 && (await contract()) === "6", `${d3Down.err.slice(-200)} ${d3Up.err.slice(-200)}`);
+  // A refused pathway choice (the intake isn't recorded) is still a recorded progress event.
+  const refusedChoice = await fetch(`${currentOnStage.url}/companies/${A}/cases/${caseId}/workflow/progression/pathway`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tokens.alpha}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ expected_revision: 1, request_key: "5d3e0000-0000-4000-8000-0000000000d3", pathway: "less_serious" }),
+  });
+  const refusedOutcome = refusedChoice.status === 200 ? (await refusedChoice.json()).progression?.attempt?.outcome : refusedChoice.status;
+  const d3Refused = await alembic(stage, "downgrade", D2);
+  check("MIG-47", "D3 cannot be downgraded once a progress event exists (roll forward only; PRIV-020)",
+    refusedOutcome === "rejected" && d3Refused.code !== 0 && (await revision()) === D3 && (await db.ownerValue("SELECT count(*) FROM workflow_progress_events")) === "1",
+    `${refusedOutcome} ${d3Refused.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]}`);
 
-  // --- backup and restore of the D2 database -------------------------------------------------
+  // --- backup and restore of the D3 database -------------------------------------------------
   const catalog = (fixture) => fixture.ownerQuery(`SELECT
       (SELECT count(*) FROM pg_policies WHERE schemaname = 'public'),
       (SELECT string_agg(c.relname || ':' || c.relrowsecurity, ',' ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'),
@@ -230,7 +265,7 @@ export async function run(ctx) {
       (SELECT count(*) FROM company_events), (SELECT count(*) FROM membership_events), (SELECT count(*) FROM identity_events),
       (SELECT version_num FROM alembic_version), heroos_schema_contract()`);
   const sourceCatalog = await catalog(db);
-  await docker("pg_dump", "-U", ctx.owner, "-Fc", "-f", "/tmp/stage-d2.dump", stage);
+  await docker("pg_dump", "-U", ctx.owner, "-Fc", "-f", "/tmp/stage-d3.dump", stage);
   // A revocation made after the backup.
   const membershipB = await db.ownerValue(`SELECT id FROM memberships WHERE company_id = '${B}'`);
   const revoked = await db.operator(["revoke-membership", "--company", B, "--membership", membershipB]);
@@ -238,10 +273,10 @@ export async function run(ctx) {
   await currentOnStage.stop();
 
   await docker("createdb", "-U", ctx.owner, "heroos_stage_restored");
-  const restore = await docker("pg_restore", "-U", ctx.owner, "--no-owner", "--single-transaction", "--exit-on-error", "-d", "heroos_stage_restored", "/tmp/stage-d2.dump").then(() => 0, (e) => e.stderr);
+  const restore = await docker("pg_restore", "-U", ctx.owner, "--no-owner", "--single-transaction", "--exit-on-error", "-d", "heroos_stage_restored", "/tmp/stage-d3.dump").then(() => 0, (e) => e.stderr);
   const restored = ctx.makeFixtures("heroos_stage_restored");
   const restoredCatalog = await catalog(restored);
-  check("MIG-25", "the D2 backup restores (single transaction, no owner changes)", restore === 0, String(restore).slice(0, 300));
+  check("MIG-25", "the D3 backup restores (single transaction, no owner changes)", restore === 0, String(restore).slice(0, 300));
   check("MIG-26", "RLS, policies, SECURITY DEFINER functions and their grants, triggers, table and column grants and audit rows survive the restore",
     JSON.stringify(restoredCatalog) === JSON.stringify(sourceCatalog), `${JSON.stringify(sourceCatalog).slice(0, 150)} vs ${JSON.stringify(restoredCatalog).slice(0, 150)}`);
   const restoredApi = ctx.makeApi({ databaseUrl: ctx.urls.runtime("heroos_stage_restored"), label: "api-current-restored" });
@@ -261,5 +296,5 @@ export async function run(ctx) {
   const hasSubjectColumn = await preDb.ownerValue("SELECT count(*) FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'identity_subject'");
   check("MIG-29", "the pre-B1a backup restores to the demo schema and data exactly (the fallback for a failed B1a window)",
     preRestore === 0 && preRevision === PRE_B1 && JSON.stringify(preCounts) === JSON.stringify(seedSnapshot) && hasSubjectColumn === "1");
-  await docker("rm", "-f", "/tmp/stage-pre-b1a.dump", "/tmp/stage-d2.dump");
+  await docker("rm", "-f", "/tmp/stage-pre-b1a.dump", "/tmp/stage-d3.dump");
 }

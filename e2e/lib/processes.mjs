@@ -8,6 +8,7 @@
 //   image runs) behind a local TLS terminator, so the browser sees an https
 //   origin exactly as in deployment.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { createWriteStream, readFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { createServer } from "node:https";
@@ -57,6 +58,15 @@ async function stopProcess(child) {
   for (let i = 0; i < 20 && child.exitCode === null; i += 1) await sleep(100);
 }
 
+/** The synthetic rule bundle's path and pin (tests only; never a real bundle). */
+export function syntheticRules(repoRoot) {
+  const path = join(repoRoot, "apps/api/tests/fixtures/rule_bundles/synthetic-disciplinary.json");
+  return {
+    HEROOS_RULE_BUNDLE_PATH: path,
+    HEROOS_RULE_BUNDLE_SHA256: createHash("sha256").update(readFileSync(path)).digest("hex"),
+  };
+}
+
 /**
  * An API process. `apiDir` defaults to this checkout's apps/api; the migration
  * suite points it at an exported older revision (git archive) to run the API
@@ -68,7 +78,7 @@ export function createApi({ repoRoot, runDir, port, tls, issuer, audience, clien
   const api = {
     url: `https://localhost:${port}`,
     logFiles: [],
-    async start({ selfRegistration = true, extraEnv = {} } = {}) {
+    async start({ selfRegistration = true, rules = true, extraEnv = {} } = {}) {
       generation += 1;
       const logFile = join(runDir, `${label}-${generation}.log`);
       api.logFiles.push(logFile);
@@ -95,6 +105,10 @@ export function createApi({ repoRoot, runDir, port, tls, issuer, audience, clien
             // The harness holds synthetic data only: the sensitive screening may
             // be collected (deployed environments default to disabled).
             HEROOS_SENSITIVE_SCREENING: "synthetic_demo",
+            // The fictional synthetic workflow rules (M2-03), installed the way a
+            // deployment installs the private bundle: a path and its pinned SHA-256.
+            // Older API generations (migration suite) ignore both.
+            ...(rules ? syntheticRules(repoRoot) : {}),
             DATABASE_URL: databaseUrl,
             // Trust only this run's CA for the OIDC discovery and JWKS fetches.
             SSL_CERT_FILE: tls.ca,

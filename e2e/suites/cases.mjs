@@ -107,7 +107,10 @@ export async function run(ctx) {
       completeView.json?.jurisdiction?.guidance_allowed === false &&
       JSON.stringify(unavailable) === JSON.stringify(["jurisdiction", "safety_screening"]) &&
       completeView.json?.intake?.hold?.reason === "company_jurisdiction_unconfirmed" &&
-      completeView.json?.progress?.find((p) => p.key === "next_stages")?.status === "blocked",
+      // The harness installs (synthetic) progression rules, so the next stages are
+      // the progression's pathway and stage items (without rules: "next_stages").
+      completeView.json?.progress?.find((p) => p.key === "pathway")?.status === "blocked" &&
+      completeView.json?.progress?.find((p) => p.key === "stage")?.status === "blocked",
     JSON.stringify(completeView.json?.status));
 
   await page.clickText("button", "Sign out");

@@ -30,7 +30,7 @@ PostgreSQL Row-Level Security               layer 2: tenant_isolation policies
         ↓
 companies, memberships, company_blueprints, case_subjects, cases,
 workflow_instances, workflow_submissions, case_facts (M2-01),
-workflow_evaluations (M2-02)
+workflow_evaluations (M2-02), workflow_progress_events (M2-03)
 ```
 
 A client-supplied `company_id` (path, query, header, body, token claim) only
@@ -110,6 +110,7 @@ Migration `97d4200fe7a2_add_tenant_row_level_security.py`.
 | `cases` | `company_id` | `company_id = heroos_current_company_id()` |
 | `workflow_instances`, `workflow_submissions`, `case_facts` (M2-01, migration D1) | `company_id` | `company_id = heroos_current_company_id()` |
 | `workflow_evaluations` (M2-02, migration D2) | `company_id` | `company_id = heroos_current_company_id()` |
+| `workflow_progress_events` (M2-03, migration D3) | `company_id` | `company_id = heroos_current_company_id()` |
 
 - Each table has exactly **one** permissive `FOR ALL` policy, `tenant_isolation`,
   for `PUBLIC`. It covers SELECT, INSERT, UPDATE and DELETE. Because PostgreSQL
@@ -161,7 +162,7 @@ There is no default tenant and no fallback to all tenants.
 | Role | Kind | Used by | Privileges |
 | --- | --- | --- | --- |
 | `heroos` (local) / RDS migration role | migration/admin, schema owner | Alembic (`MIGRATION_DATABASE_URL`) | DDL, owns tables and policies. Never used by the API |
-| `heroos_app_runtime` | `NOLOGIN` privilege role, created by the migration | — | SELECT/INSERT/UPDATE/DELETE on `case_subjects`, `cases`; SELECT/UPDATE on `companies` (no INSERT/DELETE since C1: Companies are created only through registration); SELECT/DELETE and column-level INSERT/UPDATE on `company_blueprints` (every column except the four jurisdiction-confirmation columns); SELECT only on `memberships`, `users`, `user_identities` (ADR-008); EXECUTE on `heroos_register_company` and `heroos_identity_companies` (ADR-010). Since D1 (M2-01): SELECT/INSERT on `workflow_submissions` and `case_facts`, SELECT/INSERT and column-level UPDATE (`revision`, `updated_at`) on `workflow_instances`: append-only, no DELETE. Since D2 (M2-02): SELECT/INSERT on `workflow_evaluations` (append-only). Nothing on the audit or registration tables or `alembic_version`. No TRUNCATE |
+| `heroos_app_runtime` | `NOLOGIN` privilege role, created by the migration | — | SELECT/INSERT/UPDATE/DELETE on `case_subjects`, `cases`; SELECT/UPDATE on `companies` (no INSERT/DELETE since C1: Companies are created only through registration); SELECT/DELETE and column-level INSERT/UPDATE on `company_blueprints` (every column except the four jurisdiction-confirmation columns); SELECT only on `memberships`, `users`, `user_identities` (ADR-008); EXECUTE on `heroos_register_company` and `heroos_identity_companies` (ADR-010). Since D1 (M2-01): SELECT/INSERT on `workflow_submissions` and `case_facts`, SELECT/INSERT and column-level UPDATE (`revision`, `updated_at`) on `workflow_instances`: append-only, no DELETE. Since D2 (M2-02): SELECT/INSERT on `workflow_evaluations` (append-only). Since D3 (M2-03): SELECT/INSERT on `workflow_progress_events` (append-only). Nothing on the audit or registration tables or `alembic_version`. No TRUNCATE |
 | `heroos_identity_operator` | `NOLOGIN` group, created by migration B1a | identity operator CLI (ADR-008) | From B1b: SELECT/INSERT and column-level UPDATE (`status`, `revoked_at`/`suspended_at`, `updated_at`) on `users`, `user_identities`, `memberships` (RLS); SELECT (`id`) on `companies`. From C1: INSERT (`id`, `name`) on `companies`, INSERT (`id`, `company_id`), SELECT of the licensing and confirmation columns and UPDATE of the confirmation columns on `company_blueprints`, UPDATE (`role`) on `memberships` (all under RLS). Nothing on case data, the Blueprint business profile, audit tables or `alembic_version`. No DELETE, no TRUNCATE. Never a member of `heroos_app_runtime` |
 | `heroos_app` | login role, member of `heroos_app_runtime` | the API (`DATABASE_URL`) | inherits the above. `NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE`, owns nothing |
 
@@ -330,7 +331,8 @@ columns, cascades from Cases) is not a technical default. It follows the
   section 9 without redesign for `workflow_instances`, `workflow_submissions`
   and `case_facts` ([Workflow Case Foundation](workflow-foundation.md)), and
   M2-02 for `workflow_evaluations`
-  ([Disciplinary Intake](disciplinary-intake.md)).
+  ([Disciplinary Intake](disciplinary-intake.md)) and M2-03 for
+  `workflow_progress_events` ([Workflow Progression](workflow-progression.md)).
 - Company roles are minimal (`company_admin`, `member`; M1-10C, ADR-010).
   Fine-grained permissions inside a Company are not part of V1.
 - Amazon RDS, Terraform and deployed runtime-role provisioning are not part of

@@ -199,6 +199,12 @@ const ctx = {
     await page.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && document.readyState === "complete"`, {
       message: "back on the web app",
     });
+    // The landing page streams its content and may still redirect on the client
+    // (a server redirect inside Suspense, e.g. to the only workspace): wait until
+    // it has settled, or that redirect can overtake the test's next navigation.
+    await page.waitFor(`document.body && !document.body.innerText.includes("Loading your workspace")`, {
+      message: "landing page settled",
+    });
   },
   async screenshot(page, name) {
     await page.screenshot(join(outputDir, "screenshots", `${name}.png`));
@@ -206,7 +212,7 @@ const ctx = {
   sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
 };
 
-const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "migration"];
+const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "progression", "migration"];
 const selected = process.env.E2E_SUITES ? process.env.E2E_SUITES.split(",") : SUITES;
 
 let exitCode = 1;
