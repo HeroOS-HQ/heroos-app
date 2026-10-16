@@ -50,6 +50,8 @@ export type Step = {
   unavailableReason: string | null;
   /** Its checks are development content still under legal review. */
   provisional: boolean;
+  /** It asks sensitive (health-related) questions. */
+  sensitive: boolean;
 };
 export type ProgressItem = { key: string; label: string; status: ProgressStatus; detail: string };
 export type Jurisdiction = {
@@ -65,6 +67,7 @@ export type HoldReason =
   | "jurisdiction_different"
   | "jurisdiction_unsupported"
   | "screening_not_covered"
+  | "earlier_escalation"
   | "company_jurisdiction_unconfirmed"
   | "case_jurisdiction_not_sure"
   | "case_jurisdiction_outdated";
@@ -105,7 +108,9 @@ export type CaseJurisdictionStatus =
   | "case_not_sure"
   | "case_different"
   | "case_confirmation_outdated";
-export type Screening = "not_applicable" | "not_started" | "incomplete" | "not_cleared" | "cleared" | "positive";
+export type Screening = "not_applicable" | "disabled" | "not_started" | "incomplete" | "not_cleared" | "cleared" | "positive";
+/** The Case's first specialist-review hold: kept whatever the answers say now. */
+export type Escalation = { since: string; reason: string; current: boolean };
 export type Intake = {
   caseJurisdiction: {
     status: CaseJurisdictionStatus;
@@ -113,8 +118,10 @@ export type Intake = {
     label: string | null;
     companyJurisdiction: "uae_federal" | "difc" | null;
   };
+  /** The current answers' screening state (separate from an earlier escalation). */
   screening: Screening;
   hold: HoldMessage | null;
+  escalation: Escalation | null;
   cautions: CautionMessage[];
   /** Later stages may start (server-side gate); never while held. */
   nextStageOpen: boolean;
@@ -124,6 +131,7 @@ export type HistoryKind =
   | "answers_saved"
   | "jurisdiction"
   | "hold_placed"
+  | "hold_kept"
   | "hold_lifted"
   | "screening"
   | "caution"
@@ -157,6 +165,8 @@ export type WorkflowView = {
   status: CaseStatus;
   jurisdiction: Jurisdiction;
   intake: Intake;
+  /** "synthetic_demo": this environment holds made-up demo data only. */
+  sensitiveScreening: "disabled" | "synthetic_demo";
   notAvailable: string[];
   conversation: Message[];
   history: HistoryItem[];
@@ -188,6 +198,7 @@ const HOLD_REASONS = new Set<string>([
   "jurisdiction_different",
   "jurisdiction_unsupported",
   "screening_not_covered",
+  "earlier_escalation",
   "company_jurisdiction_unconfirmed",
   "case_jurisdiction_not_sure",
   "case_jurisdiction_outdated",
@@ -201,12 +212,13 @@ const CASE_JURISDICTION = new Set<string>([
   "case_different",
   "case_confirmation_outdated",
 ]);
-const SCREENING = new Set<string>(["not_applicable", "not_started", "incomplete", "not_cleared", "cleared", "positive"]);
+const SCREENING = new Set<string>(["not_applicable", "disabled", "not_started", "incomplete", "not_cleared", "cleared", "positive"]);
 const HISTORY_KINDS = new Set<string>([
   "case_created",
   "answers_saved",
   "jurisdiction",
   "hold_placed",
+  "hold_kept",
   "hold_lifted",
   "screening",
   "caution",
@@ -306,7 +318,8 @@ function parseStep(value: unknown): Step | null {
     !Array.isArray(value.questions) ||
     typeof value.available !== "boolean" ||
     !isOptionalText(value.unavailable_reason) ||
-    typeof value.provisional !== "boolean"
+    typeof value.provisional !== "boolean" ||
+    typeof value.sensitive !== "boolean"
   ) {
     return null;
   }
@@ -320,6 +333,7 @@ function parseStep(value: unknown): Step | null {
     available: value.available,
     unavailableReason: value.unavailable_reason,
     provisional: value.provisional,
+    sensitive: value.sensitive,
   };
 }
 
@@ -377,7 +391,11 @@ function parseIntake(value: unknown): Intake | null {
   }
   const hold = value.hold === null ? null : parseHold(value.hold);
   const cautions = value.cautions.map(parseCaution);
-  if ((value.hold !== null && hold === null) || !cautions.every((caution) => caution !== null)) return null;
+  const escalation = value.escalation;
+  const validEscalation =
+    escalation === null ||
+    (isRecord(escalation) && isText(escalation.since) && isText(escalation.reason) && typeof escalation.current === "boolean");
+  if ((value.hold !== null && hold === null) || !cautions.every((caution) => caution !== null) || !validEscalation) return null;
   // The gate is never open while the Case is held, whatever the payload says.
   return {
     caseJurisdiction: {
@@ -388,6 +406,9 @@ function parseIntake(value: unknown): Intake | null {
     },
     screening: value.screening as Screening,
     hold,
+    escalation: isRecord(escalation)
+      ? { since: escalation.since as string, reason: escalation.reason as string, current: escalation.current as boolean }
+      : null,
     cautions: cautions as CautionMessage[],
     nextStageOpen: value.next_stage_open && hold === null,
   };
@@ -516,7 +537,8 @@ export function parseWorkflowView(body: unknown): WorkflowView | null {
     !Array.isArray(body.conversation) ||
     !Array.isArray(body.history) ||
     !isTextRecord(body.answers) ||
-    !isTextRecord(body.answer_labels)
+    !isTextRecord(body.answer_labels) ||
+    (body.sensitive_screening !== "disabled" && body.sensitive_screening !== "synthetic_demo")
   ) {
     return null;
   }
@@ -563,6 +585,7 @@ export function parseWorkflowView(body: unknown): WorkflowView | null {
     status,
     jurisdiction,
     intake,
+    sensitiveScreening: body.sensitive_screening,
     notAvailable: body.not_available,
     conversation: messages.filter((message): message is Message => message !== undefined && message !== null),
     history: history as HistoryItem[],

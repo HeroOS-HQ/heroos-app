@@ -17,6 +17,12 @@ status. Every save that writes a submission also appends the evaluation it
 produced (``workflow_evaluations``) in the same transaction, under the same
 instance lock. A hold never blocks saving answers (they stay correctable); it
 closes the gate later stages must check (``IntakeEvaluation.next_stage_open``).
+A specialist-review hold is never released by changed answers: once a save
+recorded one, the Case stays held (no release exists in the product yet).
+
+The safety screening (health-related questions) is offered only when the
+deployment enables it for synthetic demo data (``HEROOS_SENSITIVE_SCREENING``);
+otherwise its step can't be answered and no intake can be completed.
 
 Responses:
 
@@ -40,7 +46,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import (
     AfterValidator,
@@ -56,6 +62,7 @@ from sqlalchemy.exc import IntegrityError
 from app.api.companies import JurisdictionOut, jurisdiction_out, refuse_untidy_text
 from app.auth.dependencies import CompanyContext
 from app.companies.jurisdiction import JurisdictionAssessment, assess_jurisdiction
+from app.core.config import SensitiveScreening
 from app.db.models import WorkflowInstance
 from app.db.models.membership import ROLE_COMPANY_ADMIN
 from app.repositories import workflows
@@ -74,6 +81,7 @@ from app.workflows.definition import (
 from app.workflows.history import HistoryItem, compose_history, evaluation_results
 from app.workflows.intake import (
     JURISDICTION_LABELS,
+    EarlierEscalation,
     IntakeEvaluation,
     evaluate_intake,
     question_options,
@@ -90,6 +98,15 @@ CaseTitle = Annotated[
 ]
 # More than any step asks; a bound on the request, not a product rule.
 MAX_ANSWERS_PER_SUBMISSION = 50
+
+
+def screening_policy(request: Request) -> SensitiveScreening:
+    """The deployment's setting for the sensitive safety screening."""
+    policy: SensitiveScreening = request.app.state.sensitive_screening
+    return policy
+
+
+ScreeningPolicy = Annotated[SensitiveScreening, Depends(screening_policy)]
 
 
 class CaseCreate(BaseModel):
@@ -183,6 +200,8 @@ class StepOut(BaseModel):
     unavailable_reason: str | None
     # The step's checks are development content still under legal review.
     provisional: bool
+    # The step asks sensitive (health-related) questions.
+    sensitive: bool
 
 
 class ProgressOut(BaseModel):
@@ -257,6 +276,7 @@ class HoldOut(BaseModel):
         "jurisdiction_different",
         "jurisdiction_unsupported",
         "screening_not_covered",
+        "earlier_escalation",
         "company_jurisdiction_unconfirmed",
         "case_jurisdiction_not_sure",
         "case_jurisdiction_outdated",
@@ -280,7 +300,7 @@ MessageOut = Annotated[
 
 
 class CaseJurisdictionOut(BaseModel):
-    """The Case's employment jurisdiction (``JURISDICTION-ROUTING-001``)."""
+    """The Case's employment jurisdiction (the routing rule's result)."""
 
     status: Literal[
         "resolved",
@@ -299,12 +319,30 @@ class CaseJurisdictionOut(BaseModel):
     company_jurisdiction: Literal["uae_federal", "difc"] | None
 
 
+class EscalationOut(BaseModel):
+    """The Case's first specialist-review hold, kept whatever the answers say now."""
+
+    since: datetime
+    # Why it was first held (a hold reason code).
+    reason: str
+    # The current answers or jurisdiction themselves still call for it.
+    current: bool
+
+
 class IntakeOut(BaseModel):
     case_jurisdiction: CaseJurisdictionOut
+    # The current answers' screening state (an earlier escalation is separate).
     screening: Literal[
-        "not_applicable", "not_started", "incomplete", "not_cleared", "cleared", "positive"
+        "not_applicable",
+        "disabled",
+        "not_started",
+        "incomplete",
+        "not_cleared",
+        "cleared",
+        "positive",
     ]
     hold: HoldOut | None
+    escalation: EscalationOut | None
     cautions: list[CautionOut]
     # Later stages may start (server-side gate); never true while held.
     next_stage_open: bool
@@ -317,6 +355,7 @@ class HistoryItemOut(BaseModel):
         "answers_saved",
         "jurisdiction",
         "hold_placed",
+        "hold_kept",
         "hold_lifted",
         "screening",
         "caution",
@@ -349,6 +388,8 @@ class WorkflowViewOut(BaseModel):
     # The Company's jurisdiction readiness (M1-10C contract).
     jurisdiction: JurisdictionOut
     intake: IntakeOut
+    # The deployment's screening setting: "synthetic_demo" means demo data only.
+    sensitive_screening: Literal["disabled", "synthetic_demo"]
     # Stages of this workflow that are not available yet.
     not_available: list[str]
     conversation: list[MessageOut]
@@ -386,9 +427,17 @@ def _summary(
     item: workflows.WorkflowCase,
     facts: list[FactRecord],
     company: JurisdictionAssessment,
+    policy: SensitiveScreening,
+    earlier: EarlierEscalation | None,
 ) -> CaseSummaryOut:
     definition = _definition(item.instance)
-    evaluation = evaluate_intake(definition, latest_answers(facts), company)
+    evaluation = evaluate_intake(
+        definition,
+        latest_answers(facts),
+        company,
+        screening_enabled=policy == "synthetic_demo",
+        earlier_escalation=earlier,
+    )
     return CaseSummaryOut(
         id=item.case.id,
         title=item.case.title,
@@ -413,17 +462,19 @@ _UNAVAILABLE: dict[StepGate, str] = {
 def _unavailable_reason(step_gate: StepGate | None, evaluation: IntakeEvaluation) -> str | None:
     if step_gate is None:
         return None
+    if step_gate is StepGate.SCREENING_COVERED and evaluation.screening == "disabled":
+        return "The safety screening isn't enabled in this environment."
     if step_gate is StepGate.SCREENING_COVERED and evaluation.jurisdiction.resolved:
         return "Not available for this jurisdiction yet."
     return _UNAVAILABLE[step_gate]
 
 
 def _provisional_steps(ruleset: RuleSet) -> set[str]:
-    """Steps whose blocking check is still under legal review."""
+    """Steps whose escalating rule is still under legal review."""
     return {
-        c.step
-        for c in ruleset.conditions
-        if c.step is not None and c.type == "blocking" and c.citation_status == "needs_legal_review"
+        r.step
+        for r in ruleset.rules
+        if r.step is not None and r.action == "escalate" and r.provisional
     }
 
 
@@ -451,7 +502,10 @@ def _caution_out(caution: conversation.CautionNotice) -> CautionOut:
 
 
 def _view(
-    scope: CompanyScope, item: workflows.WorkflowCase, context: CompanyContext
+    scope: CompanyScope,
+    item: workflows.WorkflowCase,
+    context: CompanyContext,
+    policy: SensitiveScreening,
 ) -> WorkflowViewOut:
     definition = _definition(item.instance)
     ruleset = ruleset_for(definition)
@@ -461,13 +515,19 @@ def _view(
     )
     known = {q.key for s in definition.steps for q in s.questions}
     company = _jurisdiction(scope)
-    evaluation = evaluate_intake(definition, answers, company)
+    earlier = workflows.first_escalations(scope, [item.instance.id]).get(item.instance.id)
+    evaluation = evaluate_intake(
+        definition,
+        answers,
+        company,
+        screening_enabled=policy == "synthetic_demo",
+        earlier_escalation=earlier,
+    )
     messages = conversation.compose(
         definition, submissions, evaluation, company, viewer_user_id=context.user_id
     )
     history = compose_history(
         definition,
-        ruleset,
         created_at=item.case.created_at,
         created_by_user_id=item.instance.created_by_user_id,
         submissions=submissions,
@@ -525,6 +585,7 @@ def _view(
                 if step.key in evaluation.available_steps
                 else _unavailable_reason(step.gate, evaluation),
                 provisional=step.key in provisional,
+                sensitive=any(q.sensitive for q in step.questions),
             )
             for step in definition.steps
         ],
@@ -554,12 +615,20 @@ def _view(
             ),
             screening=evaluation.screening,
             hold=None if hold is None else _hold_out(hold),
+            escalation=None
+            if earlier is None
+            else EscalationOut(
+                since=earlier.since,
+                reason=earlier.reason,
+                current=evaluation.currently_escalated,
+            ),
             cautions=[
                 _caution_out(conversation.caution_notice(caution))
                 for caution in evaluation.cautions
             ],
             next_stage_open=evaluation.next_stage_open,
         ),
+        sensitive_screening=policy,
         not_available=list(definition.not_available),
         conversation=[_message_out(message) for message in messages],
         history=[_history_out(entry) for entry in history],
@@ -621,12 +690,19 @@ def _message_out(message: conversation.Message) -> MessageOut:
 
 
 @router.get("/workflows/{workflow_key}/cases", response_model=list[CaseSummaryOut])
-def list_workflow_cases(workflow_key: str, scope: CompanyAdminDb) -> list[CaseSummaryOut]:
+def list_workflow_cases(
+    workflow_key: str, scope: CompanyAdminDb, policy: ScreeningPolicy
+) -> list[CaseSummaryOut]:
     definition = _workflow(workflow_key)
     items = workflows.list_workflow_cases(scope, definition.key)
-    facts = workflows.facts_by_instance(scope, [item.instance.id for item in items])
+    ids = [item.instance.id for item in items]
+    facts = workflows.facts_by_instance(scope, ids)
+    escalations = workflows.first_escalations(scope, ids)
     company = _jurisdiction(scope)
-    return [_summary(item, facts[item.instance.id], company) for item in items]
+    return [
+        _summary(item, facts[item.instance.id], company, policy, escalations.get(item.instance.id))
+        for item in items
+    ]
 
 
 def _replayed_case(
@@ -654,6 +730,7 @@ def create_workflow_case(
     scope: CompanyAdminDb,
     context: CompanyContext,
     response: Response,
+    policy: ScreeningPolicy,
 ) -> CaseSummaryOut:
     definition = _workflow(workflow_key)
     existing = workflows.find_by_request_key(scope, body.request_key)
@@ -679,22 +756,24 @@ def create_workflow_case(
                 scope.company_id,
                 definition.key,
             )
-            return _summary(created, [], _jurisdiction(scope))
+            return _summary(created, [], _jurisdiction(scope), policy, None)
     if not _replayed_case(existing, body, definition, context):
         raise _conflict()
     response.status_code = status.HTTP_200_OK
-    facts = workflows.facts_by_instance(scope, [existing.instance.id])
-    return _summary(existing, facts[existing.instance.id], _jurisdiction(scope))
+    instance_id = existing.instance.id
+    facts = workflows.facts_by_instance(scope, [instance_id])
+    earlier = workflows.first_escalations(scope, [instance_id]).get(instance_id)
+    return _summary(existing, facts[instance_id], _jurisdiction(scope), policy, earlier)
 
 
 @router.get("/cases/{case_id}/workflow", response_model=WorkflowViewOut)
 def get_case_workflow(
-    case_id: UUID, scope: CompanyAdminDb, context: CompanyContext
+    case_id: UUID, scope: CompanyAdminDb, context: CompanyContext, policy: ScreeningPolicy
 ) -> WorkflowViewOut:
     item = workflows.get_workflow_case(scope, case_id)
     if item is None:
         raise _not_found()
-    return _view(scope, item, context)
+    return _view(scope, item, context, policy)
 
 
 def _reload(scope: CompanyScope, case_id: UUID) -> workflows.WorkflowCase:
@@ -712,6 +791,7 @@ def save_step_answers(
     body: AnswersIn,
     scope: CompanyAdminDb,
     context: CompanyContext,
+    policy: ScreeningPolicy,
 ) -> WorkflowViewOut:
     # Lock the instance first: concurrent saves of this Case run one after the
     # other, so the replay check, the revision check, the facts and the
@@ -729,11 +809,15 @@ def save_step_answers(
     if workflows.find_submission(scope, instance_id, body.submission_key) is not None:
         # A retry of a save that already succeeded: answered before any check
         # that depends on the current state, which that save may have changed.
-        return _view(scope, item, context)
+        return _view(scope, item, context, policy)
 
     current = latest_answers(workflows.facts_by_instance(scope, [instance_id])[instance_id])
     company = _jurisdiction(scope)
-    before = evaluate_intake(definition, current, company)
+    enabled = policy == "synthetic_demo"
+    earlier = workflows.first_escalations(scope, [instance_id]).get(instance_id)
+    before = evaluate_intake(
+        definition, current, company, screening_enabled=enabled, earlier_escalation=earlier
+    )
     if step.key not in before.available_steps:
         raise _conflict()
     accepted, errors = validate_answers(
@@ -755,14 +839,14 @@ def save_step_answers(
 
     changes = {key: value for key, value in accepted.items() if current.get(key) != value}
     if not changes:
-        return _view(scope, item, context)
+        return _view(scope, item, context, policy)
 
     revision = workflows.advance_revision(scope, instance_id, body.expected_revision)
     if revision is None:
         # Another save committed first. Same key: that save was this one.
         scope.rollback()
         if workflows.find_submission(scope, instance_id, body.submission_key) is not None:
-            return _view(scope, _reload(scope, case_id), context)
+            return _view(scope, _reload(scope, case_id), context, policy)
         raise _conflict()
     submission = workflows.record_submission(
         scope,
@@ -775,7 +859,11 @@ def save_step_answers(
     )
     after = {**current, **changes}
     evaluation = evaluate_intake(
-        definition, {k: v for k, v in after.items() if v is not None}, company
+        definition,
+        {k: v for k, v in after.items() if v is not None},
+        company,
+        screening_enabled=enabled,
+        earlier_escalation=earlier,
     )
     workflows.record_evaluation(
         scope, submission, evaluation, evaluation_results(evaluation, ruleset_for(definition))
@@ -786,4 +874,4 @@ def save_step_answers(
         logger.info(
             "Workflow case held (company_id=%s, hold=%s)", scope.company_id, evaluation.hold.kind
         )
-    return _view(scope, _reload(scope, case_id), context)
+    return _view(scope, _reload(scope, case_id), context, policy)

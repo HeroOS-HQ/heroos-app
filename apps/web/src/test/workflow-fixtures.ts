@@ -135,6 +135,8 @@ type Overrides = {
   history?: Record<string, unknown>[];
   conversation?: unknown[];
   caseId?: string;
+  escalation?: Record<string, unknown> | null;
+  screening?: "disabled" | "synthetic_demo";
 };
 
 function jurisdictionOptions(company: Company) {
@@ -158,11 +160,13 @@ export function apiView({
   history,
   conversation,
   caseId = CASE_ID,
+  escalation = null,
+  screening = "synthetic_demo",
 }: Overrides = {}): Record<string, unknown> {
   const caseAnswer = answers["jurisdiction.case_confirmation"];
   const resolved = company !== null && caseAnswer === company ? company : null;
   const steps = [
-    { key: "initial_facts", title: "Initial facts", intro: "Let's start with what happened.", questions: INITIAL, available: true, unavailable_reason: null, provisional: false },
+    { key: "initial_facts", title: "Initial facts", intro: "Let's start with what happened.", questions: INITIAL, available: true, unavailable_reason: null, provisional: false, sensitive: false },
     {
       key: "jurisdiction",
       title: "Employment jurisdiction",
@@ -175,17 +179,25 @@ export function apiView({
       available: company !== null,
       unavailable_reason: company !== null ? null : "Available once your company's employment jurisdiction is confirmed.",
       provisional: false,
+      sensitive: false,
     },
-    { key: "incident_context", title: "Incident context", intro: "A few more facts about the incident.", questions: CONTEXT, available: true, unavailable_reason: null, provisional: false },
+    { key: "incident_context", title: "Incident context", intro: "A few more facts about the incident.", questions: CONTEXT, available: true, unavailable_reason: null, provisional: false, sensitive: false },
     {
       key: "safety_screening",
       title: "Safety screening",
       intro: "Some situations need specialist advice before any disciplinary step is taken.",
       questions: SCREENING,
-      available: resolved === "uae_federal",
+      available: resolved === "uae_federal" && screening === "synthetic_demo",
       unavailable_reason:
-        resolved === "uae_federal" ? null : resolved ? "Not available for this jurisdiction yet." : "Available once the case's jurisdiction is confirmed.",
+        resolved === "uae_federal"
+          ? screening === "synthetic_demo"
+            ? null
+            : "The safety screening isn't enabled in this environment."
+          : resolved
+            ? "Not available for this jurisdiction yet."
+            : "Available once the case's jurisdiction is confirmed.",
       provisional: true,
+      sensitive: true,
     },
   ];
   const asked = steps
@@ -276,11 +288,13 @@ export function apiView({
         label: resolved ? LABELS[resolved] : null,
         company_jurisdiction: company,
       },
-      screening: resolved === "uae_federal" ? "not_started" : "not_applicable",
+      screening: resolved === "uae_federal" ? (screening === "synthetic_demo" ? "not_started" : "disabled") : "not_applicable",
       hold: holdValue,
+      escalation,
       cautions,
       next_stage_open: statusValue.code === "intake_recorded",
     },
+    sensitive_screening: screening,
     not_available: ["Classification of the incident", "Options and decisions", "Documents", "Expert review"],
     conversation: conversation ?? [
       { kind: "information", id: "welcome", title: "Welcome to your Disciplinary case", body: "This is a guided workflow, not an AI assistant." },
@@ -352,6 +366,17 @@ export const HIGH_RISK_HOLD = {
   title: "On hold: specialist review needed",
   body: "Your screening answers include a situation that needs specialist advice. HeroOS doesn't offer expert review in the app yet and hasn't contacted anyone about this case. Your answers stay saved.",
   items: ["Sick leave"],
+  provisional: true,
+};
+
+export const EARLIER_HOLD = {
+  kind: "hold",
+  id: "hold",
+  action: "escalate",
+  reason: "earlier_escalation",
+  title: "On hold: specialist review needed",
+  body: "This case was held for specialist review because of an earlier answer. Changed answers are saved, but they don't release the hold, and HeroOS can't release it in the app yet.",
+  items: ["First held because: a screening answer needed specialist advice"],
   provisional: true,
 };
 

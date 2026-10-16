@@ -69,11 +69,11 @@ EVALUATION_B = UUID("bd000000-0000-4000-8000-00000000000b")
 # A synthetic intake evaluation trace (M2-02): codes and enumerated answers only.
 EVALUATION_RESULTS = [
     {
-        "condition": "JURISDICTION-ROUTING-001",
+        "rule": "case_jurisdiction",
         "order": 1,
-        "jurisdiction": "GLOBAL",
-        "citation_status": "confirmed",
-        "enforcement_status": "active",
+        "applies_in": [],
+        "provisional": False,
+        "enforced": True,
         "outcome": "fired",
         "action": "block",
         "reason": "company_unconfirmed",

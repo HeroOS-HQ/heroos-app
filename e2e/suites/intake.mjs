@@ -4,9 +4,11 @@
 // gives the incident context (a follow-up appears, a caution is raised),
 // clears the safety screening (intake recorded), then reports a high-risk
 // factor (the case is held: no ticket, nothing promised), reloads, signs out
-// and in, and corrects it (hold lifted, history kept). A DIFC Company gets no
-// UAE Federal rule and is held for specialist review instead of screened.
-// PostgreSQL rows, RLS and logs are checked too. Synthetic data only.
+// and in, and corrects it (the hold is kept: changed answers never release an
+// escalation). A DIFC Company gets no UAE Federal rule and is held for
+// specialist review instead of screened. An API with the default setting never
+// collects the sensitive screening. PostgreSQL rows, RLS and logs are checked
+// too. Synthetic data only.
 import { newFounder, quote } from "./common.mjs";
 
 const TITLE = "[SYNTHETIC E2E] Intake journey";
@@ -106,12 +108,13 @@ export async function run(ctx) {
 
   await page.clickText("button", "Continue to Safety screening");
   await page.waitFor(`Boolean(document.querySelector(${JSON.stringify(radio(SCREENING[0], "no"))}))`, { message: "screening group" });
-  const provisional = (await page.text()).includes("haven't been legally reviewed yet");
+  const screeningPage = await page.text();
+  const provisional = screeningPage.includes("haven't been legally reviewed yet") && screeningPage.includes("Demo environment: made-up examples only");
   for (const key of SCREENING) await page.click(radio(key, "no"));
   await page.clickText("button", "Save answers");
   await page.waitForText("Intake recorded");
   const recorded = await page.text();
-  check("INTAKE-4", "with every screening answer No, the intake is recorded as a preliminary status, not a legal assessment",
+  check("INTAKE-4", "the screening is marked provisional and demo-only; with every answer No, the intake is recorded as a preliminary status, not a legal assessment",
     provisional && recorded.includes("Safety screening completed") && recorded.includes("not a legal assessment"),
     recorded.slice(0, 200));
   await ctx.screenshot(page, "intake-recorded-1440");
@@ -157,15 +160,19 @@ export async function run(ctx) {
   await ctx.screenshot(page, "intake-held-390");
   await page.viewport(1440, 900);
 
-  // Correcting the answer lifts the hold; the history keeps both.
+  // Correcting the answer is saved, but it doesn't release the hold.
   await page.goto(`${webOrigin}${casePath}`);
   await page.waitForHydrated("#q-incident-narrative");
   await page.clickText("button", "4. Safety screening");
   await page.waitFor(`Boolean(document.querySelector(${JSON.stringify(radio("screening.sick_leave", "no"))}))`, { message: "screening group" });
   await page.click(radio("screening.sick_leave", "no"));
   await page.clickText("button", "Save answers");
-  await page.waitForText("Hold lifted after answers changed");
-  check("INTAKE-9", "a corrected answer lifts the hold and the history records both", (await page.text()).includes("Intake recorded"));
+  await page.waitForText("Hold kept after answers changed");
+  const kept = await page.text();
+  check("INTAKE-9", "a corrected answer is saved but never releases the hold: the case stays held and the history says so",
+    kept.includes("On hold: specialist review needed") && kept.includes("don't release the hold") &&
+      kept.includes("Current screening") && !kept.includes("Hold lifted"),
+    kept.slice(0, 200));
   await ctx.screenshot(page, "intake-history-1440");
 
   // ===== API: uncertainty, replays, members, other Companies =====
@@ -179,10 +186,11 @@ export async function run(ctx) {
     token: fed.token, method: "PUT", body: { expected_revision: uncertain.json?.workflow?.revision - 1, submission_key: key, answers: { "screening.senior_employee": "not_sure" } },
   });
   const afterReplay = await evaluations();
-  check("INTAKE-10", "a Not sure screening answer never clears the screening, and a replayed save adds no second evaluation",
-    uncertain.json?.status?.code === "screening_not_cleared" && uncertain.json?.intake?.next_stage_open === false &&
+  check("INTAKE-10", "a Not sure screening answer never clears the screening (the case stays held), and a replayed save adds no second evaluation",
+    uncertain.json?.intake?.screening === "not_cleared" && uncertain.json?.status?.code === "held_for_specialist_review" &&
+      uncertain.json?.intake?.hold?.reason === "earlier_escalation" && uncertain.json?.intake?.next_stage_open === false &&
       replayed.status === 200 && afterReplay.length === 7,
-    `${uncertain.status} ${uncertain.json?.status?.code} ${replayed.status} ${afterReplay.length}`);
+    `${uncertain.status} ${uncertain.json?.intake?.screening} ${uncertain.json?.status?.code} ${replayed.status} ${afterReplay.length}`);
 
   const memberSave = await ctx.apiFetch(screeningPath, { token: member.token, method: "PUT", body: { expected_revision: 0, submission_key: crypto.randomUUID(), answers: { "screening.sick_leave": "no" } } });
   const otherView = await ctx.apiFetch(`/companies/${difc.companyId}/cases/${caseId}/workflow`, { token: difc.token });
@@ -220,6 +228,27 @@ export async function run(ctx) {
     difcLoaded && difcText.includes("isn't available for DIFC cases yet") && !difcText.includes("Caution:"), `${difcUrl} ${difcText.slice(0, 300)}`);
   await ctx.screenshot(difcPage, "intake-difc-held-1440");
   await difcPage.close();
+
+  // ===== An API with the default setting never collects the screening =====
+  const defaultApi = ctx.makeApi({ databaseUrl: ctx.urls.runtime(process.env.E2E_DATABASE), label: "api-screening-default" });
+  await defaultApi.start({ extraEnv: { HEROOS_SENSITIVE_SCREENING: "disabled" } });
+  const viaDefault = (path, init = {}) =>
+    fetch(`${defaultApi.url}${path}`, {
+      ...init,
+      headers: { Authorization: `Bearer ${fed.token}`, "Content-Type": "application/json", ...(init.headers ?? {}) },
+    });
+  const defaultView = await (await viaDefault(`/companies/${fed.companyId}/cases/${caseId}/workflow`)).json();
+  const defaultSave = await viaDefault(screeningPath, {
+    method: "PUT",
+    body: JSON.stringify({ expected_revision: defaultView.workflow?.revision, submission_key: crypto.randomUUID(), answers: { "screening.sick_leave": "no" } }),
+  });
+  await defaultApi.stop();
+  const screeningStep = (defaultView.steps ?? []).find((s) => s.key === "safety_screening");
+  check("INTAKE-16", "with the default setting the API refuses the sensitive screening (409), says so, and still keeps the earlier hold",
+    defaultView.sensitive_screening === "disabled" && screeningStep?.available === false &&
+      screeningStep?.unavailable_reason === "The safety screening isn't enabled in this environment." &&
+      defaultSave.status === 409 && defaultView.status?.code === "held_for_specialist_review",
+    `${defaultView.sensitive_screening} ${screeningStep?.available} ${defaultSave.status} ${defaultView.status?.code}`);
 
   // ===== The database itself =====
   const asOther = await fixtures.runtimeQuery(`SELECT count(*) FROM workflow_evaluations e JOIN workflow_instances i ON i.id = e.instance_id WHERE i.case_id = ${caseSql}`, { company: difc.companyId });

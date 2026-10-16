@@ -10,6 +10,16 @@ import { CautionCard, HoldCard } from "./conversation";
 
 const sectionHeading = "text-xs font-bold uppercase tracking-[0.14em] text-hero-blue-ink";
 
+const SCREENING_NOW: Record<string, string> = {
+  not_applicable: "not available",
+  disabled: "not enabled in this environment",
+  not_started: "not started",
+  incomplete: "not finished",
+  not_cleared: "not cleared (“Not sure” answers)",
+  cleared: "every answer No",
+  positive: "a high-risk factor reported",
+};
+
 const CASE_JURISDICTION: Record<CaseJurisdictionStatus, { status: string; tone: "positive" | "caution" | "muted" }> = {
   resolved: { status: "Confirmed for this case", tone: "positive" },
   awaiting_case_confirmation: { status: "Confirm for this case", tone: "caution" },
@@ -44,7 +54,7 @@ function QuestionList({ questions, empty }: { questions: Question[]; empty: stri
 
 function HistoryEntry({ item }: { item: HistoryItem }) {
   const marker =
-    item.kind === "hold_placed" ? (
+    item.kind === "hold_placed" || item.kind === "hold_kept" ? (
       <ShieldIcon className="size-4 text-hero-danger" />
     ) : item.kind === "intake_recorded" || item.kind === "hold_lifted" ? (
       <CheckIcon className="size-4 text-hero-success" />
@@ -114,6 +124,16 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
           >
             <HoldCard hold={hold} />
           </div>
+          {view.intake.escalation ? (
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm text-hero-navy">
+              <dt className="font-bold">Held since</dt>
+              <dd>
+                <time dateTime={view.intake.escalation.since}>{formatDayTime(view.intake.escalation.since)}</time>
+              </dd>
+              <dt className="font-bold">Current screening</dt>
+              <dd>{SCREENING_NOW[view.intake.screening] ?? view.intake.screening}</dd>
+            </dl>
+          ) : null}
         </Section>
       ) : null}
 
@@ -192,7 +212,8 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
           ))}
         </ul>
         <p className="mt-3 text-sm leading-relaxed text-hero-muted">
-          Nothing in this case has been assessed or decided. HeroOS records your answers and runs fixed checks on them.
+          Nothing in this case has been assessed or decided. HeroOS records your answers and runs fixed checks on them;
+          the checks are development content, not legal advice.
         </p>
       </Section>
     </div>

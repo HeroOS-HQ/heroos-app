@@ -23,6 +23,8 @@ OIDC_SUPPORTED_ALGORITHMS = frozenset(
 # stops startup instead of falling back to anything else.
 StorageProviderName = Literal["local", "s3"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
+# "synthetic_demo": the environment holds synthetic demo data only.
+SensitiveScreening = Literal["disabled", "synthetic_demo"]
 
 # Loopback hosts of the local Docker Compose database. Deployed environments
 # refuse them for DATABASE_URL.
@@ -136,6 +138,23 @@ class Settings(DatabaseSettings):
     # together with the identity provider's sign-up setting
     # (docs/operations/company-registration.md).
     heroos_self_registration_enabled: bool = False
+
+    # The Disciplinary safety screening (M2-02) asks health-related and other
+    # legally sensitive questions about an employee. No privacy basis or
+    # retention policy is approved for them yet, so it is off unless an
+    # environment that holds only synthetic demo data enables it explicitly;
+    # production refuses it. When off, the screening step can't be answered
+    # and no intake can be completed (docs/architecture/disciplinary-intake.md).
+    heroos_sensitive_screening: SensitiveScreening = "disabled"
+
+    @model_validator(mode="after")
+    def _validate_sensitive_screening(self) -> Self:
+        if self.heroos_env == "production" and self.heroos_sensitive_screening != "disabled":
+            raise ValueError(
+                "HEROOS_SENSITIVE_SCREENING must be disabled when HEROOS_ENV=production "
+                "(no approved privacy basis for the screening answers)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_cors(self) -> Self:

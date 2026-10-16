@@ -79,6 +79,10 @@ class Question:
     allow_not_sure: bool = False
     ask_when: AskWhen | None = None
     options_from: OptionsFrom | None = None
+    # Health-related or otherwise legally sensitive (the safety screening):
+    # collected only where enabled (Settings.heroos_sensitive_screening), never
+    # copied into evaluation traces or history details.
+    sensitive: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -314,11 +318,16 @@ INCIDENT_CONTEXT: Final = Step(
 
 def _screening(key: str, prompt: str, label: str) -> Question:
     return Question(
-        key=f"screening.{key}", kind="choice", prompt=prompt, label=label, options=YES_NO_NOT_SURE
+        key=f"screening.{key}",
+        kind="choice",
+        prompt=prompt,
+        label=label,
+        options=YES_NO_NOT_SURE,
+        sensitive=True,
     )
 
 
-# The high-risk factors, in the source's order (app.workflows.conditions).
+# The high-risk factors (app.workflows.conditions).
 SAFETY_SCREENING: Final = Step(
     key="safety_screening",
     title="Safety screening",

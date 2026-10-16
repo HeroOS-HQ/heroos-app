@@ -23,6 +23,7 @@ export function caseStatusTone(code: string): Tone {
       return "positive";
     case "awaiting_jurisdiction":
     case "screening_not_cleared":
+    case "screening_unavailable":
     case "held_for_specialist_review":
       return "caution";
     default:

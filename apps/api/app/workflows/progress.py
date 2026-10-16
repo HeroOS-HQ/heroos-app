@@ -81,6 +81,8 @@ def _screening_item(step: Step, evaluation: IntakeEvaluation) -> ProgressItem:
     match evaluation.screening:
         case "cleared":
             return ProgressItem(step.key, step.title, "completed", "No high-risk factors reported")
+        case "disabled":
+            return ProgressItem(step.key, step.title, "blocked", "Not enabled in this environment")
         case "positive":
             return ProgressItem(step.key, step.title, "blocked", "Specialist review needed")
         case "not_cleared":

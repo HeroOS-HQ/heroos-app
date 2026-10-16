@@ -134,7 +134,7 @@ def new_case(scope: CompanyScope, user: uuid.UUID, title: str = "[SYNTHETIC] Cas
         user_id=user,
         changes=changes,
     )
-    evaluation = evaluate_intake(DISCIPLINARY_V2, changes, UNCONFIRMED)
+    evaluation = evaluate_intake(DISCIPLINARY_V2, changes, UNCONFIRMED, screening_enabled=False)
     workflows.record_evaluation(
         scope, submission, evaluation, evaluation_results(evaluation, DISCIPLINARY_INTAKE)
     )
@@ -565,6 +565,8 @@ def pooled_client(
         heroos_auth_provider="cognito",
         heroos_cognito_issuer=TEST_COGNITO_ISSUER,
         heroos_cognito_app_client_id=TEST_APP_CLIENT_ID,
+        # A synthetic test database: the safety screening may be collected.
+        heroos_sensitive_screening="synthetic_demo",
     )
     app = create_app(settings)
 
@@ -922,6 +924,23 @@ def test_a_high_risk_hold_on_postgresql_writes_only_its_own_trace(
             {"c": case_id},
         ).one()
     assert tuple(stored) == ("specialist_review", "high_risk_factors", "uae_federal", "positive")
+
+    # A corrected answer is saved but doesn't release the hold.
+    corrected = put("safety_screening", {"screening.whistleblower": "no"}, 2)
+    assert corrected.json()["status"]["code"] == "held_for_specialist_review"
+    assert corrected.json()["intake"]["hold"]["reason"] == "earlier_escalation"
+    assert corrected.json()["intake"]["screening"] == "cleared"
+    instance = uuid.UUID(corrected.json()["case"]["id"])
+    with Session(runtime_engine, autoflush=False) as db:
+        own = scope_for(db, a)
+        instance_id = db.scalar(
+            text("SELECT id FROM workflow_instances WHERE case_id = :c"), {"c": instance}
+        )
+        first = workflows.first_escalations(own, [instance_id])
+        assert first[instance_id].reason == "high_risk_factors"
+    with Session(runtime_engine, autoflush=False) as db:
+        # Another Company's scope (and RLS) sees no escalation for it.
+        assert workflows.first_escalations(scope_for(db, tenants.b), [instance_id]) == {}
     # Another Company's administrator sees none of it.
     set_role(operator_engine, tenants.b.company, tenants.b.membership, "company_admin")
     response = pooled_client.get(

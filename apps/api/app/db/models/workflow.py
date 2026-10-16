@@ -9,7 +9,7 @@ assessment. Migration ``75ec6db8b6c1`` adds RLS and the API grants.
 ``WorkflowEvaluation`` (M2-02, migration ``e64497d997d8``) is the append-only
 record of the intake evaluation each saved submission produced: the Case
 status, hold and its reason, the resolved Case jurisdiction, the screening
-state and every condition's result with the structured inputs it read, plus the
+state and every rule's result with the structured inputs it read, plus the
 definition and rule-set versions used. The current state is always recomputed
 on read; these rows are the trace.
 """
@@ -46,6 +46,7 @@ EVALUATION_STATUSES: Final = (
     "intake_in_progress",
     "awaiting_jurisdiction",
     "screening_not_cleared",
+    "screening_unavailable",
     "held_for_specialist_review",
     "intake_recorded",
 )
@@ -55,6 +56,7 @@ EVALUATION_HOLD_REASONS: Final = (
     "jurisdiction_different",
     "jurisdiction_unsupported",
     "screening_not_covered",
+    "earlier_escalation",
     "company_jurisdiction_unconfirmed",
     "case_jurisdiction_not_sure",
     "case_jurisdiction_outdated",
@@ -62,6 +64,7 @@ EVALUATION_HOLD_REASONS: Final = (
 EVALUATION_JURISDICTIONS: Final = ("uae_federal", "difc")
 EVALUATION_SCREENING: Final = (
     "not_applicable",
+    "disabled",
     "not_started",
     "incomplete",
     "not_cleared",
@@ -257,7 +260,7 @@ class WorkflowEvaluation(Base):
     # The resolved Case jurisdiction; None while unresolved.
     jurisdiction: Mapped[str | None] = mapped_column(String(20), nullable=True)
     screening: Mapped[str] = mapped_column(String(20), nullable=False)
-    # Every condition's result, in rule-set order (app.workflows.intake).
+    # Every rule's result, in rule-set order (app.workflows.intake).
     results: Mapped[Any] = mapped_column(EvaluationResults, nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

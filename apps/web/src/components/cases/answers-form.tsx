@@ -198,6 +198,7 @@ export function AnswersForm({
   revision,
   onSaved,
   next,
+  demoOnly = false,
   fetcher,
 }: {
   companyId: string;
@@ -208,6 +209,8 @@ export function AnswersForm({
   onSaved: (view: WorkflowView) => void;
   /** The next step with questions left, offered after a save. */
   next?: { title: string; go: () => void } | null;
+  /** The environment holds made-up demo data only (decided by the API). */
+  demoOnly?: boolean;
   fetcher?: typeof fetch;
 }) {
   const [draft, setDraft] = useState<Draft>(() => draftFrom(step, answers));
@@ -339,6 +342,12 @@ export function AnswersForm({
         <p className="mt-2 text-[0.9375rem] leading-relaxed text-hero-muted">
           {lead} Emptying an answer removes it when you save.
         </p>
+        {step.sensitive && demoOnly ? (
+          <Notice className="mt-3" title="Demo environment: made-up examples only" tone="caution">
+            These questions are about health and other sensitive circumstances. Don&apos;t answer them about a real
+            employee: use made-up examples only.
+          </Notice>
+        ) : null}
         {step.provisional ? (
           <p className="mt-3 rounded-xl border border-hero-border bg-hero-bg px-3 py-2 text-sm leading-relaxed text-hero-navy/85">
             <span className="font-bold">Provisional.</span> These screening questions haven&apos;t been legally

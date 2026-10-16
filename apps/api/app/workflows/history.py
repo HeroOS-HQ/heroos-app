@@ -3,16 +3,18 @@
 Composed on read from append-only records only, so it can't drift from them:
 
 - the workflow instance (Case created, by whom, when);
-- each saved submission (which answers changed: labels only, never values);
+- each saved submission (which answers changed: labels only, never values;
+  for sensitive questions only how many changed);
 - each stored intake evaluation, compared with the one before it: the Case
   jurisdiction confirmed or no longer confirmed (and on what basis), holds
-  placed or lifted (and why), the screening result, cautions raised or no
-  longer applying (a hold suppresses showing a caution, not its record), and
-  the intake recorded.
+  placed, kept or lifted (and why: a specialist-review hold is only ever kept,
+  never lifted by changed answers), the screening result, cautions raised or
+  no longer applying (a hold suppresses showing a caution, not its record),
+  and the intake recorded.
 
 The current state shown elsewhere is recomputed live; an entry here records
-what each save produced at the time. Wording is neutral, contains no condition
-IDs and never restates an answer's value. Cases saved before M2-02 have no
+what each save produced at the time. Wording is neutral, contains no rule keys
+and never restates an answer's value. Cases saved before M2-02 have no
 evaluations for those saves; their history starts with the submissions.
 """
 
@@ -32,6 +34,7 @@ HistoryKind = Literal[
     "answers_saved",
     "jurisdiction",
     "hold_placed",
+    "hold_kept",
     "hold_lifted",
     "screening",
     "caution",
@@ -64,17 +67,17 @@ class HistoryItem:
 
 
 def evaluation_results(evaluation: IntakeEvaluation, ruleset: RuleSet) -> list[dict[str, object]]:
-    """The stored ``results`` of an evaluation: one entry per condition, in order."""
+    """The stored ``results`` of an evaluation: one entry per rule, in order."""
     data: list[dict[str, object]] = []
     for result in evaluation.results:
-        condition = ruleset.condition(result.condition_id)
+        rule = ruleset.rule(result.rule)
         data.append(
             {
-                "condition": result.condition_id,
-                "order": condition.order,
-                "jurisdiction": condition.jurisdiction,
-                "citation_status": condition.citation_status,
-                "enforcement_status": condition.enforcement_status,
+                "rule": result.rule,
+                "order": rule.order,
+                "applies_in": list(rule.applies_in),
+                "provisional": rule.provisional,
+                "enforced": rule.enforced,
                 "outcome": result.outcome,
                 "action": result.action,
                 "reason": result.reason,
@@ -94,6 +97,7 @@ _HOLD_TEXT: Final[Mapping[str, str]] = {
     "case_jurisdiction_not_sure": "The jurisdiction for this case wasn't confirmed (“Not sure”).",
     "case_jurisdiction_outdated": "The company's jurisdiction changed after it was confirmed "
     "for this case.",
+    "earlier_escalation": "Changed answers don't release a specialist-review hold.",
 }
 _SCREENING_TEXT: Final[Mapping[str, tuple[str, str]]] = {
     "cleared": (
@@ -111,18 +115,18 @@ _SCREENING_TEXT: Final[Mapping[str, tuple[str, str]]] = {
 }
 
 
-def _fired_cautions(record: EvaluationRecord, notices: Mapping[str, str]) -> list[str]:
-    """Cautions whose condition fired (shown or, while held, recorded only)."""
+def _fired_cautions(record: EvaluationRecord, titles: Mapping[str, str]) -> list[str]:
+    """Cautions whose rule fired (shown or, while held, recorded only)."""
     keys: list[str] = []
     for result in record.results:
-        condition = result.get("condition")
+        rule = result.get("rule")
         if (
             result.get("outcome") == "fired"
             and result.get("action") == "warn"
-            and isinstance(condition, str)
-            and condition in notices
+            and isinstance(rule, str)
+            and rule in titles
         ):
-            keys.append(notices[condition])
+            keys.append(rule)
     return keys
 
 
@@ -132,7 +136,6 @@ def _evaluation_items(
     by_viewer: bool | None,
     previous: EvaluationRecord | None,
     current: EvaluationRecord,
-    notices: Mapping[str, str],
 ) -> list[HistoryItem]:
     items: list[HistoryItem] = []
 
@@ -159,7 +162,15 @@ def _evaluation_items(
 
     before_hold = (previous.hold, previous.hold_reason) if previous else (None, None)
     if (current.hold, current.hold_reason) != before_hold:
-        if current.hold is not None and current.hold_reason is not None:
+        if current.hold == "specialist_review" and before_hold[0] == "specialist_review":
+            # Still escalated: a specialist-review hold is kept, never lifted.
+            add(
+                "hold_kept",
+                "hold",
+                "Hold kept after answers changed",
+                _HOLD_TEXT.get(current.hold_reason or ""),
+            )
+        elif current.hold is not None and current.hold_reason is not None:
             title = (
                 "Case held for specialist review"
                 if current.hold == "specialist_review"
@@ -180,8 +191,8 @@ def _evaluation_items(
         add("screening", "screening", title, detail)
 
     titles = {key: title for key, (title, _) in caution_notices().items()}
-    before = set(_fired_cautions(previous, notices)) if previous else set()
-    after = _fired_cautions(current, notices)
+    before = set(_fired_cautions(previous, titles)) if previous else set()
+    after = _fired_cautions(current, titles)
     for key in after:
         if key not in before and key in titles:
             add("caution", f"caution:{key}", f"Caution raised: {titles[key]}", None)
@@ -203,7 +214,6 @@ def _evaluation_items(
 
 def compose_history(
     definition: WorkflowDefinition,
-    ruleset: RuleSet,
     *,
     created_at: datetime,
     created_by_user_id: UUID,
@@ -213,7 +223,7 @@ def compose_history(
 ) -> list[HistoryItem]:
     """The Case timeline, oldest first."""
     labels = {q.key: q.label for s in definition.steps for q in s.questions}
-    notices = {c.id: c.notice for c in ruleset.conditions}
+    sensitive = {q.key for s in definition.steps for q in s.questions if q.sensitive}
     items = [
         HistoryItem(
             "created",
@@ -228,7 +238,11 @@ def compose_history(
     for submission in sorted(submissions, key=lambda s: s.revision):
         by_viewer = submission.submitted_by_user_id == viewer_user_id
         step = definition.step(submission.step_key)
-        changed = [labels[key] for key in labels if key in submission.facts]
+        changed = [labels[k] for k in labels if k in submission.facts and k not in sensitive]
+        hidden = sum(1 for k in submission.facts if k in sensitive)
+        if hidden:
+            # Which sensitive answer changed isn't repeated in the history.
+            changed.append(f"{hidden} screening answer{'s' if hidden > 1 else ''}")
         items.append(
             HistoryItem(
                 f"submission:{submission.id}",
@@ -247,7 +261,6 @@ def compose_history(
                 by_viewer,
                 previous,
                 record,
-                notices,
             )
             previous = record
     return items

@@ -1,22 +1,27 @@
 """The Disciplinary intake rules (M2-02) without a database.
 
-Proves, for the conditions mapped from the Conditions Library:
+Proves that:
 
-- the source metadata is preserved exactly (IDs, order, jurisdiction tags,
-  actions, citation and enforcement statuses, source files and rows) and the
-  rule-set digest changes with any of it;
+- the rule set is neutral data (keys, jurisdictions, actions, review and
+  enforcement flags, typed predicates) and its digest changes with any of it;
 - predicates are typed three-valued logic: unanswered and "Not sure" are
   UNKNOWN, never "No";
-- ``JURISDICTION-ROUTING-001`` runs first and nothing jurisdiction-specific
-  runs while the Case jurisdiction is unresolved; a UAE-FED condition never
-  runs for a DIFC Case, which is held instead of screened;
-- a high-risk answer holds the Case (a provisional, internal hold: no ticket),
-  an uncertain or missing screening answer never clears the screening, and only
-  a fully answered, cleared intake opens the gate to later stages;
-- the stored trace holds codes and enumerated answers only.
+- the routing rule runs first and nothing jurisdiction-specific runs while the
+  Case jurisdiction is unresolved; a UAE Federal rule never runs for a DIFC
+  Case, which is held instead of screened;
+- a high-risk answer holds the Case (provisional, internal: no ticket), an
+  uncertain or missing screening answer never clears the screening, and only a
+  fully answered, cleared intake opens the gate to later stages;
+- once held for specialist review, a Case stays held whatever the answers
+  change to (no release exists yet), and the current screening is still
+  reported separately;
+- the safety screening is unavailable unless the environment enables it;
+- the stored trace holds codes and enumerated answers only, and for sensitive
+  questions only counts.
 """
 
 import dataclasses
+import re
 import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -47,6 +52,7 @@ from app.workflows.definition import (
 )
 from app.workflows.history import EvaluationRecord, compose_history, evaluation_results
 from app.workflows.intake import (
+    EarlierEscalation,
     IntakeEvaluation,
     evaluate_intake,
     resolve_jurisdiction,
@@ -92,14 +98,23 @@ CLEAR = {q.key: "no" for q in SAFETY_SCREENING.questions}
 FED_CASE = {**INITIAL, CASE_JURISDICTION_KEY: "uae_federal"}
 COMPLETE_FED = {**FED_CASE, **CONTEXT, **CLEAR}
 SCREENING_KEYS = [q.key for q in SAFETY_SCREENING.questions]
+HELD = EarlierEscalation("high_risk_factors", datetime(2026, 10, 16, 9, 0, tzinfo=UTC))
 
 
-def intake(answers: Mapping[str, object], company: JurisdictionAssessment) -> IntakeEvaluation:
-    return evaluate_intake(DISCIPLINARY_V2, answers, company)
+def intake(
+    answers: Mapping[str, object],
+    company: JurisdictionAssessment,
+    *,
+    enabled: bool = True,
+    earlier: EarlierEscalation | None = None,
+) -> IntakeEvaluation:
+    return evaluate_intake(
+        DISCIPLINARY_V2, answers, company, screening_enabled=enabled, earlier_escalation=earlier
+    )
 
 
 def results(evaluation: IntakeEvaluation) -> dict[str, tuple[str, str | None, str]]:
-    return {r.condition_id: (r.outcome, r.action, r.reason) for r in evaluation.results}
+    return {r.rule: (r.outcome, r.action, r.reason) for r in evaluation.results}
 
 
 # --- predicates -----------------------------------------------------------------------
@@ -121,7 +136,7 @@ def test_an_answer_predicate_never_reads_unknown_as_no(
     assert evaluate(AnswerIn("a", ("yes",)), answers) is expected
 
 
-def test_not_sure_can_count_as_a_value_when_the_source_says_not_stated() -> None:
+def test_not_sure_can_count_as_a_value_when_a_rule_triggers_on_not_stated() -> None:
     stated = AnswerIn("a", ("no", NOT_SURE), unknown=())
     assert evaluate(stated, {"a": NOT_SURE}) is Tri.TRUE
     assert evaluate(stated, {}) is Tri.UNKNOWN
@@ -148,86 +163,58 @@ def test_combinations_use_kleene_logic(
     assert evaluate(AnyOf(terms), answers) is any_of
 
 
-def test_predicates_are_data_not_code() -> None:
+def test_predicates_are_data_over_known_questions() -> None:
     # Triggers are dataclasses of keys and literal values: nothing executable.
-    for condition in DISCIPLINARY_INTAKE.conditions:
-        if condition.predicate is None:
+    for rule in DISCIPLINARY_INTAKE.rules:
+        if rule.predicate is None:
             continue
-        for key in predicate_keys(condition.predicate):
+        for key in predicate_keys(rule.predicate):
             assert DISCIPLINARY_V2.question(key) is not None, key
-    assert not hasattr(conditions, "eval_trigger")
 
 
 # --- rule set -------------------------------------------------------------------------
 
 
-def test_the_mapped_conditions_keep_their_source_metadata() -> None:
+def test_the_rule_set_is_neutral_ordered_data() -> None:
     rows = [
-        (
-            c.id,
-            c.order,
-            c.jurisdiction,
-            c.type,
-            c.action,
-            c.source_action,
-            c.citation_status,
-            c.enforcement_status,
-            c.step,
-        )
-        for c in DISCIPLINARY_INTAKE.conditions
+        (r.key, r.order, r.applies_in, r.action, r.alternate_action, r.provisional, r.enforced)
+        for r in DISCIPLINARY_INTAKE.rules
     ]
     assert rows == [
-        ("JURISDICTION-ROUTING-001", 1, "GLOBAL", "precondition", "block", "blocking",
-         "confirmed", "active", None),
-        ("POLICY-ACK-CASE", 2, "UAE-FED", "step_caution", "warn", "warn",
-         "needs_legal_review", "active", "incident_context"),
-        ("UAE-ONE-PENALTY-SAME-INCIDENT", 3, "UAE-FED", "step_caution", "warn", "warn",
-         "confirmed", "active", "incident_context"),
-        ("UAE-OFFDUTY-CONNECTION", 4, "UAE-FED", "step_caution", "warn", "warn",
-         "confirmed", "active", "incident_context"),
-        ("UAE-STOP-CALL-FIRST", 5, "UAE-FED", "blocking", "escalate", "escalate",
-         "needs_legal_review", "active", "safety_screening"),
-    ]  # fmt: skip
-    routing = DISCIPLINARY_INTAKE.condition("JURISDICTION-ROUTING-001")
-    assert routing.alternate_action == "escalate"
-    # Workbook rows (Conditions Library sheet) and the rules they implement.
-    assert [s.location for c in DISCIPLINARY_INTAKE.conditions for s in c.sources[:1]] == [
-        "Conditions Library!R41",
-        "Conditions Library!R5",
-        "Conditions Library!R14",
-        "Conditions Library!R15",
-        "Conditions Library!R16",
+        ("case_jurisdiction", 1, (), "block", "escalate", False, True),
+        ("policy_awareness", 2, ("uae_federal",), "warn", None, True, True),
+        ("same_incident_sanction", 3, ("uae_federal",), "warn", None, False, True),
+        ("off_duty_connection", 4, ("uae_federal",), "warn", None, False, True),
+        ("high_risk_screening", 5, ("uae_federal",), "escalate", None, True, True),
     ]
-    assert {"Rule 7", "Rule 17"} <= {s.location for s in routing.sources}
-    # No jurisdiction tag was changed: the "proposed SHARED" ones stay UAE-FED.
-    assert DISCIPLINARY_INTAKE.screening_by_jurisdiction == {"UAE-FED": "UAE-STOP-CALL-FIRST"}
+    assert DISCIPLINARY_INTAKE.screening_by_jurisdiction == {"uae_federal": "high_risk_screening"}
+    # Keys are neutral engine identifiers, never external document references.
+    for rule in DISCIPLINARY_INTAKE.rules:
+        assert re.fullmatch(r"[a-z][a-z_]+", rule.key)
+    assert set(DISCIPLINARY_INTAKE.data()) == {
+        "version",
+        "workflow_key",
+        "rules",
+        "screening_by_jurisdiction",
+    }
 
 
-def test_the_rule_set_pins_its_sources_and_digest() -> None:
-    sources = DISCIPLINARY_INTAKE.sources
-    assert sources["conditions_library"].file == "HeroOS_Conditions_Library-13.xlsx"
-    assert sources["conditions_library"].sha256 == (
-        "ee7cfe5afe0986b01febf6a7a8f225fa75596ec33d435aba2bad5f08fb0be57d"
-    )
-    assert sources["implementation_rules"].sha256 == (
-        "de03a865e830b9cf0b32e93699e036a16fa6c1bd21c90dd5c9625211273d26eb"
-    )
+def test_the_digest_changes_with_any_rule_change() -> None:
     digest = DISCIPLINARY_INTAKE.digest
-    assert len(digest) == 64 and digest == DISCIPLINARY_INTAKE.digest
-    # Any change of a rule or a status changes the digest.
-    first = DISCIPLINARY_INTAKE.conditions[1]
+    assert re.fullmatch(r"[0-9a-f]{64}", digest) and digest == DISCIPLINARY_INTAKE.digest
+    second = DISCIPLINARY_INTAKE.rules[1]
     for change in (
-        {"citation_status": "confirmed"},
-        {"enforcement_status": "not_enforced"},
-        {"jurisdiction": "SHARED"},
+        {"provisional": False},
+        {"enforced": False},
+        {"applies_in": ("uae_federal", "difc")},
         {"predicate": AnswerIn("context.policy_awareness", ("no", NOT_SURE))},
     ):
         changed = dataclasses.replace(
             DISCIPLINARY_INTAKE,
-            conditions=(
-                DISCIPLINARY_INTAKE.conditions[0],
-                dataclasses.replace(first, **change),  # type: ignore[arg-type]
-                *DISCIPLINARY_INTAKE.conditions[2:],
+            rules=(
+                DISCIPLINARY_INTAKE.rules[0],
+                dataclasses.replace(second, **change),  # type: ignore[arg-type]
+                *DISCIPLINARY_INTAKE.rules[2:],
             ),
         )
         assert changed.digest != digest, change
@@ -291,14 +278,14 @@ def test_an_unresolved_jurisdiction_holds_and_nothing_jurisdiction_specific_runs
         reason,
         action,
     )
-    assert evaluation.hold.condition_id == "JURISDICTION-ROUTING-001"
-    assert results(evaluation)["JURISDICTION-ROUTING-001"] == (
+    assert evaluation.hold.rule == "case_jurisdiction"
+    assert results(evaluation)["case_jurisdiction"] == (
         "fired",
         action,
         evaluation.jurisdiction.status,
     )
-    for condition_id, (outcome, _, why) in results(evaluation).items():
-        if condition_id != "JURISDICTION-ROUTING-001":
+    for rule, (outcome, _, why) in results(evaluation).items():
+        if rule != "case_jurisdiction":
             assert (outcome, why) == ("not_applicable", "jurisdiction_unresolved")
     assert evaluation.cautions == ()
     assert evaluation.screening == "not_applicable"
@@ -310,7 +297,7 @@ def test_an_unresolved_jurisdiction_holds_and_nothing_jurisdiction_specific_runs
 def test_awaiting_the_case_confirmation_is_missing_information_not_a_hold() -> None:
     evaluation = intake(INITIAL, FEDERAL)
     assert evaluation.hold is None
-    assert results(evaluation)["JURISDICTION-ROUTING-001"][0] == "unknown"
+    assert results(evaluation)["case_jurisdiction"][0] == "unknown"
     assert CASE_JURISDICTION_KEY in evaluation.missing
     assert evaluation.status == "intake_in_progress"
 
@@ -321,20 +308,14 @@ def test_an_unconfirmed_company_is_not_asked_to_confirm_for_the_case() -> None:
     assert CASE_JURISDICTION_KEY not in evaluation.asked
 
 
-def test_uae_federal_resolves_and_runs_its_conditions_in_order() -> None:
+def test_uae_federal_resolves_and_runs_its_rules_in_order() -> None:
     evaluation = intake(COMPLETE_FED, FEDERAL)
     assert evaluation.jurisdiction.resolved
     assert evaluation.jurisdiction.jurisdiction == "uae_federal"
-    assert [r.condition_id for r in evaluation.results] == [
-        c.id for c in DISCIPLINARY_INTAKE.conditions
-    ]
-    assert {k: v[0] for k, v in results(evaluation).items()} == {
-        "JURISDICTION-ROUTING-001": "not_fired",
-        "POLICY-ACK-CASE": "not_fired",
-        "UAE-ONE-PENALTY-SAME-INCIDENT": "not_fired",
-        "UAE-OFFDUTY-CONNECTION": "not_fired",
-        "UAE-STOP-CALL-FIRST": "not_fired",
-    }
+    assert [r.rule for r in evaluation.results] == [r.key for r in DISCIPLINARY_INTAKE.rules]
+    assert {k: v[0] for k, v in results(evaluation).items()} == dict.fromkeys(
+        [r.key for r in DISCIPLINARY_INTAKE.rules], "not_fired"
+    )
     assert "safety_screening" in evaluation.available_steps
 
 
@@ -342,7 +323,7 @@ def test_a_difc_case_gets_no_uae_federal_rule_and_is_held_for_specialist_review(
     answers = {
         **INITIAL,
         CASE_JURISDICTION_KEY: "difc",
-        # Every UAE-FED trigger would fire for a UAE Federal Case.
+        # Every UAE Federal trigger would fire for a UAE Federal Case.
         "context.location": "outside_work",
         "context.work_connection": "no",
         "context.policy_awareness": "no",
@@ -352,10 +333,10 @@ def test_a_difc_case_gets_no_uae_federal_rule_and_is_held_for_specialist_review(
     }
     evaluation = intake(answers, DIFC)
     assert evaluation.jurisdiction.jurisdiction == "difc"
-    for condition_id, (outcome, _, why) in results(evaluation).items():
-        if condition_id != "JURISDICTION-ROUTING-001":
+    for rule, (outcome, _, why) in results(evaluation).items():
+        if rule != "case_jurisdiction":
             assert (outcome, why) == ("not_applicable", "other_jurisdiction")
-    assert results(evaluation)["JURISDICTION-ROUTING-001"] == (
+    assert results(evaluation)["case_jurisdiction"] == (
         "fired",
         "escalate",
         "screening_not_covered",
@@ -365,7 +346,6 @@ def test_a_difc_case_gets_no_uae_federal_rule_and_is_held_for_specialist_review(
         "specialist_review",
         "screening_not_covered",
     )
-    # No Federal guidance: no caution, no screening, no Federal rule's hold.
     assert evaluation.cautions == ()
     assert evaluation.screening == "not_applicable"
     assert "safety_screening" not in evaluation.available_steps
@@ -388,9 +368,10 @@ def test_any_one_high_risk_factor_holds_the_case(factor: str) -> None:
         "escalate",
     )
     assert evaluation.hold.factors == (factor,)
-    assert evaluation.hold.condition_id == "UAE-STOP-CALL-FIRST"
-    # Development content: the source condition is still under legal review.
+    assert evaluation.hold.rule == "high_risk_screening"
+    # Development content: the rule is still under legal review.
     assert evaluation.hold.provisional is True
+    assert evaluation.currently_escalated is True
     assert evaluation.status == "held_for_specialist_review"
     assert evaluation.next_stage_open is False
 
@@ -399,6 +380,13 @@ def test_a_yes_holds_even_before_the_other_factors_are_answered() -> None:
     evaluation = intake({**FED_CASE, "screening.criminal_allegation": "yes"}, FEDERAL)
     assert evaluation.screening == "positive"
     assert evaluation.hold is not None and evaluation.hold.reason == "high_risk_factors"
+
+
+def test_several_factors_are_all_named() -> None:
+    answers = {**COMPLETE_FED, "screening.sick_leave": "yes", "screening.senior_employee": "yes"}
+    evaluation = intake(answers, FEDERAL)
+    assert evaluation.hold is not None
+    assert evaluation.hold.factors == ("screening.sick_leave", "screening.senior_employee")
 
 
 @pytest.mark.parametrize(
@@ -418,7 +406,7 @@ def test_screening_clears_only_when_every_factor_is_answered_no(
     assert evaluation.screening == state
     assert evaluation.status == status
     assert evaluation.hold is None
-    stop = results(evaluation)["UAE-STOP-CALL-FIRST"]
+    stop = results(evaluation)["high_risk_screening"]
     assert stop[0] == ("not_fired" if state == "cleared" else "unknown")
     assert evaluation.next_stage_open is (state == "cleared")
 
@@ -431,6 +419,111 @@ def test_a_cleared_intake_is_a_preliminary_status_without_legal_approval() -> No
     assert evaluation.missing == () and evaluation.uncertain == ()
     # Nothing else is produced: no classification, decision or document.
     assert {r.action for r in evaluation.results} == {None}
+
+
+# --- holds are never released by changed answers -------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("change", "screening"),
+    [
+        ({"screening.sick_leave": "no"}, "cleared"),  # Yes -> No
+        ({"screening.sick_leave": NOT_SURE}, "not_cleared"),  # Yes -> Not sure
+        ({}, "positive"),  # still Yes
+    ],
+)
+def test_an_earlier_escalation_stays_whatever_the_answers_change_to(
+    change: dict[str, str], screening: str
+) -> None:
+    answers = {**COMPLETE_FED, "screening.sick_leave": "yes", **change}
+    evaluation = intake(answers, FEDERAL, earlier=HELD)
+    # The current answers are reported as they are...
+    assert evaluation.screening == screening
+    # ...but the Case stays held: no release exists, so changed answers can't be one.
+    assert evaluation.hold is not None
+    assert evaluation.hold.kind == "specialist_review"
+    assert evaluation.status == "held_for_specialist_review"
+    assert evaluation.next_stage_open is False
+    if screening == "positive":
+        assert evaluation.hold.reason == "high_risk_factors"
+        assert evaluation.currently_escalated is True
+    else:
+        assert (evaluation.hold.reason, evaluation.hold.origin) == (
+            "earlier_escalation",
+            "high_risk_factors",
+        )
+        assert evaluation.hold.provisional is True
+        assert evaluation.currently_escalated is False
+    assert evaluation.earlier_escalation == HELD
+
+
+def test_an_earlier_jurisdiction_escalation_outlasts_a_corrected_jurisdiction() -> None:
+    earlier = EarlierEscalation("jurisdiction_different", HELD.since)
+    evaluation = intake(COMPLETE_FED, FEDERAL, earlier=earlier)
+    assert evaluation.jurisdiction.resolved
+    assert evaluation.hold is not None
+    assert (evaluation.hold.reason, evaluation.hold.origin) == (
+        "earlier_escalation",
+        "jurisdiction_different",
+    )
+    assert evaluation.status == "held_for_specialist_review"
+
+
+def test_an_earlier_escalation_outranks_a_jurisdiction_pause() -> None:
+    evaluation = intake(COMPLETE_FED, UNCONFIRMED, earlier=HELD)
+    assert evaluation.hold is not None
+    assert (evaluation.hold.kind, evaluation.hold.reason) == (
+        "specialist_review",
+        "earlier_escalation",
+    )
+
+
+def test_not_sure_then_no_clears_only_a_case_that_was_never_held() -> None:
+    uncertain = intake({**COMPLETE_FED, "screening.whistleblower": NOT_SURE}, FEDERAL)
+    assert (uncertain.status, uncertain.hold) == ("screening_not_cleared", None)
+    assert intake(COMPLETE_FED, FEDERAL).status == "intake_recorded"
+
+
+def test_cautions_are_recorded_but_not_shown_while_escalated_earlier() -> None:
+    answers = {**COMPLETE_FED, "context.policy_awareness": "no"}
+    evaluation = intake(answers, FEDERAL, earlier=HELD)
+    policy = next(r for r in evaluation.results if r.rule == "policy_awareness")
+    assert (policy.outcome, policy.shown) == ("fired", False)
+    assert evaluation.cautions == ()
+
+
+# --- the screening needs the environment's permission ---------------------------------
+
+
+def test_the_screening_is_unavailable_unless_the_environment_enables_it() -> None:
+    evaluation = intake({**FED_CASE, **CONTEXT}, FEDERAL, enabled=False)
+    assert "safety_screening" not in evaluation.available_steps
+    assert not any(key in evaluation.asked for key in SCREENING_KEYS)
+    assert evaluation.screening == "disabled"
+    assert results(evaluation)["high_risk_screening"] == (
+        "not_applicable",
+        None,
+        "screening_disabled",
+    )
+    # Nothing is missing, yet the intake can't be recorded without the screening.
+    assert evaluation.missing == ()
+    assert evaluation.status == "screening_unavailable"
+    assert evaluation.next_stage_open is False
+
+
+def test_stored_answers_never_trigger_while_the_screening_is_disabled() -> None:
+    # Answers saved in an environment that allowed the screening are ignored,
+    # never evaluated, where it is disabled; the gate stays closed.
+    evaluation = intake({**COMPLETE_FED, "screening.sick_leave": "yes"}, FEDERAL, enabled=False)
+    assert evaluation.hold is None
+    assert evaluation.status == "screening_unavailable"
+    assert evaluation.next_stage_open is False
+
+
+def test_a_disabled_screening_never_hides_an_earlier_escalation() -> None:
+    evaluation = intake(COMPLETE_FED, FEDERAL, enabled=False, earlier=HELD)
+    assert evaluation.hold is not None and evaluation.hold.reason == "earlier_escalation"
+    assert evaluation.status == "held_for_specialist_review"
 
 
 # --- cautions -------------------------------------------------------------------------
@@ -459,27 +552,27 @@ def test_off_duty_conduct_without_a_stated_work_connection_is_cautioned(
     if connection is not None:
         answers["context.work_connection"] = connection
     evaluation = intake(answers, FEDERAL)
-    assert results(evaluation)["UAE-OFFDUTY-CONNECTION"][0] == outcome
-    shown = [c.notice for c in evaluation.cautions]
+    assert results(evaluation)["off_duty_connection"][0] == outcome
+    shown = [c.rule for c in evaluation.cautions]
     assert ("off_duty_connection" in shown) is (outcome == "fired")
 
 
 @pytest.mark.parametrize(
-    ("key", "notice", "fires_on", "provisional"),
+    ("key", "rule", "fires_on", "provisional"),
     [
         ("context.policy_awareness", "policy_awareness", "no", True),
         ("history.same_incident_sanction", "same_incident_sanction", "yes", False),
     ],
 )
-def test_step_cautions_fire_only_on_the_answer_that_triggers_them(
-    key: str, notice: str, fires_on: str, provisional: bool
+def test_cautions_fire_only_on_the_answer_that_triggers_them(
+    key: str, rule: str, fires_on: str, provisional: bool
 ) -> None:
     for value in ("yes", "no", NOT_SURE):
         evaluation = intake({**COMPLETE_FED, key: value}, FEDERAL)
-        cautions = {c.notice: c for c in evaluation.cautions}
-        assert (notice in cautions) is (value == fires_on)
+        cautions = {c.rule: c for c in evaluation.cautions}
+        assert (rule in cautions) is (value == fires_on)
         if value == fires_on:
-            assert (cautions[notice].citation_status == "needs_legal_review") is provisional
+            assert cautions[rule].provisional is provisional
             # A caution informs; it never blocks or opens anything by itself.
             assert evaluation.status == "intake_recorded"
 
@@ -492,35 +585,33 @@ def test_cautions_are_recorded_but_not_shown_while_held_for_specialist_review() 
     }
     evaluation = intake(answers, FEDERAL)
     assert evaluation.hold is not None and evaluation.hold.reason == "high_risk_factors"
-    policy = next(r for r in evaluation.results if r.condition_id == "POLICY-ACK-CASE")
+    policy = next(r for r in evaluation.results if r.rule == "policy_awareness")
     assert (policy.outcome, policy.action, policy.shown) == ("fired", "warn", False)
     assert evaluation.cautions == ()
 
 
-def test_a_not_enforced_condition_is_never_applied(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_not_enforced_rule_is_never_applied(monkeypatch: pytest.MonkeyPatch) -> None:
     ruleset = dataclasses.replace(
         DISCIPLINARY_INTAKE,
-        conditions=tuple(
-            dataclasses.replace(c, enforcement_status="not_enforced")
-            if c.id == "POLICY-ACK-CASE"
-            else c
-            for c in DISCIPLINARY_INTAKE.conditions
+        rules=tuple(
+            dataclasses.replace(r, enforced=False) if r.key == "policy_awareness" else r
+            for r in DISCIPLINARY_INTAKE.rules
         ),
     )
     monkeypatch.setattr("app.workflows.intake.RULESETS", {"disciplinary": ruleset})
     evaluation = intake({**COMPLETE_FED, "context.policy_awareness": "no"}, FEDERAL)
-    assert results(evaluation)["POLICY-ACK-CASE"] == ("not_applicable", None, "not_enforced")
+    assert results(evaluation)["policy_awareness"] == ("not_applicable", None, "not_enforced")
     assert evaluation.cautions == ()
     assert evaluation.ruleset_digest == ruleset.digest != DISCIPLINARY_INTAKE.digest
 
 
-def test_conditions_under_legal_review_never_authorize_an_outcome() -> None:
-    # The only actions any condition can take are warn, block and escalate: no
-    # condition marks anything approved, lawful or available.
-    assert {c.action for c in DISCIPLINARY_INTAKE.conditions} <= {"warn", "block", "escalate"}
-    review = [c for c in DISCIPLINARY_INTAKE.conditions if c.citation_status != "confirmed"]
-    assert [c.id for c in review] == ["POLICY-ACK-CASE", "UAE-STOP-CALL-FIRST"]
-    assert all(c.action in ("warn", "escalate") for c in review)
+def test_rules_under_legal_review_never_authorize_an_outcome() -> None:
+    # The only actions any rule can take are warn, block and escalate: no rule
+    # marks anything approved, lawful or available.
+    assert {r.action for r in DISCIPLINARY_INTAKE.rules} <= {"warn", "block", "escalate"}
+    review = [r for r in DISCIPLINARY_INTAKE.rules if r.provisional]
+    assert [r.key for r in review] == ["policy_awareness", "high_risk_screening"]
+    assert all(r.action in ("warn", "escalate") for r in review)
     # The next-stage gate depends only on a complete, cleared intake.
     for answers in (
         {**COMPLETE_FED, "context.policy_awareness": "no"},
@@ -536,14 +627,11 @@ def test_conditions_under_legal_review_never_authorize_an_outcome() -> None:
 
 
 def test_previously_saved_facts_are_reused_not_asked_again() -> None:
-    # The M2-01 answers satisfy the initial facts; the "raised before" answer
-    # decides whether the documented-action follow-up is asked at all.
     evaluation = intake({**FED_CASE, **CONTEXT}, FEDERAL)
     assert not any(key.startswith("incident.") for key in evaluation.missing)
     assert "history.documented_action" not in evaluation.asked
     raised = intake({**FED_CASE, **CONTEXT, "incident.history": "raised_before"}, FEDERAL)
     assert "history.documented_action" in raised.missing
-    # The jurisdiction is the Company's: the Case only confirms it.
     assert intake(FED_CASE, FEDERAL).jurisdiction.jurisdiction == "uae_federal"
 
 
@@ -551,7 +639,7 @@ def test_an_answer_to_a_question_no_longer_asked_is_kept_but_ignored() -> None:
     answers = {**COMPLETE_FED, "context.work_connection": "no"}  # location: at work
     evaluation = intake(answers, FEDERAL)
     assert "context.work_connection" not in evaluation.asked
-    assert results(evaluation)["UAE-OFFDUTY-CONNECTION"][0] == "not_fired"
+    assert results(evaluation)["off_duty_connection"][0] == "not_fired"
 
 
 def test_uncertain_answers_are_listed_and_counted_as_answered() -> None:
@@ -565,10 +653,11 @@ def test_uncertain_answers_are_listed_and_counted_as_answered() -> None:
 
 def test_progress_follows_the_intake() -> None:
     def items(
-        answers: Mapping[str, object], company: JurisdictionAssessment
+        answers: Mapping[str, object], company: JurisdictionAssessment, *, enabled: bool = True
     ) -> dict[str, tuple[str, str]]:
         return {
-            p.key: (p.status, p.detail) for p in progress(DISCIPLINARY_V2, intake(answers, company))
+            p.key: (p.status, p.detail)
+            for p in progress(DISCIPLINARY_V2, intake(answers, company, enabled=enabled))
         }
 
     fresh = items({}, FEDERAL)
@@ -594,29 +683,36 @@ def test_progress_follows_the_intake() -> None:
     assert difc["jurisdiction"] == ("completed", "DIFC")
     assert difc["safety_screening"] == ("blocked", "Not available for this jurisdiction yet")
     assert items(INITIAL, UNCONFIRMED)["jurisdiction"][0] == "blocked"
+    disabled = items(FED_CASE, FEDERAL, enabled=False)
+    assert disabled["safety_screening"] == ("blocked", "Not enabled in this environment")
 
 
 # --- trace and history ----------------------------------------------------------------
 
 
-def test_the_stored_trace_holds_codes_and_enumerated_answers_only() -> None:
+def test_the_stored_trace_holds_codes_and_never_sensitive_answers() -> None:
     evaluation = intake({**COMPLETE_FED, "screening.sick_leave": "yes"}, FEDERAL)
     data = evaluation_results(evaluation, DISCIPLINARY_INTAKE)
-    assert [d["condition"] for d in data] == [c.id for c in DISCIPLINARY_INTAKE.conditions]
+    assert [d["rule"] for d in data] == [r.key for r in DISCIPLINARY_INTAKE.rules]
     stop = data[-1]
-    assert stop["outcome"] == "fired" and stop["action"] == "escalate"
-    assert stop["jurisdiction"] == "UAE-FED"
-    assert stop["citation_status"] == "needs_legal_review"
-    assert stop["enforcement_status"] == "active"
-    assert stop["inputs"]["screening.sick_leave"] == "yes"  # type: ignore[index]
-    routing = data[0]["inputs"]
-    assert routing == {  # the jurisdiction's source, recorded
+    assert (stop["outcome"], stop["action"]) == ("fired", "escalate")
+    assert (stop["applies_in"], stop["provisional"], stop["enforced"]) == (
+        ["uae_federal"],
+        True,
+        True,
+    )
+    # Which screening question had which answer is not copied: counts only.
+    assert stop["inputs"] == {
+        "sensitive_answers": {"yes": 1, "no": 8, "not_sure": 0, "unanswered": 0}
+    }
+    assert "screening." not in repr(data)
+    assert data[0]["inputs"] == {  # the jurisdiction's basis, recorded
         "company.readiness": "supported_confirmed",
         "company.reason": "confirmed",
         "company.jurisdiction": "uae_federal",
         CASE_JURISDICTION_KEY: "uae_federal",
     }
-    # The narrative (free text) is never part of the trace.
+    # Free text is never part of the trace.
     assert NARRATIVE not in repr(data)
     assert "incident.narrative" not in repr(data)
 
@@ -633,7 +729,7 @@ def _record(submission_id: uuid.UUID, evaluation: IntakeEvaluation) -> Evaluatio
     )
 
 
-def test_history_records_material_intake_events_in_order() -> None:
+def test_history_records_material_intake_events_and_keeps_the_hold() -> None:
     viewer, other = uuid.uuid4(), uuid.uuid4()
     steps = [
         ("initial_facts", INITIAL, viewer),
@@ -645,19 +741,21 @@ def test_history_records_material_intake_events_in_order() -> None:
     answers: dict[str, object] = {}
     submissions: list[SubmissionRecord] = []
     records: dict[uuid.UUID, EvaluationRecord] = {}
+    earlier: EarlierEscalation | None = None
     for revision, (step, facts, by) in enumerate(steps, start=1):
         answers.update(facts)
-        submission = SubmissionRecord(
-            uuid.uuid4(), step, revision, datetime(2026, 10, 16, 9, revision, tzinfo=UTC), by, facts
-        )
+        at = datetime(2026, 10, 16, 9, revision, tzinfo=UTC)
+        submission = SubmissionRecord(uuid.uuid4(), step, revision, at, by, facts)
         submissions.append(submission)
-        records[submission.id] = _record(submission.id, intake(answers, FEDERAL))
+        evaluation = intake(answers, FEDERAL, earlier=earlier)
+        records[submission.id] = _record(submission.id, evaluation)
+        if earlier is None and evaluation.currently_escalated and evaluation.hold is not None:
+            earlier = EarlierEscalation(evaluation.hold.reason, at)
     # The first save predates M2-02: no evaluation was stored for it.
     del records[submissions[0].id]
 
     history = compose_history(
         DISCIPLINARY_V2,
-        DISCIPLINARY_INTAKE,
         created_at=datetime(2026, 10, 16, 9, 0, tzinfo=UTC),
         created_by_user_id=viewer,
         submissions=submissions,
@@ -675,10 +773,11 @@ def test_history_records_material_intake_events_in_order() -> None:
         ("hold_placed", "Case held for specialist review"),
         ("screening", "High-risk factor reported in the safety screening"),
         ("answers_saved", "Answers saved: Safety screening"),
-        ("hold_lifted", "Hold lifted after answers changed"),
+        # Never "lifted": the changed answer is recorded, the hold is kept.
+        ("hold_kept", "Hold kept after answers changed"),
         ("screening", "Safety screening completed"),
-        ("intake_recorded", "Intake recorded"),
     ]
+    assert "hold_lifted" not in [h.kind for h in history]
     assert [h.by_viewer for h in history if h.kind == "answers_saved"] == [
         True,
         True,
@@ -686,11 +785,17 @@ def test_history_records_material_intake_events_in_order() -> None:
         True,
         True,
     ]
-    # Labels of what changed, never the values.
-    screening_saved = history[6]
-    assert screening_saved.detail is not None and "Sick leave" in screening_saved.detail
-    assert all("yes" not in (h.detail or "").lower().split() for h in history)
+    # Sensitive answers: how many changed, never which ones.
+    assert history[6].detail == "Changed: 9 screening answers"
+    assert history[9].detail == "Changed: 1 screening answer"
     text = " ".join(f"{h.title} {h.detail or ''}" for h in history)
-    for condition in DISCIPLINARY_INTAKE.conditions:
-        assert condition.id not in text
+    for label in [q.label for q in SAFETY_SCREENING.questions]:
+        assert label not in text
     assert NARRATIVE not in text
+
+
+def test_no_rule_set_metadata_reaches_the_module_namespace() -> None:
+    # The public module keeps no record of external source documents.
+    names = {name.lower() for name in vars(conditions)}
+    for word in ("source", "sha256", "citation"):
+        assert not any(word in name for name in names), word

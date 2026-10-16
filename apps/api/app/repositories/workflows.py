@@ -9,6 +9,7 @@ is the optimistic-concurrency revision bump.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 from uuid import UUID
 
 from sqlalchemy import Select, func, select, update
@@ -24,7 +25,7 @@ from app.tenancy.scope import CompanyScope
 from app.workflows.conversation import SubmissionRecord
 from app.workflows.definition import WorkflowDefinition
 from app.workflows.history import EvaluationRecord
-from app.workflows.intake import IntakeEvaluation
+from app.workflows.intake import EarlierEscalation, HoldReason, IntakeEvaluation
 from app.workflows.progress import FactRecord
 
 
@@ -276,3 +277,40 @@ def evaluations(scope: CompanyScope, instance_id: UUID) -> dict[UUID, Evaluation
         )
         for row in rows
     }
+
+
+def first_escalations(
+    scope: CompanyScope, instance_ids: Sequence[UUID]
+) -> dict[UUID, EarlierEscalation]:
+    """Per instance, the first stored evaluation that held it for specialist review.
+
+    Escalations are never released by changed answers (app.workflows.intake),
+    so every later evaluation and read keeps the Case held from this one on.
+    """
+    if not instance_ids:
+        return {}
+    rows = scope.session.execute(
+        select(
+            WorkflowEvaluation.instance_id,
+            WorkflowEvaluation.hold_reason,
+            WorkflowEvaluation.evaluated_at,
+        )
+        .join(
+            WorkflowSubmission,
+            (WorkflowSubmission.company_id == WorkflowEvaluation.company_id)
+            & (WorkflowSubmission.id == WorkflowEvaluation.submission_id),
+        )
+        .where(
+            WorkflowEvaluation.company_id == scope.company_id,
+            WorkflowSubmission.company_id == scope.company_id,
+            WorkflowEvaluation.instance_id.in_(instance_ids),
+            WorkflowEvaluation.hold == "specialist_review",
+        )
+        .order_by(WorkflowSubmission.revision)
+    ).all()
+    first: dict[UUID, EarlierEscalation] = {}
+    for instance_id, reason, evaluated_at in rows:
+        if instance_id not in first:
+            # The CHECK constraint ties a specialist_review hold to a reason code.
+            first[instance_id] = EarlierEscalation(cast(HoldReason, reason), evaluated_at)
+    return first

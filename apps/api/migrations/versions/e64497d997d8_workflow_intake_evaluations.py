@@ -7,9 +7,10 @@ transaction as the submission:
 - the Case status, the hold (``jurisdiction`` = paused until confirmed,
   ``specialist_review`` = escalated) and why (``hold_reason``), the resolved
   Case jurisdiction and the safety-screening state;
-- ``results``: every condition's result in rule-set order, with the condition
-  ID, outcome, action, reason code and the structured answers it read
-  (enumerated values only; free text is never copied here);
+- ``results``: every rule's result in rule-set order, with the rule key,
+  outcome, action, reason code and the structured answers it read
+  (enumerated values only, and for sensitive questions only counts; free text
+  is never copied here);
 - the definition version and the rule-set version and digest used.
 
 Nothing else changes: the Case jurisdiction confirmation is a ``case_facts``
@@ -57,6 +58,7 @@ STATUSES = (
     "intake_in_progress",
     "awaiting_jurisdiction",
     "screening_not_cleared",
+    "screening_unavailable",
     "held_for_specialist_review",
     "intake_recorded",
 )
@@ -66,12 +68,21 @@ HOLD_REASONS = (
     "jurisdiction_different",
     "jurisdiction_unsupported",
     "screening_not_covered",
+    "earlier_escalation",
     "company_jurisdiction_unconfirmed",
     "case_jurisdiction_not_sure",
     "case_jurisdiction_outdated",
 )
 JURISDICTIONS = ("uae_federal", "difc")
-SCREENING = ("not_applicable", "not_started", "incomplete", "not_cleared", "cleared", "positive")
+SCREENING = (
+    "not_applicable",
+    "disabled",
+    "not_started",
+    "incomplete",
+    "not_cleared",
+    "cleared",
+    "positive",
+)
 # A storage backstop for the trace (codes and enumerated answers only).
 MAX_RESULTS_BYTES = 65536
 

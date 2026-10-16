@@ -8,11 +8,11 @@ turns are the persisted submissions. Facts are stored independently
 (``case_facts``); this module only presents them, so a future presentation (or
 an M4 assistant) can change without touching the data.
 
-Wording rules: no condition IDs or other internal labels (Implementation
-Rules §5); no recommendation of any disciplinary action; no promise that a
-HeroOS expert will review or contact anyone (Implementation Rules §18: no
-staffed expert-review workflow exists); a high-risk answer is never presented
-as a finding about the employee.
+Wording rules: no rule keys or other internal labels; no recommendation of
+any disciplinary action; no promise that a HeroOS expert will review or contact
+anyone (no staffed expert-review workflow exists); a high-risk answer is never
+presented as a finding about the employee; changed answers are never presented
+as releasing a hold.
 """
 
 from collections.abc import Mapping, Sequence
@@ -106,7 +106,7 @@ class StatusNotice:
 
 @dataclass(frozen=True, slots=True)
 class CautionNotice:
-    """A ``warn`` condition that fired: information for the employer, not a block."""
+    """A ``warn`` rule that fired: information for the employer, not a block."""
 
     id: str
     title: str
@@ -122,7 +122,7 @@ class HoldNotice:
 
     id: str
     action: Literal["block", "escalate"]
-    # Stable code of why (app.workflows.intake.HoldReason); never a condition ID.
+    # Stable code of why (app.workflows.intake.HoldReason); never a rule key.
     reason: str
     title: str
     body: str
@@ -183,6 +183,14 @@ def display_answer(question: Question, value: object) -> str | None:
 
 
 # --- notices ---------------------------------------------------------------------------
+
+# Why a Case was first held for specialist review, in plain words.
+ORIGINS: Final[Mapping[str, str]] = {
+    "high_risk_factors": "a screening answer needed specialist advice",
+    "jurisdiction_different": "a different jurisdiction applied to this employee",
+    "jurisdiction_unsupported": "the company's jurisdiction wasn't supported",
+    "screening_not_covered": "no safety screening was available for the case's jurisdiction",
+}
 
 NO_EXPERT_SERVICE: Final = (
     "HeroOS doesn't offer expert review in the app yet and hasn't contacted anyone about this case."
@@ -271,6 +279,14 @@ def hold_notice(
                 "check this case for situations that need specialist advice. "
                 f"{escalated} {NO_EXPERT_SERVICE} {ANSWERS_KEPT}"
             )
+        case "earlier_escalation":
+            title = "On hold: specialist review needed"
+            body = (
+                "This case was held for specialist review because of an earlier answer. Changed "
+                "answers are saved, but they don't release the hold, and HeroOS can't release it "
+                f"in the app yet. {escalated} {NO_EXPERT_SERVICE} {ANSWERS_KEPT}"
+            )
+            items = (f"First held because: {ORIGINS[hold.origin or 'high_risk_factors']}",)
         case "high_risk_factors":
             title = "On hold: specialist review needed"
             body = (
@@ -312,13 +328,8 @@ _CAUTIONS: Final[Mapping[str, tuple[str, str]]] = {
 
 
 def caution_notice(caution: Caution) -> CautionNotice:
-    title, body = _CAUTIONS[caution.notice]
-    return CautionNotice(
-        f"caution:{caution.notice}",
-        title,
-        body,
-        caution.citation_status == "needs_legal_review",
-    )
+    title, body = _CAUTIONS[caution.rule]
+    return CautionNotice(f"caution:{caution.rule}", title, body, caution.provisional)
 
 
 def caution_notices() -> Mapping[str, tuple[str, str]]:
@@ -423,6 +434,16 @@ def compose(
             )
         )
 
+    if evaluation.hold is None and evaluation.screening == "disabled":
+        messages.append(
+            StatusNotice(
+                "screening",
+                "caution",
+                "Safety screening isn't enabled here",
+                "This environment doesn't collect the safety screening, so the intake can't be "
+                f"completed here. {ANSWERS_KEPT}",
+            )
+        )
     if evaluation.hold is None and evaluation.screening == "not_cleared":
         messages.append(
             StatusNotice(

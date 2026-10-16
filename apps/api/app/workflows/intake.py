@@ -1,41 +1,52 @@
-"""The Disciplinary intake evaluation (M2-02): routing, conditions, screening and holds.
+"""The Disciplinary intake evaluation (M2-02): routing, rules, screening and holds.
 
-Pure and deterministic: the same answers and the same Company jurisdiction
-readiness always give the same evaluation. Nothing here reads free text,
-infers a fact or decides anything for the employer.
+Pure and deterministic: the same answers, Company jurisdiction readiness,
+earlier escalation and environment setting always give the same evaluation.
+Nothing here reads free text, infers a fact or decides anything for the
+employer.
 
-Order of work (Conditions Library "Structural Findings" R11, and the routing
-rule's own text: it runs ahead of every other condition):
+Order of work:
 
-1. ``JURISDICTION-ROUTING-001`` resolves the Case jurisdiction from the
-   Company's operator-confirmed jurisdiction and the employer's confirmation
-   for this Case. Missing, unclear, conflicting or unsupported -> no
-   jurisdiction-specific condition runs (Implementation Rules §7, §17).
-2. Only active conditions tagged with the resolved jurisdiction (or SHARED)
-   are evaluated, in order. A UAE-FED rule never runs for a DIFC Case
-   (Implementation Rules §4), and a jurisdiction without approved screening is
-   held for specialist review rather than screened by another regime's rule.
+1. The routing rule resolves the Case jurisdiction from the Company's
+   operator-confirmed jurisdiction and the employer's confirmation for this
+   Case. Missing, unclear, conflicting or unsupported -> no
+   jurisdiction-specific rule runs.
+2. Only enforced rules that apply in the resolved jurisdiction are evaluated,
+   in order. A UAE Federal rule never runs for a DIFC Case, and a jurisdiction
+   without screening is held for specialist review rather than screened with
+   another jurisdiction's rule.
 3. The result: the screening state, at most one hold (``jurisdiction`` =
    paused until confirmed; ``specialist_review`` = escalated), the cautions to
    show, the missing and uncertain answers, and the Case status.
 
 A high-risk answer holds the Case; it is never evidence about the employee. A
-"Not sure" or a missing answer never clears the screening. Holds are internal:
-no expert ticket is created and none is promised (Implementation Rules §18:
-no staffed expert-review workflow exists yet).
+"Not sure" or a missing answer never clears the screening.
+
+**An escalation is never released by changed answers.** Once a save has held
+the Case for specialist review, every later evaluation keeps it held (reason
+``earlier_escalation``) even if the current answers no longer trigger it.
+There is no release in the product yet: who may release a hold, and how, is
+undecided (no staffed expert-review workflow exists). Holds are internal: no
+expert ticket is created and none is promised.
+
+The safety screening asks health-related questions. It is offered only where
+the environment enables it for synthetic demo data (``screening_enabled``);
+sensitive answers are never copied into the evaluation trace (counts only).
 """
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Final, Literal
 
 from app.companies.jurisdiction import JurisdictionAssessment, JurisdictionReadiness
 from app.db.models.company_blueprint import JURISDICTION_DIFC, JURISDICTION_UAE_FEDERAL
 from app.workflows.conditions import (
-    JURISDICTION_TAGS,
+    HIGH_RISK,
+    JURISDICTIONS,
     ROUTING,
     RULESETS,
-    Condition,
+    Rule,
     RuleSet,
     Tri,
     evaluate,
@@ -70,7 +81,7 @@ JurisdictionStatus = Literal[
 ]
 Outcome = Literal["fired", "not_fired", "unknown", "not_applicable"]
 Screening = Literal[
-    "not_applicable", "not_started", "incomplete", "not_cleared", "cleared", "positive"
+    "not_applicable", "disabled", "not_started", "incomplete", "not_cleared", "cleared", "positive"
 ]
 HoldKind = Literal["jurisdiction", "specialist_review"]
 HoldReason = Literal[
@@ -79,6 +90,7 @@ HoldReason = Literal[
     "jurisdiction_different",
     "jurisdiction_unsupported",
     "screening_not_covered",
+    "earlier_escalation",
     # jurisdiction (block: paused until confirmed)
     "company_jurisdiction_unconfirmed",
     "case_jurisdiction_not_sure",
@@ -89,6 +101,7 @@ Status = Literal[
     "intake_in_progress",
     "awaiting_jurisdiction",
     "screening_not_cleared",
+    "screening_unavailable",
     "held_for_specialist_review",
     "intake_recorded",
 ]
@@ -98,6 +111,7 @@ STATUS_LABELS: Final[Mapping[Status, str]] = {
     "intake_in_progress": "Intake in progress",
     "awaiting_jurisdiction": "Awaiting jurisdiction confirmation",
     "screening_not_cleared": "Screening not cleared",
+    "screening_unavailable": "Screening not enabled here",
     "held_for_specialist_review": "On hold: specialist review needed",
     "intake_recorded": "Intake recorded",
 }
@@ -119,17 +133,26 @@ class CaseJurisdiction:
 
 
 @dataclass(frozen=True, slots=True)
-class ConditionResult:
-    condition_id: str
+class RuleResult:
+    rule: str
     outcome: Outcome
-    # The action taken when the condition fired; otherwise None.
+    # The action taken when the rule fired; otherwise None.
     action: str | None
     # Why: a stable code (never free text).
     reason: str
-    # The structured inputs the condition read (enumerated answers only).
-    inputs: Mapping[str, str | None]
+    # The structured inputs the rule read: enumerated answers, or for sensitive
+    # questions only how many were Yes / No / Not sure / unanswered.
+    inputs: Mapping[str, object]
     # Fired cautions are shown unless a specialist-review hold is in force.
     shown: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EarlierEscalation:
+    """The first specialist-review hold an earlier save recorded for the Case."""
+
+    reason: HoldReason
+    since: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,24 +160,21 @@ class Hold:
     kind: HoldKind
     action: Literal["block", "escalate"]
     reason: HoldReason
-    # The condition that placed the hold, and its review status.
-    condition_id: str
-    citation_status: str
+    # The rule behind the hold (for earlier_escalation: behind the first one).
+    rule: str
+    # That rule's content is still under legal review.
+    provisional: bool
     # high_risk_factors: the screening questions answered "Yes".
     factors: tuple[str, ...] = ()
-
-    @property
-    def provisional(self) -> bool:
-        """Placed by a condition still under legal review (development content)."""
-        return self.citation_status == "needs_legal_review"
+    # earlier_escalation: why the Case was first held.
+    origin: HoldReason | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class Caution:
-    # The condition's notice key (stable, customer-safe; never the condition ID).
-    notice: str
-    condition_id: str
-    citation_status: str
+    # The rule's key (stable, customer-safe; also the notice key).
+    rule: str
+    provisional: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +183,7 @@ class IntakeEvaluation:
     ruleset_version: str
     ruleset_digest: str
     jurisdiction: CaseJurisdiction
-    results: tuple[ConditionResult, ...]
+    results: tuple[RuleResult, ...]
     screening: Screening
     hold: Hold | None
     cautions: tuple[Caution, ...]
@@ -174,6 +194,8 @@ class IntakeEvaluation:
     missing: tuple[str, ...]
     # Asked questions answered "Not sure".
     uncertain: tuple[str, ...]
+    # The first escalation, kept whatever the current answers say.
+    earlier_escalation: EarlierEscalation | None = None
 
     @property
     def status_label(self) -> str:
@@ -188,6 +210,15 @@ class IntakeEvaluation:
         return len(self.asked)
 
     @property
+    def currently_escalated(self) -> bool:
+        """The current answers or jurisdiction themselves call for specialist review."""
+        return (
+            self.hold is not None
+            and self.hold.kind == "specialist_review"
+            and self.hold.reason != "earlier_escalation"
+        )
+
+    @property
     def next_stage_open(self) -> bool:
         """The gate later stages (classification, options) must check, server-side."""
         return self.status == "intake_recorded"
@@ -200,7 +231,7 @@ def ruleset_for(definition: WorkflowDefinition) -> RuleSet:
 def resolve_jurisdiction(
     company: JurisdictionAssessment, answers: Mapping[str, object]
 ) -> CaseJurisdiction:
-    """``JURISDICTION-ROUTING-001``: the Case jurisdiction, or why there is none.
+    """The routing rule: the Case jurisdiction, or why there is none.
 
     The Company Blueprint holds one operator-confirmed jurisdiction and no
     list of operating jurisdictions, so every Case asks the employer to
@@ -214,7 +245,7 @@ def resolve_jurisdiction(
     if company.readiness is JurisdictionReadiness.UNSUPPORTED:
         return CaseJurisdiction("company_unsupported", None, None, answer)
     if company.readiness is not JurisdictionReadiness.SUPPORTED_CONFIRMED or (
-        company.jurisdiction not in JURISDICTION_TAGS
+        company.jurisdiction not in JURISDICTIONS
     ):
         return CaseJurisdiction("company_unconfirmed", None, None, answer)
     confirmed = company.jurisdiction
@@ -249,27 +280,48 @@ def is_asked(question: Question, answers: Mapping[str, object]) -> bool:
     )
 
 
+def _screening_rule(ruleset: RuleSet, case: CaseJurisdiction) -> Rule | None:
+    if case.jurisdiction is None:
+        return None
+    key = ruleset.screening_by_jurisdiction.get(case.jurisdiction)
+    return None if key is None else ruleset.rule(key)
+
+
 def step_available(
-    step: Step, ruleset: RuleSet, company: JurisdictionAssessment, case: CaseJurisdiction
+    step: Step,
+    ruleset: RuleSet,
+    company: JurisdictionAssessment,
+    case: CaseJurisdiction,
+    *,
+    screening_enabled: bool,
 ) -> bool:
     if step.gate is StepGate.COMPANY_JURISDICTION_CONFIRMED:
-        return company.guidance_allowed and company.jurisdiction in JURISDICTION_TAGS
+        return company.guidance_allowed and company.jurisdiction in JURISDICTIONS
     if step.gate is StepGate.SCREENING_COVERED:
-        return case.resolved and _screening_condition(ruleset, case) is not None
+        return screening_enabled and case.resolved and _screening_rule(ruleset, case) is not None
     return True
 
 
-def _screening_condition(ruleset: RuleSet, case: CaseJurisdiction) -> Condition | None:
-    if case.jurisdiction is None:
-        return None
-    condition_id = ruleset.screening_by_jurisdiction.get(JURISDICTION_TAGS[case.jurisdiction])
-    return None if condition_id is None else ruleset.condition(condition_id)
-
-
-def _inputs(condition: Condition, answers: Mapping[str, object]) -> dict[str, str | None]:
-    if condition.predicate is None:
+def _inputs(
+    rule: Rule, answers: Mapping[str, object], sensitive: frozenset[str]
+) -> dict[str, object]:
+    if rule.predicate is None:
         return {}
-    return {key: _text(answers.get(key)) for key in predicate_keys(condition.predicate)}
+    keys = predicate_keys(rule.predicate)
+    inputs: dict[str, object] = {
+        key: _text(answers.get(key)) for key in keys if key not in sensitive
+    }
+    hidden = [answers.get(key) for key in keys if key in sensitive]
+    if hidden:
+        # Which sensitive question had which answer is in case_facts already;
+        # the trace keeps only the counts.
+        inputs["sensitive_answers"] = {
+            "yes": sum(1 for v in hidden if v == "yes"),
+            "no": sum(1 for v in hidden if v == "no"),
+            "not_sure": sum(1 for v in hidden if v == NOT_SURE),
+            "unanswered": sum(1 for v in hidden if v is None),
+        }
+    return inputs
 
 
 def _text(value: object) -> str | None:
@@ -277,39 +329,44 @@ def _text(value: object) -> str | None:
 
 
 def _routing_result(
-    condition: Condition,
+    rule: Rule,
     ruleset: RuleSet,
     company: JurisdictionAssessment,
     case: CaseJurisdiction,
-) -> ConditionResult:
-    inputs = {
+) -> RuleResult:
+    inputs: dict[str, object] = {
         "company.readiness": str(company.readiness),
         "company.reason": str(company.reason),
         "company.jurisdiction": company.jurisdiction,
         CASE_JURISDICTION_KEY: case.case_answer,
     }
     if case.status == "awaiting_case_confirmation":
-        return ConditionResult(condition.id, "unknown", None, case.status, inputs, False)
+        return RuleResult(rule.key, "unknown", None, case.status, inputs, False)
     escalate = case.status in ("company_unsupported", "case_different")
     if not case.resolved:
         action = "escalate" if escalate else "block"
-        return ConditionResult(condition.id, "fired", action, case.status, inputs, True)
-    if _screening_condition(ruleset, case) is None:
-        # Resolved, but no approved screening covers this jurisdiction: fail
-        # safe to "escalate" (Structural Findings R25; Implementation Rules §17).
-        return ConditionResult(
-            condition.id, "fired", "escalate", "screening_not_covered", inputs, True
-        )
-    return ConditionResult(condition.id, "not_fired", None, "resolved", inputs, False)
+        return RuleResult(rule.key, "fired", action, case.status, inputs, True)
+    if _screening_rule(ruleset, case) is None:
+        # Resolved, but no screening covers this jurisdiction: fail safe.
+        return RuleResult(rule.key, "fired", "escalate", "screening_not_covered", inputs, True)
+    return RuleResult(rule.key, "not_fired", None, "resolved", inputs, False)
+
+
+def _screening_step(definition: WorkflowDefinition) -> Step:
+    return next(s for s in definition.steps if s.gate is StepGate.SCREENING_COVERED)
 
 
 def _screening_state(
-    definition: WorkflowDefinition, available: bool, answers: Mapping[str, object]
+    definition: WorkflowDefinition,
+    available: bool,
+    disabled: bool,
+    answers: Mapping[str, object],
 ) -> Screening:
+    if disabled:
+        return "disabled"
     if not available:
         return "not_applicable"
-    step = next(s for s in definition.steps if s.gate is StepGate.SCREENING_COVERED)
-    values = [answers.get(q.key) for q in step.questions]
+    values = [answers.get(q.key) for q in _screening_step(definition).questions]
     if "yes" in values:
         return "positive"
     if all(value is None for value in values):
@@ -332,66 +389,85 @@ def evaluate_intake(
     definition: WorkflowDefinition,
     answers: Mapping[str, object],
     company: JurisdictionAssessment,
+    *,
+    screening_enabled: bool,
+    earlier_escalation: EarlierEscalation | None = None,
 ) -> IntakeEvaluation:
-    """Evaluate the intake for the current answers and Company readiness."""
+    """Evaluate the intake for the current answers, readiness and history."""
     ruleset = ruleset_for(definition)
     case = resolve_jurisdiction(company, answers)
-    tag = JURISDICTION_TAGS.get(case.jurisdiction or "")
+    jurisdiction = case.jurisdiction
+    sensitive = frozenset(q.key for s in definition.steps for q in s.questions if q.sensitive)
 
-    results: list[ConditionResult] = []
-    for condition in sorted(ruleset.conditions, key=lambda c: c.order):
-        if condition.id == ROUTING:
-            results.append(_routing_result(condition, ruleset, company, case))
+    results: list[RuleResult] = []
+    for rule in sorted(ruleset.rules, key=lambda r: r.order):
+        if rule.key == ROUTING:
+            results.append(_routing_result(rule, ruleset, company, case))
             continue
-        inputs = _inputs(condition, answers)
-        if not condition.enforced:
+        inputs = _inputs(rule, answers, sensitive)
+        if not rule.enforced:
             results.append(
-                ConditionResult(condition.id, "not_applicable", None, "not_enforced", inputs, False)
+                RuleResult(rule.key, "not_applicable", None, "not_enforced", inputs, False)
             )
-        elif tag is None or not condition.applies_to(tag):
-            reason = "jurisdiction_unresolved" if tag is None else "other_jurisdiction"
+        elif jurisdiction is None or not rule.applies_to(jurisdiction):
+            reason = "jurisdiction_unresolved" if jurisdiction is None else "other_jurisdiction"
+            results.append(RuleResult(rule.key, "not_applicable", None, reason, inputs, False))
+        elif rule.key == HIGH_RISK and not screening_enabled:
             results.append(
-                ConditionResult(condition.id, "not_applicable", None, reason, inputs, False)
+                RuleResult(rule.key, "not_applicable", None, "screening_disabled", inputs, False)
             )
         else:
-            assert condition.predicate is not None
-            truth = evaluate(condition.predicate, answers)
+            assert rule.predicate is not None
+            truth = evaluate(rule.predicate, answers)
             if truth is Tri.TRUE:
-                results.append(
-                    ConditionResult(condition.id, "fired", condition.action, "met", inputs, True)
-                )
+                results.append(RuleResult(rule.key, "fired", rule.action, "met", inputs, True))
             elif truth is Tri.FALSE:
-                results.append(
-                    ConditionResult(condition.id, "not_fired", None, "not_met", inputs, False)
-                )
+                results.append(RuleResult(rule.key, "not_fired", None, "not_met", inputs, False))
             else:
                 results.append(
-                    ConditionResult(condition.id, "unknown", None, "unknown_inputs", inputs, False)
+                    RuleResult(rule.key, "unknown", None, "unknown_inputs", inputs, False)
                 )
 
     available = tuple(
-        step.key for step in definition.steps if step_available(step, ruleset, company, case)
+        step.key
+        for step in definition.steps
+        if step_available(step, ruleset, company, case, screening_enabled=screening_enabled)
     )
-    screening_available = any(
-        s.gate is StepGate.SCREENING_COVERED and s.key in available for s in definition.steps
+    covered = case.resolved and _screening_rule(ruleset, case) is not None
+    screening = _screening_state(
+        definition,
+        _screening_step(definition).key in available,
+        covered and not screening_enabled,
+        answers,
     )
-    screening = _screening_state(definition, screening_available, answers)
 
-    hold = _hold(definition, ruleset, case, results, answers)
+    hold = _hold(definition, ruleset, case, results, answers, screening_enabled)
+    if earlier_escalation is not None and (hold is None or hold.kind != "specialist_review"):
+        # Changed answers never release an escalation (no release exists yet).
+        origin = earlier_escalation.reason
+        first_rule = ruleset.rule(HIGH_RISK if origin == "high_risk_factors" else ROUTING)
+        hold = Hold(
+            "specialist_review",
+            "escalate",
+            "earlier_escalation",
+            first_rule.key,
+            first_rule.provisional,
+            origin=origin,
+        )
     if hold is not None and hold.kind == "specialist_review":
         # No further self-service guidance while escalated: cautions are
         # recorded, not shown.
         results = [
             r
             if r.outcome != "fired" or r.action != "warn"
-            else ConditionResult(r.condition_id, r.outcome, r.action, r.reason, r.inputs, False)
+            else RuleResult(r.rule, r.outcome, r.action, r.reason, r.inputs, False)
             for r in results
         ]
+    rules = {r.key: r for r in ruleset.rules}
     cautions = tuple(
-        Caution(c.notice, c.id, c.citation_status)
+        Caution(r.rule, rules[r.rule].provisional)
         for r in results
-        for c in ruleset.conditions
-        if c.id == r.condition_id and r.outcome == "fired" and r.action == "warn" and r.shown
+        if r.outcome == "fired" and r.action == "warn" and r.shown
     )
 
     asked = tuple(
@@ -419,6 +495,7 @@ def evaluate_intake(
         asked=asked,
         missing=missing,
         uncertain=uncertain,
+        earlier_escalation=earlier_escalation,
     )
 
 
@@ -426,36 +503,34 @@ def _hold(
     definition: WorkflowDefinition,
     ruleset: RuleSet,
     case: CaseJurisdiction,
-    results: list[ConditionResult],
+    results: list[RuleResult],
     answers: Mapping[str, object],
+    screening_enabled: bool,
 ) -> Hold | None:
-    by_id = {r.condition_id: r for r in results}
-    routing = by_id[ROUTING]
-    rule = ruleset.condition(ROUTING)
+    by_rule = {r.rule: r for r in results}
+    routing = by_rule[ROUTING]
+    rule = ruleset.rule(ROUTING)
     if routing.outcome == "fired":
         if routing.reason == "screening_not_covered":
             return Hold(
-                "specialist_review",
-                "escalate",
-                "screening_not_covered",
-                rule.id,
-                rule.citation_status,
+                "specialist_review", "escalate", "screening_not_covered", rule.key, rule.provisional
             )
         kind, reason = _ROUTING_HOLDS[case.status]
         action: Literal["block", "escalate"] = (
             "escalate" if kind == "specialist_review" else "block"
         )
-        return Hold(kind, action, reason, rule.id, rule.citation_status)
-    screening = _screening_condition(ruleset, case)
-    if screening is not None and by_id[screening.id].outcome == "fired":
-        step = next(s for s in definition.steps if s.gate is StepGate.SCREENING_COVERED)
-        factors = tuple(q.key for q in step.questions if answers.get(q.key) == "yes")
+        return Hold(kind, action, reason, rule.key, rule.provisional)
+    screening = _screening_rule(ruleset, case)
+    if screening_enabled and screening is not None and by_rule[screening.key].outcome == "fired":
+        factors = tuple(
+            q.key for q in _screening_step(definition).questions if answers.get(q.key) == "yes"
+        )
         return Hold(
             "specialist_review",
             "escalate",
             "high_risk_factors",
-            screening.id,
-            screening.citation_status,
+            screening.key,
+            screening.provisional,
             factors,
         )
     return None
@@ -474,10 +549,12 @@ def _status(
         return "case_created" if asked else "intake_in_progress"
     if missing:
         return "intake_in_progress"
+    if screening == "disabled":
+        return "screening_unavailable"
     if screening == "not_cleared":
         return "screening_not_cleared"
     if screening == "cleared":
         return "intake_recorded"
-    # Every asked question answered but no screening applies: only reachable if
-    # the rule set offers no screening, which always holds above. Fail safe.
+    # Every asked question answered but no screening ran: only reachable if the
+    # rule set offers no screening, which always holds above. Fail safe.
     return "intake_in_progress"

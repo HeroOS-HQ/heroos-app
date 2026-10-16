@@ -9,6 +9,7 @@ employee or a promise of expert review. The intake rules themselves are in
 test_intake.py.
 """
 
+import re
 import uuid
 from dataclasses import fields
 from datetime import UTC, date, datetime
@@ -36,7 +37,7 @@ from app.workflows.definition import (
     current_definition,
     definition_for,
 )
-from app.workflows.intake import evaluate_intake, question_options
+from app.workflows.intake import EarlierEscalation, evaluate_intake, question_options
 from app.workflows.progress import FactRecord, latest_answers
 
 TODAY = date(2026, 10, 15)
@@ -169,6 +170,9 @@ def test_the_case_jurisdiction_options_come_from_the_company_confirmation() -> N
 # --- wording --------------------------------------------------------------------------
 
 
+EARLIER = EarlierEscalation("high_risk_factors", datetime(2026, 10, 16, 9, 0, tzinfo=UTC))
+
+
 def _all_states() -> list[tuple[dict[str, object], JurisdictionAssessment]]:
     """Answers and readiness covering every hold, caution and screening state."""
     base: dict[str, object] = {**COMPLETE}
@@ -203,14 +207,21 @@ def _statements() -> list[str]:
         texts += [definition.title, definition.welcome_title, definition.welcome]
         texts += list(definition.not_available)
         texts += [step.intro for step in definition.steps]
+    variants = (
+        {"screening_enabled": True},
+        {"screening_enabled": False},
+        {"screening_enabled": True, "earlier_escalation": EARLIER},
+    )
     for answers, company in _all_states():
-        evaluation = evaluate_intake(DISCIPLINARY_V2, answers, company)
-        for message in conversation.compose(
-            DISCIPLINARY_V2, [], evaluation, company, viewer_user_id=VIEWER
-        ):
-            if isinstance(message, conversation.QuestionGroup | conversation.CautionNotice):
-                continue  # questions ask; cautions are checked separately
-            texts += [getattr(message, "title", ""), getattr(message, "body", "")]
+        for variant in variants:
+            evaluation = evaluate_intake(DISCIPLINARY_V2, answers, company, **variant)  # type: ignore[arg-type]
+            for message in conversation.compose(
+                DISCIPLINARY_V2, [], evaluation, company, viewer_user_id=VIEWER
+            ):
+                if isinstance(message, conversation.QuestionGroup | conversation.CautionNotice):
+                    continue  # questions ask; cautions are checked separately
+                texts += [getattr(message, "title", ""), getattr(message, "body", "")]
+                texts += list(getattr(message, "items", ()))
     return texts
 
 
@@ -251,10 +262,14 @@ def test_no_message_promises_an_expert_or_names_an_internal_rule() -> None:
     texts = _statements() + _cautions()
     for phrase in ("will contact", "will review", "we'll", "ticket", "HeroOS team", "call HeroOS"):
         assert [t for t in texts if phrase.lower() in t.lower()] == []
-    for condition in DISCIPLINARY_INTAKE.conditions:
-        assert [t for t in texts + _questions() if condition.id in t] == []
-    for label in ("SHARED", "GLOBAL", "UAE-FED", "needs_legal_review"):
-        assert [t for t in texts + _questions() if label in t] == []
+    # Nothing claims a hold was cleared, approved or released by anyone.
+    for phrase in ("cleared by", "approved by", "has been released", "hold lifted", "expert has"):
+        assert [t for t in texts if phrase in t.lower()] == []
+    for rule in DISCIPLINARY_INTAKE.rules:
+        assert [t for t in texts + _questions() if rule.key in t] == []
+    # No identifier-like tokens (reference codes) in anything a customer reads.
+    identifier = re.compile(r"\b[A-Z]{2,}(?:-[A-Z0-9]{2,})+\b")
+    assert [t for t in texts + _questions() if identifier.search(t)] == []
 
 
 def test_welcome_says_the_workflow_is_guided_not_ai() -> None:
@@ -432,7 +447,7 @@ def _compose(
     answers = latest_answers(
         FactRecord(s.revision, k, v) for s in submissions for k, v in s.facts.items()
     )
-    evaluation = evaluate_intake(DISCIPLINARY_V2, answers, company)
+    evaluation = evaluate_intake(DISCIPLINARY_V2, answers, company, screening_enabled=True)
     return conversation.compose(
         DISCIPLINARY_V2, submissions, evaluation, company, viewer_user_id=VIEWER
     )

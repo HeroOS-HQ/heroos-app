@@ -56,6 +56,8 @@ def create_app(config: Settings) -> FastAPI:
 
     # Founder self-registration is off unless explicitly enabled (activation step).
     application.state.self_registration_enabled = config.heroos_self_registration_enabled
+    # The Disciplinary safety screening: off unless enabled for synthetic demo data.
+    application.state.sensitive_screening = config.heroos_sensitive_screening
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)
     application.include_router(onboarding.router)

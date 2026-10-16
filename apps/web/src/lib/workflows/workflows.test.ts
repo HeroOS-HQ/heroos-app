@@ -48,6 +48,23 @@ describe("parseWorkflowView", () => {
     expect(parseWorkflowView(apiView({ company: "uae_federal" }))!.jurisdiction.guidanceAllowed).toBe(true);
   });
 
+  it("maps an earlier escalation, the screening setting and a kept hold", () => {
+    const parsed = parseWorkflowView(
+      apiView({
+        company: "uae_federal",
+        hold: { ...HIGH_RISK_HOLD, reason: "earlier_escalation" },
+        escalation: { since: "2026-10-16T09:00:00Z", reason: "high_risk_factors", current: false },
+        history: [{ id: "k", kind: "hold_kept", at: "2026-10-16T09:05:00Z", by_viewer: true, title: "Hold kept after answers changed", detail: null }],
+        screening: "disabled",
+      }),
+    )!;
+    expect(parsed.intake.escalation).toEqual({ since: "2026-10-16T09:00:00Z", reason: "high_risk_factors", current: false });
+    expect(parsed.intake.hold?.reason).toBe("earlier_escalation");
+    expect(parsed.history.map((h) => h.kind)).toEqual(["hold_kept"]);
+    expect(parsed.sensitiveScreening).toBe("disabled");
+    expect(parsed.steps[3].sensitive).toBe(true);
+  });
+
   it("maps holds and cautions, and never opens the next stage while held", () => {
     const held = apiView({ company: "uae_federal", hold: HIGH_RISK_HOLD, cautions: [POLICY_CAUTION] });
     (held.intake as Record<string, unknown>).next_stage_open = true; // tampered
@@ -98,6 +115,9 @@ describe("parseWorkflowView", () => {
     ["an unknown history kind", (v: Record<string, unknown>) => ((v.history as Record<string, unknown>[])[0].kind = "ticket_raised")],
     ["an odd asked key", (v: Record<string, unknown>) => (v.asked = ["Bad Key"])],
     ["a non-string answer label", (v: Record<string, unknown>) => (v.answer_labels = { "incident.history": 1 })],
+    ["an unknown screening setting", (v: Record<string, unknown>) => (v.sensitive_screening = "production")],
+    ["a malformed escalation", (v: Record<string, unknown>) => ((v.intake as Record<string, unknown>).escalation = { since: 1 })],
+    ["a step without sensitivity", (v: Record<string, unknown>) => delete (v.steps as Record<string, unknown>[])[3].sensitive],
   ])("refuses %s", (_, mutate) => {
     const body = apiView();
     mutate(body);

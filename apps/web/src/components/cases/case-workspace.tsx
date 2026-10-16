@@ -138,6 +138,11 @@ export function CaseWorkspace({
               Progress and details
             </a>
           </p>
+          {view.sensitiveScreening === "synthetic_demo" ? (
+            <p className="text-sm font-semibold text-hero-navy">
+              Demo environment: use made-up examples only, never real employee information.
+            </p>
+          ) : null}
         </header>
 
         <section aria-labelledby="conversation-heading" className="mt-6">
@@ -205,6 +210,7 @@ export function CaseWorkspace({
               companyId={companyId}
               fetcher={fetcher}
               key={step.key}
+              demoOnly={view.sensitiveScreening === "synthetic_demo"}
               next={nextStep ? { title: nextStep.title, go: () => choose(nextStep.key) } : null}
               onSaved={setView}
               revision={view.workflow.revision}

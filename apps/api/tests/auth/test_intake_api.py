@@ -15,6 +15,7 @@ intake, and that a hold creates nothing but its own trace (no expert ticket).
 
 import logging
 import uuid
+from collections.abc import Generator
 from datetime import UTC, datetime
 from typing import Any
 
@@ -23,6 +24,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, inspect, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.auth.dependencies import get_authentication_provider
+from app.auth.providers.cognito import CognitoAccessTokenProvider
+from app.core.config import Settings
 from app.db.base import Base
 from app.db.models import (
     Case,
@@ -33,15 +37,17 @@ from app.db.models import (
     WorkflowInstance,
     WorkflowSubmission,
 )
+from app.db.session import get_db
+from app.main import create_app
 from app.workflows.definition import SAFETY_SCREENING
 from tests.auth.conftest import SeedData
+from tests.auth.test_company_api import staging_settings
 from tests.auth.test_workflow_api import (  # noqa: F401  (pytest fixtures)
     CONFLICT,
     FORBIDDEN,
     NARRATIVE,
     admin_alice,
     alice,
-    client,
     create,
     sessions,
 )
@@ -61,6 +67,41 @@ CONTEXT = {
 }
 CLEAR = {q.key: "no" for q in SAFETY_SCREENING.questions}
 FEDERAL_LABEL = "UAE Federal (MOHRE)"
+
+
+def app_client(
+    sessions: sessionmaker[Session],  # noqa: F811
+    provider: CognitoAccessTokenProvider,
+    screening: str,
+) -> TestClient:
+    settings = staging_settings().model_copy(update={"heroos_sensitive_screening": screening})
+    app = create_app(settings)
+
+    def _db() -> Generator[Session, None, None]:
+        with sessions() as db:
+            yield db
+
+    app.dependency_overrides[get_authentication_provider] = lambda: provider
+    app.dependency_overrides[get_db] = _db
+    return TestClient(app)
+
+
+@pytest.fixture
+def client(
+    sessions: sessionmaker[Session],  # noqa: F811
+    cognito_provider: CognitoAccessTokenProvider,
+) -> TestClient:
+    """The application of an environment that holds synthetic demo data only."""
+    return app_client(sessions, cognito_provider, "synthetic_demo")
+
+
+@pytest.fixture
+def disabled_client(
+    sessions: sessionmaker[Session],  # noqa: F811
+    cognito_provider: CognitoAccessTokenProvider,
+) -> TestClient:
+    """The default: the sensitive screening is not enabled."""
+    return app_client(sessions, cognito_provider, "disabled")
 
 
 def confirm_jurisdiction(
@@ -220,7 +261,9 @@ def test_a_uae_federal_intake_is_recorded_after_a_clear_screening(
         "cleared",
     )
     assert (last.definition_version, last.ruleset_version) == (2, "disciplinary-intake.1")
-    assert [r["condition"] for r in last.results][0] == "JURISDICTION-ROUTING-001"
+    assert [r["rule"] for r in last.results][0] == "case_jurisdiction"
+    assert body["sensitive_screening"] == "synthetic_demo"
+    assert body["intake"]["escalation"] is None
     assert [h["kind"] for h in body["history"]][-3:] == [
         "answers_saved",
         "screening",
@@ -284,9 +327,12 @@ def test_a_high_risk_answer_holds_the_case_and_creates_no_ticket(
     # Recorded: why the Case was held, with the inputs that caused it.
     last = stored_evaluations(sessions)[-1]
     assert (last.hold, last.hold_reason) == ("specialist_review", "high_risk_factors")
-    stop = next(r for r in last.results if r["condition"] == "UAE-STOP-CALL-FIRST")
+    stop = next(r for r in last.results if r["rule"] == "high_risk_screening")
     assert (stop["outcome"], stop["action"]) == ("fired", "escalate")
-    assert stop["inputs"]["screening.pregnancy_maternity"] == "yes"
+    # Which factor was Yes is in case_facts only; the trace keeps counts.
+    assert stop["inputs"] == {
+        "sensitive_answers": {"yes": 1, "no": 8, "not_sure": 0, "unanswered": 0}
+    }
     # Nothing else: no new table, no ticket, no message to anyone.
     assert set(inspect(sessions.kw["bind"]).get_table_names()) == tables_before
     assert not any("ticket" in t or "escalation" in t for t in tables_before)
@@ -294,7 +340,8 @@ def test_a_high_risk_answer_holds_the_case_and_creates_no_ticket(
     assert "Workflow case held" in logged
     assert "pregnan" not in logged.lower() and "high_risk" not in logged
 
-    # Answers stay correctable; the hold lifts and the history keeps both.
+    # Answers stay correctable, but a corrected answer doesn't release the
+    # hold: no release exists yet. The current screening is reported apart.
     corrected = put(
         client,
         admin_alice,
@@ -304,9 +351,15 @@ def test_a_high_risk_answer_holds_the_case_and_creates_no_ticket(
         {"screening.pregnancy_maternity": "no"},
         revision=4,
     ).json()
-    assert corrected["status"]["code"] == "intake_recorded"
+    assert corrected["status"]["code"] == "held_for_specialist_review"
+    assert corrected["intake"]["screening"] == "cleared"
+    assert corrected["intake"]["hold"]["reason"] == "earlier_escalation"
+    assert corrected["intake"]["escalation"]["reason"] == "high_risk_factors"
+    assert corrected["intake"]["escalation"]["current"] is False
+    assert corrected["intake"]["next_stage_open"] is False
     kinds = [h["kind"] for h in corrected["history"]]
-    assert kinds.index("hold_placed") < kinds.index("hold_lifted")
+    assert kinds.index("hold_placed") < kinds.index("hold_kept")
+    assert "hold_lifted" not in kinds
 
 
 def test_an_uncertain_screening_answer_never_clears_the_screening(
@@ -554,12 +607,12 @@ def test_a_difc_case_gets_no_uae_federal_guidance_and_is_held(
     )
     assert screening.status_code == 409
     last = stored_evaluations(sessions)[-1]
-    assert {r["condition"]: r["reason"] for r in last.results} == {
-        "JURISDICTION-ROUTING-001": "screening_not_covered",
-        "POLICY-ACK-CASE": "other_jurisdiction",
-        "UAE-ONE-PENALTY-SAME-INCIDENT": "other_jurisdiction",
-        "UAE-OFFDUTY-CONNECTION": "other_jurisdiction",
-        "UAE-STOP-CALL-FIRST": "other_jurisdiction",
+    assert {r["rule"]: r["reason"] for r in last.results} == {
+        "case_jurisdiction": "screening_not_covered",
+        "policy_awareness": "other_jurisdiction",
+        "same_incident_sanction": "other_jurisdiction",
+        "off_duty_connection": "other_jurisdiction",
+        "high_risk_screening": "other_jurisdiction",
     }
 
 
@@ -683,3 +736,186 @@ def test_members_cannot_answer_any_intake_step(
     )
     assert (denied.status_code, denied.json()) == FORBIDDEN
     assert count(sessions, WorkflowEvaluation) == 2
+
+
+# --- escalations are never released by changed answers ---------------------------------
+
+
+def _screen(
+    client: TestClient,  # noqa: F811
+    headers: dict[str, str],
+    company: uuid.UUID,
+    case_id: str,
+    answers: dict[str, object],
+    revision: int,
+) -> Any:
+    response = put(
+        client, headers, company, case_id, "safety_screening", answers, revision=revision
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_hold_transitions_never_release_an_escalation(
+    client: TestClient,  # noqa: F811
+    sessions: sessionmaker[Session],  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    case_id = fed_case(client, sessions, seed, admin_alice)
+    put(client, admin_alice, seed.company_a, case_id, "incident_context", CONTEXT, revision=2)
+    company = seed.company_a
+
+    # Not sure -> nothing held, screening not cleared.
+    uncertain = _screen(
+        client, admin_alice, company, case_id, {**CLEAR, "screening.sick_leave": "not_sure"}, 3
+    )
+    assert (uncertain["status"]["code"], uncertain["intake"]["hold"]) == (
+        "screening_not_cleared",
+        None,
+    )
+    # No -> Yes (two factors): held, both named.
+    held = _screen(
+        client,
+        admin_alice,
+        company,
+        case_id,
+        {"screening.sick_leave": "yes", "screening.senior_employee": "yes"},
+        4,
+    )
+    assert held["intake"]["hold"]["reason"] == "high_risk_factors"
+    assert held["intake"]["hold"]["items"] == ["Sick leave", "Senior role"]
+    assert held["intake"]["escalation"]["current"] is True
+    # One factor withdrawn: still currently escalated by the other.
+    one = _screen(client, admin_alice, company, case_id, {"screening.senior_employee": "no"}, 5)
+    assert (one["intake"]["hold"]["reason"], one["intake"]["hold"]["items"]) == (
+        "high_risk_factors",
+        ["Sick leave"],
+    )
+    # Yes -> Not sure: kept, current screening not cleared.
+    unsure = _screen(client, admin_alice, company, case_id, {"screening.sick_leave": "not_sure"}, 6)
+    assert unsure["intake"]["hold"]["reason"] == "earlier_escalation"
+    assert unsure["intake"]["screening"] == "not_cleared"
+    assert unsure["intake"]["hold"]["items"] == [
+        "First held because: a screening answer needed specialist advice"
+    ]
+    assert "don't release the hold" in unsure["intake"]["hold"]["body"]
+    # Not sure -> No: every factor No, still held.
+    cleared = _screen(client, admin_alice, company, case_id, {"screening.sick_leave": "no"}, 7)
+    assert cleared["intake"]["screening"] == "cleared"
+    assert cleared["status"]["code"] == "held_for_specialist_review"
+    assert cleared["intake"]["next_stage_open"] is False
+    # An outdated save (an older revision) is refused and changes nothing.
+    stale = put(
+        client,
+        admin_alice,
+        company,
+        case_id,
+        "safety_screening",
+        {"screening.sick_leave": "yes"},
+        revision=6,
+    )
+    assert (stale.status_code, stale.json()) == CONFLICT
+
+    # Reopened, and in the list: still held, since the first escalation.
+    reopened = view(client, admin_alice, company, case_id)
+    assert reopened["status"]["code"] == "held_for_specialist_review"
+    first = reopened["intake"]["escalation"]
+    assert (first["reason"], first["current"]) == ("high_risk_factors", False)
+    listed = client.get(
+        f"/companies/{company}/workflows/disciplinary/cases", headers=admin_alice
+    ).json()
+    assert listed[0]["status"]["code"] == "held_for_specialist_review"
+    # Every save's evaluation is kept: the history shows the hold and its keeping.
+    holds = [e.hold_reason for e in stored_evaluations(sessions)]
+    assert holds[-5:] == [
+        None,
+        "high_risk_factors",
+        "high_risk_factors",
+        "earlier_escalation",
+        "earlier_escalation",
+    ]
+    kinds = [h["kind"] for h in reopened["history"]]
+    assert kinds.count("hold_placed") == 1 and "hold_lifted" not in kinds
+    assert kinds.count("hold_kept") == 1
+
+
+def test_an_escalation_from_the_jurisdiction_outlasts_its_correction(
+    client: TestClient,  # noqa: F811
+    sessions: sessionmaker[Session],  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    confirm_jurisdiction(sessions, seed.company_a, "uae_federal")
+    case_id = create(client, admin_alice, seed.company_a).json()["id"]
+    answer = {"jurisdiction.case_confirmation": "different"}
+    put(client, admin_alice, seed.company_a, case_id, "jurisdiction", answer, revision=0)
+    corrected = put(
+        client,
+        admin_alice,
+        seed.company_a,
+        case_id,
+        "jurisdiction",
+        {"jurisdiction.case_confirmation": "uae_federal"},
+        revision=1,
+    ).json()
+    assert corrected["intake"]["case_jurisdiction"]["status"] == "resolved"
+    assert corrected["intake"]["hold"]["reason"] == "earlier_escalation"
+    assert corrected["intake"]["escalation"]["reason"] == "jurisdiction_different"
+
+
+# --- the screening needs the environment's permission ---------------------------------
+
+
+def test_a_default_environment_never_collects_the_screening(
+    disabled_client: TestClient,
+    sessions: sessionmaker[Session],  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    case_id = fed_case(disabled_client, sessions, seed, admin_alice)
+    put(
+        disabled_client,
+        admin_alice,
+        seed.company_a,
+        case_id,
+        "incident_context",
+        CONTEXT,
+        revision=2,
+    )
+
+    refused = put(
+        disabled_client, admin_alice, seed.company_a, case_id, "safety_screening", CLEAR, revision=3
+    )
+
+    assert (refused.status_code, refused.json()) == CONFLICT
+    with sessions() as db:
+        stored = db.scalar(
+            select(func.count()).select_from(CaseFact).where(CaseFact.fact_key.like("screening.%"))
+        )
+    assert stored == 0
+    body = view(disabled_client, admin_alice, seed.company_a, case_id)
+    assert body["sensitive_screening"] == "disabled"
+    step = next(s for s in body["steps"] if s["key"] == "safety_screening")
+    assert (step["available"], step["unavailable_reason"]) == (
+        False,
+        "The safety screening isn't enabled in this environment.",
+    )
+    assert body["intake"]["screening"] == "disabled"
+    assert body["status"]["code"] == "screening_unavailable"
+    assert body["missing"] == []
+    assert body["intake"]["next_stage_open"] is False
+
+
+def test_production_refuses_to_enable_the_screening() -> None:
+    with pytest.raises(ValueError, match="HEROOS_SENSITIVE_SCREENING must be disabled"):
+        Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            heroos_env="production",
+            database_url="postgresql+psycopg://heroos_app@db.test.invalid/heroos",
+            heroos_auth_provider="cognito",
+            heroos_cognito_issuer="https://cognito-idp.me-central-1.amazonaws.com/pool",
+            heroos_cognito_app_client_id="client",
+            heroos_sensitive_screening="synthetic_demo",
+        )
+    assert staging_settings().heroos_sensitive_screening == "disabled"

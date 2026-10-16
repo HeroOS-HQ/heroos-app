@@ -7,6 +7,7 @@ import {
   ALL_CLEAR,
   apiCaseSummary,
   CASE_ID,
+  EARLIER_HOLD,
   HIGH_RISK_HOLD,
   NARRATIVE,
   OTHER_CASE_ID,
@@ -220,6 +221,43 @@ describe("CaseWorkspace", () => {
     const [url] = fetcher.mock.calls[0] as [string];
     expect(url).toBe(`/bff/companies/${COMPANY_ID}/cases/${CASE_ID}/steps/safety_screening/answers`);
     expect(bodyOf(fetcher).answers).toEqual({ ...ALL_CLEAR, "screening.sick_leave": "not_sure" });
+  });
+
+  it("keeps an earlier escalation visible apart from the current screening", () => {
+    const answers = { "jurisdiction.case_confirmation": "uae_federal", ...ALL_CLEAR };
+    renderWorkspace(
+      view({
+        company: "uae_federal",
+        answers,
+        hold: EARLIER_HOLD,
+        escalation: { since: "2026-10-16T09:00:00Z", reason: "high_risk_factors", current: false },
+      }),
+    );
+    const details = screen.getByRole("complementary", { name: "Case details" });
+    const hold = within(details).getByRole("region", { name: "Hold" });
+    expect(within(hold).getByText("First held because: a screening answer needed specialist advice")).toBeInTheDocument();
+    expect(within(hold).getByText("16 Oct 2026, 09:00 UTC")).toBeInTheDocument();
+    expect(within(hold).getByText("Current screening")).toBeInTheDocument();
+    expect(within(hold).getByText(/don't release the hold/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/cleared by|approved by|hold lifted/i);
+  });
+
+  it("asks for made-up examples only on the sensitive screening in a demo environment", () => {
+    const confirmed = { company: "uae_federal" as const, answers: { "jurisdiction.case_confirmation": "uae_federal" } };
+    renderWorkspace(view(confirmed));
+    expect(screen.getByText(/Demo environment: use made-up examples only/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Safety screening/ }));
+    expect(screen.getByText("Demo environment: made-up examples only")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Incident context/ }));
+    expect(screen.queryByText("Demo environment: made-up examples only")).toBeNull();
+  });
+
+  it("explains that the screening isn't enabled where it is disabled", () => {
+    renderWorkspace(view({ company: "uae_federal", answers: { "jurisdiction.case_confirmation": "uae_federal" }, screening: "disabled" }));
+    expect(screen.queryByText(/Demo environment/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Safety screening/ }));
+    expect(screen.getByText("The safety screening isn't enabled in this environment.")).toBeInTheDocument();
+    expect(screen.queryAllByRole("radio")).toHaveLength(0);
   });
 
   it("shows a hold and cautions from the API without promising an expert", () => {

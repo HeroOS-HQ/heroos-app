@@ -1,30 +1,24 @@
-"""Deterministic intake conditions (M2-02): an ordered, typed subset of the Conditions Library.
+"""Deterministic intake rules (M2-02): a small, ordered, typed rule set.
 
-The HeroOS Conditions Library (JJ's workbook, confidential, not in this
-repository) holds per-case triggers, jurisdiction tags and actions; the
-Implementation Rules say how the engine routes and isolates them. This module
-encodes only the conditions the Disciplinary intake needs, each with:
+The engine here is generic: rules are data, evaluated by ``evaluate`` with
+explicit three-valued logic. An unanswered question and "Not sure" are
+UNKNOWN, never "No"; nothing is ever executed from text.
 
-- its **source condition ID**, jurisdiction tag, type and action exactly as the
-  workbook states them (``source_action`` keeps the workbook's own word where
-  it is not one of warn / block / escalate);
-- its ``citation_status`` and ``enforcement_status``, unchanged: a
-  ``needs_legal_review`` condition stays provisional development content, it is
-  never presented as approved legal advice;
-- the workbook row (and the Implementation Rules it implements) and the
-  SHA-256 of the exact source files it was mapped from;
-- a **typed predicate** over structured answers. Triggers are never text that
-  gets executed: they are small dataclasses evaluated by ``evaluate`` below,
-  with explicit three-valued logic. An unanswered question and "Not sure" are
-  UNKNOWN, never "No".
+Each rule has:
 
-Customer-facing wording is not here: conditions carry a ``notice`` key and the
-conversation module writes neutral text for it. Condition IDs, tags and review
-statuses are implementation metadata (Implementation Rules §5) and are never
-shown to customers.
+- a neutral ``key`` (also the key of its customer-facing notice);
+- the jurisdictions it applies in (an empty tuple: every Case, run first);
+- its action (warn, block or escalate) and, for the routing rule, the second
+  action it can take;
+- whether its content is still under legal review (``provisional``: shown as
+  provisional, never as approved advice) and whether it is enforced;
+- the step whose answers it reads and its typed predicate.
 
-The reviewable mapping of every rule to its source and tests is
-docs/architecture/disciplinary-intake.md.
+The rule content is development content from HeroOS's private content library.
+Which library entries, versions and review statuses each rule corresponds to is
+kept privately with the M2-02 records, not in this public repository; the
+rule-set ``version`` and ``digest`` (stored with every evaluation) identify
+exactly which rules ran.
 """
 
 import hashlib
@@ -37,18 +31,10 @@ from typing import Final, Literal
 from app.db.models.company_blueprint import JURISDICTION_DIFC, JURISDICTION_UAE_FEDERAL
 from app.workflows.definition import NOT_SURE, SAFETY_SCREENING
 
-JurisdictionTag = Literal["GLOBAL", "SHARED", "UAE-FED", "DIFC"]
-ConditionType = Literal["precondition", "step_caution", "blocking"]
 Action = Literal["warn", "block", "escalate"]
-CitationStatus = Literal["confirmed", "needs_legal_review"]
-EnforcementStatus = Literal["active", "not_enforced"]
 
-# The Case jurisdiction (company_blueprints.employment_jurisdiction codes) ->
-# the workbook's jurisdiction tag. Anything else has no tag: unsupported.
-JURISDICTION_TAGS: Final[Mapping[str, JurisdictionTag]] = {
-    JURISDICTION_UAE_FEDERAL: "UAE-FED",
-    JURISDICTION_DIFC: "DIFC",
-}
+# The jurisdictions the rule set knows (company_blueprints.employment_jurisdiction codes).
+JURISDICTIONS: Final = (JURISDICTION_UAE_FEDERAL, JURISDICTION_DIFC)
 
 
 class Tri(StrEnum):
@@ -64,7 +50,7 @@ class AnswerIn:
     """True if the answer to ``key`` is one of ``values``.
 
     Unanswered is UNKNOWN. So is any answer in ``unknown`` ("Not sure" by
-    default); a condition whose source trigger reads "not stated" sets
+    default); a rule that triggers when something is "not stated" sets
     ``unknown=()`` and lists "Not sure" among its ``values`` instead.
     """
 
@@ -125,218 +111,123 @@ def _predicate_data(predicate: Predicate) -> dict[str, object]:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceDocument:
-    file: str
-    sha256: str
-    version: str
-
-
-@dataclass(frozen=True, slots=True)
-class SourceRef:
-    """Where in a source document a condition comes from."""
-
-    document: Literal["conditions_library", "implementation_rules"]
-    # "Conditions Library!R16", "Structural Findings!R25", "Rule 7", ...
-    location: str
-
-
-@dataclass(frozen=True, slots=True)
-class Condition:
-    id: str
+class Rule:
+    key: str
     # Evaluation order within the rule set.
     order: int
-    jurisdiction: JurisdictionTag
-    type: ConditionType
+    # Jurisdictions the rule applies in; empty: every Case, before anything else.
+    applies_in: tuple[str, ...]
     action: Action
-    # A second action the condition can take (the routing rule: "ask the
-    # customer to confirm, or escalate").
+    # A second action the rule can take (routing: confirm, or escalate).
     alternate_action: Action | None
-    # The workbook's action cell as written.
-    source_action: str
-    citation_status: CitationStatus
-    enforcement_status: EnforcementStatus
-    # The step whose answers the condition reads; None for the routing rule.
+    # Content still under legal review: shown as provisional, never as approved.
+    provisional: bool
+    # A rule can be kept in the set without being applied.
+    enforced: bool
+    # The step whose answers the rule reads; None for the routing rule.
     step: str | None
-    # None only for the routing rule, which reads the Company Blueprint
+    # None only for the routing rule, which reads the Company's jurisdiction
     # readiness and the Case confirmation (app.workflows.intake).
     predicate: Predicate | None
-    sources: tuple[SourceRef, ...]
-    # Key of the customer-facing notice (app.workflows.conversation).
-    notice: str
 
-    def applies_to(self, jurisdiction: JurisdictionTag) -> bool:
-        """Implementation Rules §4 and §7: only the Case's own tag, plus SHARED and GLOBAL."""
-        return self.jurisdiction in ("GLOBAL", "SHARED", jurisdiction)
-
-    @property
-    def enforced(self) -> bool:
-        return self.enforcement_status == "active"
+    def applies_to(self, jurisdiction: str) -> bool:
+        return not self.applies_in or jurisdiction in self.applies_in
 
 
 @dataclass(frozen=True, slots=True)
 class RuleSet:
     version: str
     workflow_key: str
-    sources: Mapping[str, SourceDocument]
-    conditions: tuple[Condition, ...]
-    # Jurisdiction tag -> the condition that screens a Case of that
-    # jurisdiction for high-risk factors. A tag without an entry has no
-    # approved screening: such a Case is held, never screened by another
-    # jurisdiction's rule.
-    screening_by_jurisdiction: Mapping[JurisdictionTag, str]
+    rules: tuple[Rule, ...]
+    # Jurisdiction -> the rule that screens a Case of that jurisdiction for
+    # high-risk factors. A jurisdiction without an entry has no screening:
+    # such a Case is held, never screened with another jurisdiction's rule.
+    screening_by_jurisdiction: Mapping[str, str]
 
-    def condition(self, condition_id: str) -> Condition:
-        return next(c for c in self.conditions if c.id == condition_id)
+    def rule(self, key: str) -> Rule:
+        return next(r for r in self.rules if r.key == key)
 
     def data(self) -> dict[str, object]:
         """The rule set as plain data (canonical: what ``digest`` hashes)."""
         return {
             "version": self.version,
             "workflow_key": self.workflow_key,
-            "sources": {
-                name: {"file": s.file, "sha256": s.sha256, "version": s.version}
-                for name, s in sorted(self.sources.items())
-            },
-            "conditions": [
+            "rules": [
                 {
-                    "id": c.id,
-                    "order": c.order,
-                    "jurisdiction": c.jurisdiction,
-                    "type": c.type,
-                    "action": c.action,
-                    "alternate_action": c.alternate_action,
-                    "source_action": c.source_action,
-                    "citation_status": c.citation_status,
-                    "enforcement_status": c.enforcement_status,
-                    "step": c.step,
-                    "predicate": None if c.predicate is None else _predicate_data(c.predicate),
-                    "sources": [
-                        {"document": s.document, "location": s.location} for s in c.sources
-                    ],
-                    "notice": c.notice,
+                    "key": r.key,
+                    "order": r.order,
+                    "applies_in": list(r.applies_in),
+                    "action": r.action,
+                    "alternate_action": r.alternate_action,
+                    "provisional": r.provisional,
+                    "enforced": r.enforced,
+                    "step": r.step,
+                    "predicate": None if r.predicate is None else _predicate_data(r.predicate),
                 }
-                for c in self.conditions
+                for r in self.rules
             ],
             "screening_by_jurisdiction": dict(sorted(self.screening_by_jurisdiction.items())),
         }
 
     @property
     def digest(self) -> str:
-        """SHA-256 of the canonical rule set: any change of rule or source changes it."""
+        """SHA-256 of the canonical rule set: any change of any rule changes it."""
         canonical = json.dumps(self.data(), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-# The exact files the conditions below were mapped from (read-only; not stored
-# in this repository).
-CONDITIONS_LIBRARY: Final = SourceDocument(
-    file="HeroOS_Conditions_Library-13.xlsx",
-    sha256="ee7cfe5afe0986b01febf6a7a8f225fa75596ec33d435aba2bad5f08fb0be57d",
-    version="workbook modified 2026-10-14T07:29:23Z",
-)
-IMPLEMENTATION_RULES: Final = SourceDocument(
-    file="HeroOS Aries Implementation Rules - 14-10.docx",
-    sha256="de03a865e830b9cf0b32e93699e036a16fa6c1bd21c90dd5c9625211273d26eb",
-    version="working draft, revision 6, modified 2026-10-14T06:30:00Z",
-)
-
-ROUTING: Final = "JURISDICTION-ROUTING-001"
-STOP_CALL_FIRST: Final = "UAE-STOP-CALL-FIRST"
-POLICY_ACK_CASE: Final = "POLICY-ACK-CASE"
-ONE_PENALTY: Final = "UAE-ONE-PENALTY-SAME-INCIDENT"
-OFFDUTY: Final = "UAE-OFFDUTY-CONNECTION"
-
-
-def _cl(row: int, sheet: str = "Conditions Library") -> SourceRef:
-    return SourceRef("conditions_library", f"{sheet}!R{row}")
-
-
-def _ir(rule: int) -> SourceRef:
-    return SourceRef("implementation_rules", f"Rule {rule}")
-
+ROUTING: Final = "case_jurisdiction"
+HIGH_RISK: Final = "high_risk_screening"
+FEDERAL: Final = (JURISDICTION_UAE_FEDERAL,)
 
 DISCIPLINARY_INTAKE: Final = RuleSet(
     version="disciplinary-intake.1",
     workflow_key="disciplinary",
-    sources={
-        "conditions_library": CONDITIONS_LIBRARY,
-        "implementation_rules": IMPLEMENTATION_RULES,
-    },
-    conditions=(
-        # Runs ahead of every other condition (its own trigger text). Unclear
-        # -> ask the customer to confirm (block); conflicting or unsupported ->
-        # escalate. The workbook's action cell says "blocking".
-        Condition(
-            id=ROUTING,
+    rules=(
+        # Runs ahead of every other rule. Unclear -> ask to confirm (block);
+        # conflicting or unsupported -> escalate.
+        Rule(
+            key=ROUTING,
             order=1,
-            jurisdiction="GLOBAL",
-            type="precondition",
+            applies_in=(),
             action="block",
             alternate_action="escalate",
-            source_action="blocking",
-            citation_status="confirmed",
-            enforcement_status="active",
+            provisional=False,
+            enforced=True,
             step=None,
             predicate=None,
-            sources=(
-                _cl(41),
-                _cl(11, "Blueprint Fields"),
-                _cl(23, "Structural Findings"),
-                _cl(25, "Structural Findings"),
-                _ir(1),
-                _ir(2),
-                _ir(3),
-                _ir(4),
-                _ir(5),
-                _ir(6),
-                _ir(7),
-                _ir(17),
-            ),
-            notice="jurisdiction",
         ),
-        # The rest in workbook row order.
-        Condition(
-            id=POLICY_ACK_CASE,
+        Rule(
+            key="policy_awareness",
             order=2,
-            jurisdiction="UAE-FED",
-            type="step_caution",
+            applies_in=FEDERAL,
             action="warn",
             alternate_action=None,
-            source_action="warn",
-            citation_status="needs_legal_review",
-            enforcement_status="active",
+            provisional=True,
+            enforced=True,
             step="incident_context",
             predicate=AnswerIn("context.policy_awareness", ("no",)),
-            sources=(_cl(5),),
-            notice="policy_awareness",
         ),
-        Condition(
-            id=ONE_PENALTY,
+        Rule(
+            key="same_incident_sanction",
             order=3,
-            jurisdiction="UAE-FED",
-            type="step_caution",
+            applies_in=FEDERAL,
             action="warn",
             alternate_action=None,
-            source_action="warn",
-            citation_status="confirmed",
-            enforcement_status="active",
+            provisional=False,
+            enforced=True,
             step="incident_context",
             predicate=AnswerIn("history.same_incident_sanction", ("yes",)),
-            sources=(_cl(14),),
-            notice="same_incident_sanction",
         ),
-        # "incident_location == outside work AND no stated connection to
-        # work": "Not sure" states no connection, so it counts with "No".
-        Condition(
-            id=OFFDUTY,
+        # Outside work and no connection to work stated: "Not sure" states none.
+        Rule(
+            key="off_duty_connection",
             order=4,
-            jurisdiction="UAE-FED",
-            type="step_caution",
+            applies_in=FEDERAL,
             action="warn",
             alternate_action=None,
-            source_action="warn",
-            citation_status="confirmed",
-            enforcement_status="active",
+            provisional=False,
+            enforced=True,
             step="incident_context",
             predicate=AllOf(
                 (
@@ -344,29 +235,22 @@ DISCIPLINARY_INTAKE: Final = RuleSet(
                     AnswerIn("context.work_connection", ("no", NOT_SURE), unknown=()),
                 )
             ),
-            sources=(_cl(15),),
-            notice="off_duty_connection",
         ),
-        # Any one high-risk factor escalates before any action is taken or put
-        # in writing. Tagged UAE-FED ("proposed SHARED" is not approved): a
-        # DIFC Case is held instead (screening_by_jurisdiction).
-        Condition(
-            id=STOP_CALL_FIRST,
+        # Any one factor escalates before any action is taken or put in
+        # writing. Applies in UAE Federal Cases only; a DIFC Case is held.
+        Rule(
+            key=HIGH_RISK,
             order=5,
-            jurisdiction="UAE-FED",
-            type="blocking",
+            applies_in=FEDERAL,
             action="escalate",
             alternate_action=None,
-            source_action="escalate",
-            citation_status="needs_legal_review",
-            enforcement_status="active",
+            provisional=True,
+            enforced=True,
             step="safety_screening",
             predicate=AnyOf(tuple(AnswerIn(q.key, ("yes",)) for q in SAFETY_SCREENING.questions)),
-            sources=(_cl(16), _cl(11, "Structural Findings"), _ir(18)),
-            notice="high_risk_factors",
         ),
     ),
-    screening_by_jurisdiction={"UAE-FED": STOP_CALL_FIRST},
+    screening_by_jurisdiction={JURISDICTION_UAE_FEDERAL: HIGH_RISK},
 )
 
 RULESETS: Final[Mapping[str, RuleSet]] = {DISCIPLINARY_INTAKE.workflow_key: DISCIPLINARY_INTAKE}
