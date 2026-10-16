@@ -199,12 +199,17 @@ const ctx = {
     await page.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && document.readyState === "complete"`, {
       message: "back on the web app",
     });
-    // The landing page streams its content and may still redirect on the client
-    // (a server redirect inside Suspense, e.g. to the only workspace): wait until
-    // it has settled, or that redirect can overtake the test's next navigation.
-    await page.waitFor(`document.body && !document.body.innerText.includes("Loading your workspace")`, {
-      message: "landing page settled",
-    });
+    // The landing ("/" then "/workspaces") streams its content and may still
+    // redirect on the client (a server redirect inside Suspense, e.g. to the only
+    // workspace), sometimes without ever showing the loading fallback. It has
+    // settled once it left those paths, or once it shows a page heading (the
+    // workspace chooser or a state view) instead of the loading fallback;
+    // otherwise that redirect can overtake the test's next navigation.
+    await page.waitFor(
+      `document.readyState === "complete" && document.body && !document.body.innerText.includes("Loading your workspace") &&
+        (!["/", "/workspaces"].includes(location.pathname) || Boolean(document.querySelector("h1")))`,
+      { message: "landing page settled" },
+    );
   },
   async screenshot(page, name) {
     await page.screenshot(join(outputDir, "screenshots", `${name}.png`));
