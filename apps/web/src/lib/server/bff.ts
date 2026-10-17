@@ -2,7 +2,7 @@ import "server-only";
 
 import { type FieldName, parseBlueprintPatch, parseRegistrationRequest } from "@/lib/onboarding/model";
 import { KEY } from "@/lib/workflows/model";
-import { parseAnswersSave, parseCaseCreate } from "@/lib/workflows/requests";
+import { parseAnswersSave, parseCaseCreate, parsePathwayRequest, parseTransitionRequest } from "@/lib/workflows/requests";
 
 import { isSameOriginRequest, sessionFromRequest } from "./auth-flow";
 import type { AuthConfig } from "./config";
@@ -10,7 +10,9 @@ import {
   type ApiFailure,
   createWorkflowCase,
   registerCompany,
+  requestTransition,
   saveStepAnswers,
+  selectPathway,
   updateBlueprint,
   UUID,
 } from "./heroos-api";
@@ -215,5 +217,56 @@ export async function handleAnswersSave(
 
   const result = await saveStepAnswers(guarded.accessToken, config, companyId, caseId, stepKey, parsed.value, deps.fetch);
   if (!result.ok) return workflowFailure(result.failure, result.answerKeys);
+  return json(200, { view: result.data });
+}
+
+/**
+ * POST /bff/companies/{id}/cases/{caseId}/progression/pathway →
+ * `POST /companies/{id}/cases/{caseId}/workflow/progression/pathway` (M2-03).
+ *
+ * 200 `{view}` whether the choice was recorded or refused (the view's
+ * `progression.attempt` says which); 409 `conflict` when the case changed
+ * since it was read, the acknowledgments don't match or no rules are installed.
+ */
+export async function handlePathwaySelect(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const parsed = parsePathwayRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await selectPathway(guarded.accessToken, config, companyId, caseId, parsed.value, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, { view: result.data });
+}
+
+/**
+ * POST /bff/companies/{id}/cases/{caseId}/progression/transitions →
+ * `POST /companies/{id}/cases/{caseId}/workflow/progression/transitions` (M2-03).
+ * Same answers as the pathway choice; only stage transitions are accepted.
+ */
+export async function handleTransitionRequest(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const parsed = parseTransitionRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await requestTransition(guarded.accessToken, config, companyId, caseId, parsed.value, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
   return json(200, { view: result.data });
 }

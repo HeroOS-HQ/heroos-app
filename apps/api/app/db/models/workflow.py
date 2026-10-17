@@ -12,6 +12,13 @@ status, hold and its reason, the resolved Case jurisdiction, the screening
 state and every rule's result with the structured inputs it read, plus the
 definition and rule-set versions used. The current state is always recomputed
 on read; these rows are the trace.
+
+``WorkflowProgressEvent`` (M2-03, migration ``8d217d768395``) is the append-only
+record of workflow progression: the employer's pathway choices, stages started
+and completed, transitions refused, and escalations recorded, each with the
+decision, its reason codes, the warnings acknowledged and the rule bundle
+(id, version, digest) that decided it. The Case's position is derived from
+these rows on read; nothing here is a mutable snapshot.
 """
 
 from datetime import datetime
@@ -29,6 +36,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
@@ -74,6 +82,36 @@ EVALUATION_SCREENING: Final = (
 # A bound on the trace, not a product rule (results hold codes and enumerated
 # answers only, never free text).
 MAX_EVALUATION_RESULTS_BYTES: Final = 65536
+
+# Stored progression vocabularies (app.workflows.progression.engine).
+PROGRESS_EVENT_KINDS: Final = (
+    "pathway_selected",
+    "stage_started",
+    "stage_completed",
+    "transition_rejected",
+    "escalation_recorded",
+)
+# Events that move the Case's position (one per instance revision).
+PROGRESS_APPLIED_KINDS: Final = ("pathway_selected", "stage_started", "stage_completed")
+PROGRESS_DECISIONS: Final = ("allow", "warn", "block", "escalate")
+# The Disciplinary pathways (app.workflows.progression.spec).
+PROGRESS_PATHWAYS: Final = ("less_serious", "serious", "undetermined")
+# A bound on the stored reason codes, not a product rule.
+MAX_PROGRESS_DETAIL_BYTES: Final = 16384
+# What each kind of event must carry: position changes are allowed (or warned
+# and acknowledged) employer requests; refusals are blocked or escalated
+# employer requests; escalations found by a save carry no request.
+PROGRESS_EVENT_SHAPE: Final = (
+    "(kind = 'pathway_selected' AND pathway IS NOT NULL AND stage IS NULL "
+    "AND (decision = 'allow' OR decision = 'warn') AND request_key IS NOT NULL) "
+    "OR ((kind = 'stage_started' OR kind = 'stage_completed') AND stage IS NOT NULL "
+    "AND previous_pathway IS NULL "
+    "AND (decision = 'allow' OR decision = 'warn') AND request_key IS NOT NULL) "
+    "OR (kind = 'transition_rejected' AND previous_pathway IS NULL "
+    "AND (decision = 'block' OR decision = 'escalate') AND request_key IS NOT NULL) "
+    "OR (kind = 'escalation_recorded' AND previous_pathway IS NULL "
+    "AND decision = 'escalate' AND request_key IS NULL)"
+)
 
 # JSONB on PostgreSQL; plain JSON for the SQLite stand-ins in unit tests. Python
 # None is stored as SQL NULL (a cleared answer), not as a JSON null.
@@ -263,5 +301,106 @@ class WorkflowEvaluation(Base):
     # Every rule's result, in rule-set order (app.workflows.intake).
     results: Mapped[Any] = mapped_column(EvaluationResults, nullable=False)
     evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class WorkflowProgressEvent(Base):
+    """One progression event of a workflow instance (append-only; codes only)."""
+
+    __tablename__ = "workflow_progress_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "instance_id"],
+            ["workflow_instances.company_id", "workflow_instances.id"],
+            name="fk_workflow_progress_events_company_id_instance_id",
+        ),
+        # An escalation found while saving answers points at that submission.
+        ForeignKeyConstraint(
+            ["company_id", "instance_id", "submission_id"],
+            [
+                "workflow_submissions.company_id",
+                "workflow_submissions.instance_id",
+                "workflow_submissions.id",
+            ],
+            name="fk_workflow_progress_events_submission",
+        ),
+        CheckConstraint(
+            _one_of("kind", PROGRESS_EVENT_KINDS), name="ck_workflow_progress_events_kind"
+        ),
+        CheckConstraint(
+            _one_of("decision", PROGRESS_DECISIONS), name="ck_workflow_progress_events_decision"
+        ),
+        CheckConstraint(PROGRESS_EVENT_SHAPE, name="ck_workflow_progress_events_shape"),
+        CheckConstraint(
+            f"(pathway IS NULL OR {_one_of('pathway', PROGRESS_PATHWAYS)}) AND "
+            f"(previous_pathway IS NULL OR {_one_of('previous_pathway', PROGRESS_PATHWAYS)})",
+            name="ck_workflow_progress_events_pathway",
+        ),
+        CheckConstraint("revision >= 0", name="ck_workflow_progress_events_revision"),
+        CheckConstraint(
+            "definition_version >= 1", name="ck_workflow_progress_events_definition_version"
+        ),
+        Index("ix_workflow_progress_events_instance_id", "instance_id"),
+        # Idempotency: one event per employer request.
+        Index(
+            "uq_workflow_progress_events_instance_id_request_key",
+            "instance_id",
+            "request_key",
+            unique=True,
+            postgresql_where="request_key IS NOT NULL",
+            sqlite_where=text("request_key IS NOT NULL"),
+        ),
+        # One position change per instance revision.
+        Index(
+            "uq_workflow_progress_events_instance_id_revision",
+            "instance_id",
+            "revision",
+            unique=True,
+            postgresql_where=_one_of("kind", PROGRESS_APPLIED_KINDS),
+            sqlite_where=text(_one_of("kind", PROGRESS_APPLIED_KINDS)),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    company_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "companies.id",
+            ondelete="CASCADE",
+            name="fk_workflow_progress_events_company_id_companies",
+        ),
+        nullable=False,
+    )
+    instance_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    # "pathway:<key>", "start:<stage>" or "complete:<stage>".
+    transition: Mapped[str] = mapped_column(String(100), nullable=False)
+    # pathway_selected: the choice recorded and the one it replaced.
+    pathway: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    previous_pathway: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    decision: Mapped[str] = mapped_column(String(10), nullable=False)
+    # Engine gate codes and bundle rule keys with their outcome; never answers.
+    reasons: Mapped[Any] = mapped_column(EvaluationResults, nullable=False)
+    # The warning rule keys the employer acknowledged.
+    acknowledged: Mapped[Any] = mapped_column(EvaluationResults, nullable=False)
+    # Applied: the revision this event produced; otherwise the revision it was decided at.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The employer request (idempotency key); None for an escalation found by a save.
+    request_key: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
+    submission_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
+    actor_user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_workflow_progress_events_actor_user_id_users"),
+        nullable=False,
+    )
+    bundle_id: Mapped[str] = mapped_column(String(50), nullable=False)
+    bundle_version: Mapped[str] = mapped_column(String(50), nullable=False)
+    bundle_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The intake status when the event was decided (e.g. held for specialist review).
+    intake_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

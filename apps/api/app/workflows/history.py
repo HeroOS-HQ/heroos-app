@@ -26,7 +26,7 @@ from uuid import UUID
 
 from app.workflows.conditions import RuleSet
 from app.workflows.conversation import SubmissionRecord, caution_notices
-from app.workflows.definition import WorkflowDefinition
+from app.workflows.definition import Step, WorkflowDefinition
 from app.workflows.intake import JURISDICTION_LABELS, IntakeEvaluation
 
 HistoryKind = Literal[
@@ -220,10 +220,18 @@ def compose_history(
     submissions: Sequence[SubmissionRecord],
     evaluations: Mapping[UUID, EvaluationRecord],
     viewer_user_id: UUID,
+    extra_steps: Sequence[Step] = (),
 ) -> list[HistoryItem]:
-    """The Case timeline, oldest first."""
-    labels = {q.key: q.label for s in definition.steps for q in s.questions}
-    sensitive = {q.key for s in definition.steps for q in s.questions if q.sensitive}
+    """The Case timeline, oldest first.
+
+    ``extra_steps``: the installed rules' stage checklists (M2-03), whose saves
+    are labelled like any other. A checklist saved under rules that aren't
+    installed any more reads as a stage checklist, with a count of answers.
+    """
+    extra = {step.key: step for step in extra_steps}
+    steps = (*definition.steps, *extra_steps)
+    labels = {q.key: q.label for s in steps for q in s.questions}
+    sensitive = {q.key for s in steps for q in s.questions if q.sensitive}
     items = [
         HistoryItem(
             "created",
@@ -237,19 +245,22 @@ def compose_history(
     previous: EvaluationRecord | None = None
     for submission in sorted(submissions, key=lambda s: s.revision):
         by_viewer = submission.submitted_by_user_id == viewer_user_id
-        step = definition.step(submission.step_key)
+        step = definition.step(submission.step_key) or extra.get(submission.step_key)
         changed = [labels[k] for k in labels if k in submission.facts and k not in sensitive]
         hidden = sum(1 for k in submission.facts if k in sensitive)
         if hidden:
             # Which sensitive answer changed isn't repeated in the history.
             changed.append(f"{hidden} screening answer{'s' if hidden > 1 else ''}")
+        unlabelled = sum(1 for k in submission.facts if k not in labels)
+        if unlabelled:
+            changed.append(f"{unlabelled} answer{'s' if unlabelled > 1 else ''}")
         items.append(
             HistoryItem(
                 f"submission:{submission.id}",
                 "answers_saved",
                 submission.submitted_at,
                 by_viewer,
-                f"Answers saved: {step.title if step else submission.step_key}",
+                f"Answers saved: {step.title if step else 'stage checklist'}",
                 ("Changed: " + ", ".join(changed)) if changed else None,
             )
         )

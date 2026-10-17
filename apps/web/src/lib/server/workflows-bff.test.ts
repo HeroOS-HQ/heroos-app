@@ -2,10 +2,10 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { API_BASE_URL, COMPANY_ID, CONFIG, WEB_ORIGIN } from "@/test/fixtures";
-import { apiCaseSummary, apiView, CASE_ID, OTHER_CASE_ID, WORKFLOW_CASES_PATH } from "@/test/workflow-fixtures";
+import { apiCaseSummary, apiProgression, apiView, CASE_ID, OTHER_CASE_ID, WORKFLOW_CASES_PATH } from "@/test/workflow-fixtures";
 
 import { caseState, casesState } from "./app-state";
-import { handleAnswersSave, handleCaseCreate } from "./bff";
+import { handleAnswersSave, handleCaseCreate, handlePathwaySelect, handleTransitionRequest } from "./bff";
 import { SESSION_COOKIE } from "./cookies";
 import { answerKeysFromApiDetail, getCaseWorkflow, listWorkflowCases, saveStepAnswers } from "./heroos-api";
 import { seal } from "./sealed";
@@ -227,5 +227,80 @@ describe("page states", () => {
     const list = { ok: true as const, data: [] };
     expect(caseState(admin, workspaces, list, { ok: false, failure: "not_found" }).kind).toBe("case_not_found");
     expect(caseState(admin, workspaces, list, { ok: false, failure: "unavailable" }).kind).toBe("api_unavailable");
+  });
+});
+
+// --- M2-03 progression -------------------------------------------------------------
+
+const PROGRESSION_KEY = "a1b2c3d4-0000-4000-8000-0000000000dd";
+const pathwayPath = `/bff/companies/${COMPANY_ID}/cases/${CASE_ID}/progression/pathway`;
+const transitionPath = `/bff/companies/${COMPANY_ID}/cases/${CASE_ID}/progression/transitions`;
+const PATHWAY = { expectedRevision: 4, requestKey: PROGRESSION_KEY, pathway: "less_serious" };
+const TRANSITION = { expectedRevision: 5, requestKey: PROGRESSION_KEY, transition: "start:test_check_in" };
+
+const choose = (body: unknown, deps: ReturnType<typeof api>, options = {}, caseId = CASE_ID) =>
+  handlePathwaySelect(request(pathwayPath, body, options), CONFIG, COMPANY_ID, caseId, deps);
+const move = (body: unknown, deps: ReturnType<typeof api>, options = {}, caseId = CASE_ID) =>
+  handleTransitionRequest(request(transitionPath, body, options), CONFIG, COMPANY_ID, caseId, deps);
+
+describe("handlePathwaySelect and handleTransitionRequest", () => {
+  it("rebuild the body, attach the token server-side and return the view", async () => {
+    const deps = api(json(apiView({ progression: apiProgression() })));
+    const response = await choose(PATHWAY, deps);
+    expect(response.status).toBe(200);
+    const [url, init] = deps.fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE_URL}/companies/${COMPANY_ID}/cases/${CASE_ID}/workflow/progression/pathway`);
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${ACCESS_TOKEN}`);
+    expect(JSON.parse(String(init.body))).toEqual({
+      expected_revision: 4,
+      request_key: PROGRESSION_KEY,
+      pathway: "less_serious",
+      acknowledged_warnings: [],
+    });
+
+    const moved = api(json(apiView({ progression: apiProgression() })));
+    expect((await move(TRANSITION, moved)).status).toBe(200);
+    const [movedUrl, movedInit] = moved.fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(movedUrl).toBe(`${API_BASE_URL}/companies/${COMPANY_ID}/cases/${CASE_ID}/workflow/progression/transitions`);
+    expect(JSON.parse(String(movedInit.body))).toMatchObject({ transition: "start:test_check_in" });
+  });
+
+  it.each([
+    ["a foreign Origin", { headers: { origin: "https://evil.example.com", "sec-fetch-site": "cross-site" } }, 403],
+    ["a form content type", { headers: { "content-type": "application/x-www-form-urlencoded" } }, 415],
+    ["no session", { session: null }, 401],
+  ])("refuse %s before calling the API", async (_, options, status) => {
+    const deps = api(json(apiView()));
+    expect((await choose(PATHWAY, deps, options)).status).toBe(status);
+    expect((await move(TRANSITION, deps, options)).status).toBe(status);
+    expect(deps.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("refuse malformed requests and other ids without calling the API", async () => {
+    const deps = api(json(apiView()));
+    expect((await choose({ ...PATHWAY, pathway: "pathway:serious" }, deps)).status).toBe(422);
+    expect((await move({ ...TRANSITION, transition: "pathway:serious" }, deps)).status).toBe(422);
+    expect((await move({ ...TRANSITION, extra: 1 }, deps)).status).toBe(422);
+    expect((await move(TRANSITION, deps, {}, "not-a-case")).status).toBe(404);
+    expect(deps.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [409, 409, "conflict"],
+    [403, 403, "refused"],
+    [404, 404, "not_found"],
+    [401, 401, "session_expired"],
+    [500, 503, "unavailable"],
+  ])("map an API %i to %i %s with a fixed body", async (apiStatus, status, code) => {
+    const deps = api(json({ detail: "API detail that must not leak" }, apiStatus));
+    const response = await move(TRANSITION, deps);
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error: code });
+  });
+
+  it("refuse an API answer for another case", async () => {
+    const deps = api(json(apiView({ caseId: OTHER_CASE_ID, progression: apiProgression() })));
+    expect((await choose(PATHWAY, deps)).status).toBe(503);
   });
 });

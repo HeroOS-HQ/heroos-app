@@ -199,6 +199,8 @@ export function AnswersForm({
   onSaved,
   next,
   demoOnly = false,
+  headingId = "composer-heading",
+  submitLabel = "Save answers",
   fetcher,
 }: {
   companyId: string;
@@ -211,6 +213,9 @@ export function AnswersForm({
   next?: { title: string; go: () => void } | null;
   /** The environment holds made-up demo data only (decided by the API). */
   demoOnly?: boolean;
+  /** Unique per form on the page (the stage checklist is a second form). */
+  headingId?: string;
+  submitLabel?: string;
   fetcher?: typeof fetch;
 }) {
   const [draft, setDraft] = useState<Draft>(() => draftFrom(step, answers));
@@ -326,7 +331,7 @@ export function AnswersForm({
         : "Everything here is answered. You can review or correct any answer.";
   return (
     <form
-      aria-labelledby="composer-heading"
+      aria-labelledby={headingId}
       className="flex flex-col gap-6"
       noValidate
       onSubmit={(event) => {
@@ -335,7 +340,7 @@ export function AnswersForm({
       }}
     >
       <div>
-        <h2 className="text-lg font-extrabold tracking-[-0.01em] text-hero-navy outline-none" id="composer-heading" tabIndex={-1}>
+        <h2 className="text-lg font-extrabold tracking-[-0.01em] text-hero-navy outline-none" id={headingId} tabIndex={-1}>
           {step.title}
         </h2>
         <p className="mt-1 text-[0.9375rem] leading-relaxed text-hero-navy/85">{step.intro}</p>
@@ -419,7 +424,7 @@ export function AnswersForm({
           </button>
         ) : null}
         <button aria-disabled={saving} className={buttonPrimary} disabled={saving} type="submit">
-          {saving ? "Saving…" : "Save answers"}
+          {saving ? "Saving…" : submitLabel}
         </button>
       </div>
     </form>

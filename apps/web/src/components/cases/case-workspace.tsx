@@ -11,13 +11,15 @@ import type { CaseSummary, WorkflowView } from "@/lib/workflows/model";
 import { AnswersForm } from "./answers-form";
 import { CaseContextPanel } from "./case-context-panel";
 import { Conversation } from "./conversation";
+import { ProgressionPanel } from "./progression-panel";
 
 /**
  * CASE_READY: the guided Case workspace. Left: the Company's Disciplinary
- * Cases. Centre: the conversation and, for administrators, the question
- * groups (one step at a time). Right (below the conversation on smaller
- * screens): progress, hold, jurisdiction, cautions, facts, missing and
- * uncertain answers, and the case history.
+ * Cases. Centre: the conversation, the next steps (workflow progression:
+ * pathway, stages and what can be done now) and, for administrators, the
+ * question groups (one step at a time). Right (below the conversation on
+ * smaller screens): progress, hold, jurisdiction, cautions, facts, missing and
+ * uncertain answers, and the case and progression history.
  *
  * The view comes from the API and is replaced by the API's answer after each
  * save; nothing here computes workflow state.
@@ -138,6 +140,17 @@ export function CaseWorkspace({
               Progress and details
             </a>
           </p>
+          {view.progression && view.progression.status.code !== "unavailable" ? (
+            <p className="text-sm font-semibold text-hero-navy" data-testid="current-stage">
+              Next steps: {view.progression.status.label}
+              {view.progression.stages.find((stage) => stage.status === "in_progress")
+                ? ` · ${view.progression.stages.find((stage) => stage.status === "in_progress")!.title}`
+                : ""}
+              <a className="ml-2 font-bold text-hero-blue-ink underline" href="#next-steps">
+                Go to next steps
+              </a>
+            </p>
+          ) : null}
           {view.sensitiveScreening === "synthetic_demo" ? (
             <p className="text-sm font-semibold text-hero-navy">
               Demo environment: use made-up examples only, never real employee information.
@@ -150,6 +163,14 @@ export function CaseWorkspace({
             Conversation
           </h2>
           <Conversation messages={view.conversation} />
+        </section>
+
+        <section
+          aria-labelledby="next-steps-heading"
+          className="mt-8 scroll-mt-24 rounded-3xl border border-hero-border bg-hero-surface/40 p-5 sm:p-7"
+          id="next-steps"
+        >
+          <ProgressionPanel caseId={caseId} companyId={companyId} fetcher={fetcher} onUpdated={setView} view={view} />
         </section>
 
         <section

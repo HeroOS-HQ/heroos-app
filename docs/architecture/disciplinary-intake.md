@@ -6,6 +6,7 @@ screening **disabled** (§7.1). Development content: not legally approved.\
 **Owner:** Technical Lead\
 **Milestone:** M2 — Workflow Platform\
 **Related:** [Workflow Case Foundation](workflow-foundation.md) (M2-01),
+[Workflow Progression](workflow-progression.md) (M2-03: the gate this intake opens),
 [Tenant Isolation](tenant-isolation.md), [ADR-006](../decisions/ADR-006-workflow-orchestration.md),
 [Privacy Decision Register](../privacy/decision-register.md)
 
@@ -216,4 +217,6 @@ contract 5 exactly).
 7. Approved customer wording for cautions and holds.
 8. Where the rule content and its source mapping live: this repository is
    public, so content beyond these five rules should move to private,
-   versioned content bundles loaded server-side.
+   versioned content bundles loaded server-side. M2-03 built the generic
+   loader for such bundles ([Workflow Progression §3](workflow-progression.md#3-private-rule-bundles));
+   these five intake rules are unchanged and still in code.

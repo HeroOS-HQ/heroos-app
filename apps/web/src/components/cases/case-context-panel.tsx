@@ -5,6 +5,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { JurisdictionStatus } from "@/components/workspace/jurisdiction-status";
 import { formatDayTime, PROGRESS_COPY } from "@/lib/workflows/copy";
 import type { CaseJurisdictionStatus, HistoryItem, Question, WorkflowView } from "@/lib/workflows/model";
+import type { ProgressHistoryItem, ProgressHistoryKind } from "@/lib/workflows/progression";
 
 import { CautionCard, HoldCard } from "./conversation";
 
@@ -52,11 +53,30 @@ function QuestionList({ questions, empty }: { questions: Question[]; empty: stri
   );
 }
 
-function HistoryEntry({ item }: { item: HistoryItem }) {
+type Marker = "alert" | "done" | "event";
+
+function historyMarker(kind: HistoryItem["kind"] | ProgressHistoryKind): Marker {
+  switch (kind) {
+    case "hold_placed":
+    case "hold_kept":
+    case "transition_rejected":
+    case "escalation_recorded":
+      return "alert";
+    case "intake_recorded":
+    case "hold_lifted":
+    case "stage_completed":
+      return "done";
+    default:
+      return "event";
+  }
+}
+
+function HistoryEntry({ item }: { item: HistoryItem | ProgressHistoryItem }) {
+  const kind = historyMarker(item.kind);
   const marker =
-    item.kind === "hold_placed" || item.kind === "hold_kept" ? (
+    kind === "alert" ? (
       <ShieldIcon className="size-4 text-hero-danger" />
-    ) : item.kind === "intake_recorded" || item.kind === "hold_lifted" ? (
+    ) : kind === "done" ? (
       <CheckIcon className="size-4 text-hero-success" />
     ) : (
       <ClockIcon className="size-4 text-hero-blue-ink" />
@@ -201,6 +221,16 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
           ))}
         </ol>
       </Section>
+
+      {view.progression && view.progression.history.length > 0 ? (
+        <Section id="progression-history-heading" title="Progression history">
+          <ol className="mt-3 flex flex-col">
+            {[...view.progression.history].reverse().map((item) => (
+              <HistoryEntry item={item} key={item.id} />
+            ))}
+          </ol>
+        </Section>
+      ) : null}
 
       <Section id="later-heading" title="Not available yet">
         <ul className="mt-3 flex flex-col gap-2">

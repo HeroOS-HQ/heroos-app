@@ -35,7 +35,19 @@ WORKFLOW_ANSWERS_SAVE = (
     "PUT",
     "/companies/{company_id}/cases/{case_id}/workflow/steps/{step_key}/answers",
 )
-ADMIN_ROUTES = {ADMIN_BLUEPRINT_UPDATE, WORKFLOW_CASE_CREATE, WORKFLOW_ANSWERS_SAVE}
+# M2-03: the employer's pathway choice and stage transitions.
+WORKFLOW_PATHWAY = ("POST", "/companies/{company_id}/cases/{case_id}/workflow/progression/pathway")
+WORKFLOW_TRANSITION = (
+    "POST",
+    "/companies/{company_id}/cases/{case_id}/workflow/progression/transitions",
+)
+ADMIN_ROUTES = {
+    ADMIN_BLUEPRINT_UPDATE,
+    WORKFLOW_CASE_CREATE,
+    WORKFLOW_ANSWERS_SAVE,
+    WORKFLOW_PATHWAY,
+    WORKFLOW_TRANSITION,
+}
 MUTATING_ROUTES = {*ADMIN_ROUTES, FOUNDER_REGISTRATION}
 
 
@@ -143,4 +155,6 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/workflows/{workflow_key}/cases",
         "/companies/{company_id}/cases/{case_id}/workflow",
         "/companies/{company_id}/cases/{case_id}/workflow/steps/{step_key}/answers",
+        "/companies/{company_id}/cases/{case_id}/workflow/progression/pathway",
+        "/companies/{company_id}/cases/{case_id}/workflow/progression/transitions",
     }

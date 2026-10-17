@@ -8,6 +8,11 @@ turns are the persisted submissions. Facts are stored independently
 (``case_facts``); this module only presents them, so a future presentation (or
 an M4 assistant) can change without touching the data.
 
+Stage checklists (M2-03, ``extra_steps``) are saved like any answer group and
+appear as the employer's turns too, labelled by the installed rules; the final
+"what happens next" notice can be replaced by the progression's own
+(``next_notice``).
+
 Wording rules: no rule keys or other internal labels; no recommendation of
 any disciplinary action; no promise that a HeroOS expert will review or contact
 anyone (no staffed expert-review workflow exists); a high-risk answer is never
@@ -27,6 +32,7 @@ from app.workflows.definition import (
     NOT_SURE,
     OptionsFrom,
     Question,
+    Step,
     WorkflowDefinition,
 )
 from app.workflows.intake import JURISDICTION_LABELS, Caution, Hold, IntakeEvaluation
@@ -337,8 +343,10 @@ def caution_notices() -> Mapping[str, tuple[str, str]]:
     return _CAUTIONS
 
 
-def _saved_notice(submission: SubmissionRecord, definition: WorkflowDefinition) -> StatusNotice:
-    step = definition.step(submission.step_key)
+def _saved_notice(
+    submission: SubmissionRecord, definition: WorkflowDefinition, extra: Mapping[str, Step]
+) -> StatusNotice:
+    step = definition.step(submission.step_key) or extra.get(submission.step_key)
     name = step.title if step is not None else "this step"
     return StatusNotice(
         f"saved:{submission.id}", "success", "Saved", f"Your answers to “{name}” are saved."
@@ -352,6 +360,8 @@ def compose(
     company: JurisdictionAssessment,
     *,
     viewer_user_id: UUID,
+    extra_steps: Sequence[Step] = (),
+    next_notice: StatusNotice | None = None,
 ) -> list[Message]:
     """The full conversation for the current state, oldest first."""
     first = definition.steps[0]
@@ -366,7 +376,8 @@ def compose(
         ),
     ]
 
-    questions = {q.key: q for s in definition.steps for q in s.questions}
+    extra = {step.key: step for step in extra_steps}
+    questions = {q.key: q for s in (*definition.steps, *extra_steps) for q in s.questions}
     order = list(questions)
     for submission in sorted(submissions, key=lambda s: s.revision):
         items = tuple(
@@ -386,7 +397,7 @@ def compose(
                 items,
             )
         )
-        messages.append(_saved_notice(submission, definition))
+        messages.append(_saved_notice(submission, definition, extra))
 
     notice = jurisdiction_notice(evaluation)
     if notice is not None:
@@ -467,6 +478,9 @@ def compose(
             )
         )
 
+    if next_notice is not None:
+        messages.append(next_notice)
+        return messages
     stages = ", ".join(stage.lower() for stage in definition.not_available)
     messages.append(
         StatusNotice(

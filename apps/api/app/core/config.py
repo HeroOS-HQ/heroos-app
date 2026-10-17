@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Literal, Self
 from urllib.parse import urlsplit
@@ -25,6 +26,9 @@ StorageProviderName = Literal["local", "s3"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 # "synthetic_demo": the environment holds synthetic demo data only.
 SensitiveScreening = Literal["disabled", "synthetic_demo"]
+
+# The pinned SHA-256 of the rule bundle file (lowercase hex).
+RULE_BUNDLE_PIN = re.compile(r"^[0-9a-f]{64}$")
 
 # Loopback hosts of the local Docker Compose database. Deployed environments
 # refuse them for DATABASE_URL.
@@ -146,6 +150,29 @@ class Settings(DatabaseSettings):
     # production refuses it. When off, the screening step can't be answered
     # and no intake can be completed (docs/architecture/disciplinary-intake.md).
     heroos_sensitive_screening: SensitiveScreening = "disabled"
+
+    # Workflow progression rules (M2-03): the private rule bundle, a JSON file in
+    # server-side storage only this service can read, and the SHA-256 the file
+    # must have (set both or neither). Unset: workflow progression is
+    # unavailable (fail closed) and everything else works. Set: the bundle is
+    # read and verified once at startup, and a missing, changed or invalid file
+    # stops startup; nothing falls back to other rules
+    # (docs/architecture/workflow-progression.md).
+    heroos_rule_bundle_path: Path | None = None
+    heroos_rule_bundle_sha256: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_rule_bundle(self) -> Self:
+        path, pin = self.heroos_rule_bundle_path, self.heroos_rule_bundle_sha256
+        if (path is None) != (pin is None):
+            raise ValueError(
+                "HEROOS_RULE_BUNDLE_PATH and HEROOS_RULE_BUNDLE_SHA256 must be set together"
+            )
+        if path is not None and not path.is_absolute():
+            raise ValueError("HEROOS_RULE_BUNDLE_PATH must be an absolute path")
+        if pin is not None and not RULE_BUNDLE_PIN.fullmatch(pin):
+            raise ValueError("HEROOS_RULE_BUNDLE_SHA256 must be 64 lowercase hex characters")
+        return self
 
     @model_validator(mode="after")
     def _validate_sensitive_screening(self) -> Self:

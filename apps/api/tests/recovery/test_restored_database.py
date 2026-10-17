@@ -38,12 +38,13 @@ TENANT_TABLES = {
     "case_subjects": "company_id",
     "cases": "company_id",
 }
-# Workflow entities (M2-01 D1, M2-02 D2): tenant-owned and append-only.
+# Workflow entities (M2-01 D1, M2-02 D2, M2-03 D3): tenant-owned and append-only.
 WORKFLOW_TABLES = (
     "workflow_instances",
     "workflow_submissions",
     "case_facts",
     "workflow_evaluations",
+    "workflow_progress_events",
 )
 APPLICATION_TABLES = (
     *TENANT_TABLES,

@@ -450,3 +450,58 @@ export async function saveStepAnswers(
   if (result.ok && result.data.case.id !== caseId) return { ok: false, failure: "unavailable" };
   return result;
 }
+
+/** Progression requests (M2-03): the employer's pathway choice or a stage transition. */
+type ProgressionPayload = { expected_revision: number; request_key: string; acknowledged_warnings: string[] };
+
+async function progressionCall(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  route: "pathway" | "transitions",
+  payload: ProgressionPayload & ({ pathway: string } | { transition: string }),
+  fetcher: Fetch,
+): Promise<ApiResult<WorkflowView>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  if (!UUID.test(caseId)) return { ok: false, failure: "not_found" };
+  const result = await apiCall(
+    config,
+    accessToken,
+    fetcher,
+    `/companies/${companyId}/cases/${caseId}/workflow/progression/${route}`,
+    parseWorkflowView,
+    { method: "POST", body: payload },
+  );
+  if (result.ok && result.data.case.id !== caseId) return { ok: false, failure: "unavailable" };
+  return result;
+}
+
+/**
+ * `POST /companies/{id}/cases/{caseId}/workflow/progression/pathway`
+ * (administrators only). 200 whether the API recorded or refused the choice
+ * (the view's `progression.attempt` says which); a stale revision, unmatched
+ * acknowledgments or no installed rules are a conflict.
+ */
+export function selectPathway(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  payload: ProgressionPayload & { pathway: string },
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowView>> {
+  return progressionCall(accessToken, config, companyId, caseId, "pathway", payload, fetcher);
+}
+
+/** `POST /companies/{id}/cases/{caseId}/workflow/progression/transitions` (administrators only). */
+export function requestTransition(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  payload: ProgressionPayload & { transition: string },
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowView>> {
+  return progressionCall(accessToken, config, companyId, caseId, "transitions", payload, fetcher);
+}

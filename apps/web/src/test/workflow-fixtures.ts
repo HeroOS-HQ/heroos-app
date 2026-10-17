@@ -137,6 +137,8 @@ type Overrides = {
   caseId?: string;
   escalation?: Record<string, unknown> | null;
   screening?: "disabled" | "synthetic_demo";
+  /** The M2-03 progression block (omitted: an API that doesn't send one). */
+  progression?: Record<string, unknown>;
 };
 
 function jurisdictionOptions(company: Company) {
@@ -162,6 +164,7 @@ export function apiView({
   caseId = CASE_ID,
   escalation = null,
   screening = "synthetic_demo",
+  progression,
 }: Overrides = {}): Record<string, unknown> {
   const caseAnswer = answers["jurisdiction.case_confirmation"];
   const resolved = company !== null && caseAnswer === company ? company : null;
@@ -348,6 +351,7 @@ export function apiView({
     history: history ?? [
       { id: "created", kind: "case_created", at: "2026-10-15T09:00:00Z", by_viewer: true, title: "Case created", detail: null },
     ],
+    ...(progression === undefined ? {} : { progression }),
   });
 }
 
@@ -404,3 +408,121 @@ export function apiCaseSummary(overrides: Record<string, unknown> = {}): Record<
 }
 
 export const WORKFLOW_CASES_PATH = `/companies/${COMPANY_ID}/workflows/disciplinary/cases`;
+
+// --- M2-03 progression (fictional synthetic test rules) -----------------------------
+
+export const SYNTHETIC_NOTICE = {
+  code: "rules_notice",
+  action: "warn",
+  source: "bundle",
+  title: "Synthetic test rules",
+  body: "This environment runs fictional test rules that exercise the workflow engine.",
+  provisional: true,
+};
+
+type ApiTransition = {
+  key: string;
+  kind: "pathway" | "start" | "complete";
+  label: string;
+  decision: "allow" | "warn" | "block" | "escalate";
+  allowed: boolean;
+  reasons: Record<string, unknown>[];
+  warnings: Record<string, unknown>[];
+  acknowledge: string[];
+  missing: string[];
+};
+
+export function transition(key: string, label: string, overrides: Partial<ApiTransition> = {}): ApiTransition {
+  const kind = key.split(":")[0] as ApiTransition["kind"];
+  return { key, kind, label, decision: "allow", allowed: true, reasons: [], warnings: [], acknowledge: [], missing: [], ...overrides };
+}
+
+export const message = (code: string, action: "warn" | "block" | "escalate", title: string, source = "bundle") => ({
+  code,
+  action,
+  source,
+  title,
+  body: `${title} (test body).`,
+  provisional: source === "bundle",
+});
+
+const PATHWAYS = [
+  { key: "less_serious", label: "Less serious", description: "In your judgement, the conduct breaches a policy." },
+  { key: "serious", label: "Serious misconduct", description: "In your judgement, the conduct may amount to serious misconduct." },
+  { key: "undetermined", label: "Unable to determine: needs review", description: "No disciplinary stage is available with this choice." },
+];
+
+export function pathwayOptions(current: string | null = null, overrides: Record<string, Partial<ApiTransition>> = {}) {
+  return PATHWAYS.map((p) => ({
+    key: p.key,
+    label: p.label,
+    description: p.description,
+    unlocks_stages: p.key !== "undetermined",
+    current: p.key === current,
+    transition: p.key === current ? null : transition(`pathway:${p.key}`, `Record pathway: ${p.label}`, overrides[p.key]),
+  }));
+}
+
+export const STAGES = [
+  { key: "test_check_in", title: "Test stage 1: Check-in conversation", summary: "A fictional first stage.", optional: false, terminal: false },
+  { key: "test_written_note", title: "Test stage 2: Written note", summary: "A fictional second stage.", optional: false, terminal: false },
+  { key: "test_final_review", title: "Test stage 3: Final review", summary: "A fictional last stage.", optional: false, terminal: true },
+];
+
+/** The API's progression block: by default, waiting for the employer's pathway. */
+export function apiProgression(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    status: { code: "awaiting_pathway", label: "Choose a pathway" },
+    gate: null,
+    rules: { bundle: "synthetic-progression", version: "synthetic.1", provenance: "synthetic", notice: SYNTHETIC_NOTICE },
+    pathway: null,
+    pathway_options: pathwayOptions(),
+    stages: [],
+    actions: [],
+    checklist: null,
+    escalations: [],
+    not_available: ["Penalty and outcome decisions", "Documents", "Expert review"],
+    history: [],
+    attempt: null,
+    ...overrides,
+  };
+}
+
+export const CHOSEN = {
+  key: "less_serious",
+  label: "Less serious",
+  description: "In your judgement, the conduct breaches a policy.",
+  decided_at: "2026-10-16T10:00:00Z",
+  by_viewer: true,
+  previous: null,
+};
+
+export const CHECKLIST = {
+  step_key: "test_check_in",
+  title: "Test stage 1: Check-in conversation",
+  intro: "A fictional first stage.",
+  questions: [
+    { key: "progress.test_check_in.conversation_held", prompt: "Has the test check-in conversation taken place?", label: "Test check-in held", help: null, options: YES_NO },
+    { key: "progress.test_check_in.employee_heard", prompt: "Did the employee give their view?", label: "Employee's view heard (test)", help: null, options: YES_NO },
+  ],
+};
+
+/** A Case in its first stage: checklist open, completion blocked until it's answered. */
+export function inStageProgression(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return apiProgression({
+    status: { code: "in_stage", label: "Stage in progress" },
+    pathway: CHOSEN,
+    pathway_options: pathwayOptions("less_serious"),
+    stages: STAGES.map((stage, index) => ({ ...stage, status: index === 0 ? "in_progress" : "later" })),
+    actions: [
+      transition("complete:test_check_in", "Mark complete: Test stage 1: Check-in conversation", {
+        decision: "block",
+        allowed: false,
+        reasons: [message("checklist_incomplete", "block", "Checklist not complete", "engine")],
+        missing: ["Test check-in held", "Employee's view heard (test)"],
+      }),
+    ],
+    checklist: CHECKLIST,
+    ...overrides,
+  });
+}

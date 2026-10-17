@@ -23,6 +23,7 @@ EXPECTED_TABLES=(
   users
   workflow_evaluations
   workflow_instances
+  workflow_progress_events
   workflow_submissions
 )
 
@@ -125,6 +126,21 @@ EXPECTED_CONSTRAINTS=(
   ck_workflow_evaluations_jurisdiction
   ck_workflow_evaluations_screening
   ck_workflow_evaluations_results
+  workflow_progress_events_pkey
+  fk_workflow_progress_events_company_id_companies
+  fk_workflow_progress_events_company_id_instance_id
+  fk_workflow_progress_events_submission
+  fk_workflow_progress_events_actor_user_id_users
+  ck_workflow_progress_events_kind
+  ck_workflow_progress_events_decision
+  ck_workflow_progress_events_shape
+  ck_workflow_progress_events_revision
+  ck_workflow_progress_events_definition_version
+  ck_workflow_progress_events_pathway
+  ck_workflow_progress_events_transition
+  ck_workflow_progress_events_bundle
+  ck_workflow_progress_events_intake_status
+  ck_workflow_progress_events_detail
 )
 
 # Tenant-owned tables: one tenant_isolation policy each.
@@ -140,6 +156,7 @@ TENANT_RLS_TABLES=(
   memberships
   workflow_evaluations
   workflow_instances
+  workflow_progress_events
   workflow_submissions
 )
 # Every table with Row-Level Security (sorted). `users` and `user_identities`
@@ -160,6 +177,7 @@ RLS_TABLES=(
   users
   workflow_evaluations
   workflow_instances
+  workflow_progress_events
   workflow_submissions
 )
 # Every other policy, as table:policy:permissive:command:roles.
@@ -314,9 +332,9 @@ assert_schema() {
   fi
   echo "Runtime role write boundary OK (no Company creation, Membership or confirmation writes)"
 
-  # M2-01 (D1) and M2-02 (D2): workflow entities are append-only for the API
-  # role (no DELETE, no UPDATE except the instance revision) and invisible to
-  # the operator.
+  # M2-01 (D1), M2-02 (D2) and M2-03 (D3): workflow entities are append-only
+  # for the API role (no DELETE, no UPDATE except the instance revision) and
+  # invisible to the operator.
   if [[ "$(psql_db "${db}" "SELECT has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_instances',
         'UPDATE, DELETE, TRUNCATE')
       OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_submissions', 'UPDATE, DELETE, TRUNCATE')
@@ -332,9 +350,13 @@ assert_schema() {
       OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_evaluations', 'UPDATE, DELETE, TRUNCATE')
       OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_evaluations', 'UPDATE')
       OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_evaluations', 'SELECT, INSERT, UPDATE')
-      OR heroos_schema_contract() <> 5;")" != "f" ]]; then
+      OR NOT has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_progress_events', 'SELECT, INSERT')
+      OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_progress_events', 'UPDATE, DELETE, TRUNCATE')
+      OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_progress_events', 'UPDATE')
+      OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_progress_events', 'SELECT, INSERT, UPDATE')
+      OR heroos_schema_contract() <> 6;")" != "f" ]]; then
     echo "Workflow tables: unexpected privileges or schema contract." >&2
     return 1
   fi
-  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 5)"
+  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 6)"
 }

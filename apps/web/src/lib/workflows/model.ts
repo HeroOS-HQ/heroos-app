@@ -1,6 +1,8 @@
+import { parseProgression, type Progression } from "./progression";
+
 /**
- * Guided workflow Cases (M2-01, M2-02 intake): the shapes the web app works
- * with, and strict parsers for the HeroOS API's JSON. Client-safe (no server
+ * Guided workflow Cases (M2-01, M2-02 intake, M2-03 progression): the shapes
+ * the web app works with, and strict parsers for the HeroOS API's JSON. Client-safe (no server
  * imports): the same parsers check the API's answers on the web server and, in
  * the browser, the BFF's answers.
  *
@@ -170,6 +172,8 @@ export type WorkflowView = {
   notAvailable: string[];
   conversation: Message[];
   history: HistoryItem[];
+  /** Workflow progression (M2-03); null from an API that doesn't send it. */
+  progression: Progression | null;
 };
 
 export const WORKFLOW_DISCIPLINARY = "disciplinary";
@@ -549,7 +553,9 @@ export function parseWorkflowView(body: unknown): WorkflowView | null {
   const intake = parseIntake(body.intake);
   const messages = body.conversation.map(parseMessage);
   const history = body.history.map(parseHistoryItem);
+  const progression = parseProgression(body.progression);
   if (
+    progression === undefined ||
     !steps.every((step) => step !== null) ||
     !progress.every((item) => item !== null) ||
     status === null ||
@@ -589,6 +595,7 @@ export function parseWorkflowView(body: unknown): WorkflowView | null {
     notAvailable: body.not_available,
     conversation: messages.filter((message): message is Message => message !== undefined && message !== null),
     history: history as HistoryItem[],
+    progression,
   };
 }
 

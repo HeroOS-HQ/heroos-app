@@ -30,6 +30,7 @@ describe("browser/server boundary", () => {
       "components/cases/answers-form.tsx",
       "components/cases/case-workspace.tsx",
       "components/cases/new-case-form.tsx",
+      "components/cases/progression-panel.tsx",
       "components/onboarding/onboarding-wizard.tsx",
       "components/settings/company-settings-form.tsx",
       "components/site/icons.tsx",
@@ -68,13 +69,23 @@ describe("browser/server boundary", () => {
     const routes = files.filter(({ path }) => path.startsWith("app/bff/"));
     expect(routes.map(({ path }) => path).sort()).toEqual([
       "app/bff/companies/[companyId]/blueprint/route.ts",
+      "app/bff/companies/[companyId]/cases/[caseId]/progression/pathway/route.ts",
+      "app/bff/companies/[companyId]/cases/[caseId]/progression/transitions/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/steps/[stepKey]/answers/route.ts",
       "app/bff/companies/[companyId]/workflows/[workflowKey]/cases/route.ts",
       "app/bff/registrations/route.ts",
     ]);
     for (const { path, text } of routes) {
-      expect(text, path).toMatch(/handle(Registration|BlueprintUpdate|CaseCreate|AnswersSave)\(request/);
+      expect(text, path).toMatch(/handle(Registration|BlueprintUpdate|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest)\(request/);
       expect(text, path).not.toMatch(/export async function GET/);
+    }
+  });
+
+  it("no web source carries or reads workflow rule content (M2-03)", () => {
+    // Rules live in a private bundle the API loads server-side; the web app only
+    // renders what the API answers for one Case.
+    for (const { path, text } of files) {
+      expect(text, path).not.toMatch(/heroos\.rule-bundle|rule_bundles|\b(start|complete|select)_rules\b|HEROOS_RULE_BUNDLE/);
     }
   });
 });

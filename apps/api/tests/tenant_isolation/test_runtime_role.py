@@ -177,6 +177,8 @@ def test_startup_guard_accepts_runtime_role_and_rejects_admin(
         ("case_facts", {"SELECT", "INSERT"}),
         # Intake evaluations (M2-02): append-only trace, one row per save.
         ("workflow_evaluations", {"SELECT", "INSERT"}),
+        # Progress events (M2-03): append-only, one row per decision.
+        ("workflow_progress_events", {"SELECT", "INSERT"}),
         # Audit is written only by owner-run triggers.
         ("identity_events", set()),
         ("membership_events", set()),
