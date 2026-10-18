@@ -79,7 +79,7 @@ function Message({ message }: { message: ProgressMessage }) {
 function Refusal({ transition }: { transition: ProgressTransition }) {
   const escalated = transition.decision === "escalate";
   return (
-    <Notice title={escalated ? "Specialist review needed" : "Not available yet"} tone={escalated ? "danger" : "caution"}>
+    <Notice title={escalated ? "Can't continue without specialist review" : "Not available yet"} tone={escalated ? "danger" : "caution"}>
       <div className="flex flex-col gap-3">
         {transition.reasons.map((reason) => (
           <Message key={reason.code} message={reason} />
@@ -246,7 +246,11 @@ export function ProgressionPanel({
         <h2 className="text-lg font-extrabold tracking-[-0.01em] text-hero-navy" id="next-steps-heading">
           Next steps
         </h2>
-        <StatusBadge tone={gate === null ? "neutral" : "caution"}>{progression.status.label}</StatusBadge>
+        <div className="flex flex-wrap gap-2">
+          <StatusBadge tone={gate === null ? "neutral" : "caution"}>{progression.status.label}</StatusBadge>
+          {/* A recorded escalation blocks that step until a specialist reviews it: say so at the top. */}
+          {escalations.length > 0 ? <StatusBadge tone="caution">Specialist review needed</StatusBadge> : null}
+        </div>
       </div>
 
       {rules?.notice ? (

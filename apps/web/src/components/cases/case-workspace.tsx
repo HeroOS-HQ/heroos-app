@@ -160,6 +160,7 @@ export function CaseWorkspace({
           {view.progression && view.progression.status.code !== "unavailable" ? (
             <p className="text-sm font-semibold text-hero-navy" data-testid="current-stage">
               Next steps: {view.progression.status.label}
+              {view.progression.escalations.length > 0 ? " · Specialist review needed" : ""}
               {view.progression.stages.find((stage) => stage.status === "in_progress")
                 ? ` · ${view.progression.stages.find((stage) => stage.status === "in_progress")!.title}`
                 : ""}
@@ -271,7 +272,13 @@ export function CaseWorkspace({
             className="mt-8 scroll-mt-24 rounded-3xl border border-hero-border bg-hero-surface/40 p-5 sm:p-7"
             id="documents"
           >
-            <DocumentsPanel caseId={caseId} companyId={companyId} fetcher={documentsFetcher} revision={view.workflow.revision} />
+            <DocumentsPanel
+              caseId={caseId}
+              companyId={companyId}
+              fetcher={documentsFetcher}
+              revision={view.workflow.revision}
+              stage={view.progression?.stages.find((item) => item.status === "in_progress")?.title ?? null}
+            />
           </section>
         ) : null}
       </div>

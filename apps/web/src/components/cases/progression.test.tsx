@@ -148,7 +148,7 @@ describe("Next steps (workflow progression)", () => {
     expect(nextSteps().getByText("This case is held for specialist review.")).toBeInTheDocument();
     expect(nextSteps().queryByRole("button", { name: /Mark this stage complete|Start this stage|Record my decision/ })).toBeNull();
     expect(nextSteps().queryByRole("button", { name: "Change pathway" })).toBeNull();
-    expect(nextSteps().getByText("Specialist review needed")).toBeInTheDocument();
+    expect(nextSteps().getByText("Can't continue without specialist review")).toBeInTheDocument();
   });
 
   it("shows the stage in progress, what's still needed and the checklist through the answers route", async () => {
@@ -231,6 +231,9 @@ describe("Next steps (workflow progression)", () => {
     );
     expect(nextSteps().getByText("Mark complete: Test stage 3")).toBeInTheDocument();
     expect(nextSteps().getByText(/hasn't contacted anyone/)).toBeInTheDocument();
+    // The hold is visible at the top of Next steps and in the case header, not only further down.
+    expect(nextSteps().getAllByText("Specialist review needed")[0]).toBeInTheDocument();
+    expect(screen.getByTestId("current-stage")).toHaveTextContent("Specialist review needed");
     const details = within(screen.getByRole("complementary", { name: "Case details" }));
     expect(details.getByRole("heading", { name: "Progression history" })).toBeInTheDocument();
     expect(details.getByText("Pathway recorded: Less serious (your decision)")).toBeInTheDocument();

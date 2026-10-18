@@ -245,7 +245,7 @@ def test_the_case_opens_with_the_guided_conversation(
     assert body["not_available"] == [
         "Classification of the incident",
         "Options and decisions",
-        "Documents",
+        "Issuing documents",
         "Expert review",
     ]
     assert [(h["kind"], h["by_viewer"]) for h in body["history"]] == [("case_created", True)]

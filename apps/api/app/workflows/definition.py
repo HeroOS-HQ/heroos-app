@@ -393,7 +393,8 @@ DISCIPLINARY_V2: Final = WorkflowDefinition(
     not_available=(
         "Classification of the incident",
         "Options and decisions",
-        "Documents",
+        # Previews exist (M2-04C, where templates are installed); issuing never does.
+        "Issuing documents",
         "Expert review",
     ),
     serves_versions=frozenset({1}),

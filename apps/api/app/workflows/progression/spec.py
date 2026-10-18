@@ -61,7 +61,7 @@ DISCIPLINARY_PROGRESSION: Final = ProgressionSpec(
             False,
         ),
     ),
-    not_available=("Penalty and outcome decisions", "Documents", "Expert review"),
+    not_available=("Penalty and outcome decisions", "Issuing documents", "Expert review"),
 )
 
 PROGRESSIONS: Final[Mapping[str, ProgressionSpec]] = {

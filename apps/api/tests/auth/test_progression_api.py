@@ -330,7 +330,7 @@ def test_the_intake_is_unchanged_without_rules(
     assert without["not_available"] == [
         "Classification of the incident",
         "Options and decisions",
-        "Documents",
+        "Issuing documents",
         "Expert review",
     ]
     assert without["progress"][-1]["key"] == "next_stages"
@@ -467,7 +467,7 @@ def test_an_administrator_records_a_less_serious_pathway(
             "key": "later",
             "label": "Not available yet",
             "status": "coming_later",
-            "detail": "Penalty and outcome decisions, Documents, Expert review",
+            "detail": "Penalty and outcome decisions, Issuing documents, Expert review",
         },
     ]
 
