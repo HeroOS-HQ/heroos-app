@@ -131,7 +131,14 @@ describe("Decisions & history", () => {
     }
     expect(fetcher).not.toHaveBeenCalled();
 
+    // Editing a field removes its error at once; the others stay until fixed.
+    fireEvent.change(screen.getByRole("textbox", { name: "Short summary" }), { target: { value: "[SYNTHETIC] Summary" } });
+    expect(within(screen.getByRole("alert")).queryByText("Write a short summary.")).toBeNull();
+    expect(screen.getByRole("textbox", { name: "Short summary" })).not.toHaveAttribute("aria-invalid");
+    expect(within(screen.getByRole("alert")).getByText("Choose what you're recording.")).toBeInTheDocument();
+
     fireEvent.click(screen.getByLabelText(/Yes, my company holds supporting evidence/));
+    expect(within(screen.getByRole("alert")).queryByText("Say whether supporting evidence exists.")).toBeNull();
     fireEvent.change(screen.getByRole("textbox", { name: "Description" }), { target: { value: "https://files.example.invalid/x" } });
     fireEvent.change(screen.getByRole("combobox", { name: "Type" }), { target: { value: "policy" } });
     fireEvent.click(screen.getByRole("button", { name: "Save record" }));

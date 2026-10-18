@@ -74,6 +74,11 @@ const FIELD_ID: Record<DraftField, string> = {
   evidence: "decision-evidence",
   changeReason: "decision-change-reason",
 };
+// Fields whose errors depend on another field's answer.
+const RELATED: Partial<Record<DraftField, DraftField[]>> = {
+  decisionMaker: ["decisionMaker", "decisionMakerRole"],
+  evidenceStatus: ["evidenceStatus", "evidence"],
+};
 const optionClass = (checked: boolean) =>
   `flex cursor-pointer items-start gap-3 rounded-xl border px-3.5 py-3 has-[:focus-visible]:outline-3 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-hero-blue ${
     checked ? "border-hero-blue bg-hero-blue-tint" : "border-hero-border bg-white hover:bg-hero-bg"
@@ -131,13 +136,25 @@ export function DecisionForm({
     headingRef.current?.focus();
   }, []);
 
-  const set = <K extends keyof DecisionDraft>(key: K, value: DecisionDraft[K]) =>
+  // An edited field's error goes at once (the next save checks everything again).
+  const clear = (...fields: DraftField[]) =>
+    setErrors((current) => {
+      if (!fields.some((field) => current[field])) return current;
+      const next = { ...current };
+      for (const field of fields) delete next[field];
+      return next;
+    });
+  const set = <K extends keyof DecisionDraft>(key: K, value: DecisionDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
-  const setEvidence = (index: number, change: Partial<EvidenceDraft>) =>
+    clear(...(RELATED[key] ?? [key]));
+  };
+  const setEvidence = (index: number, change: Partial<EvidenceDraft>) => {
     setDraft((current) => ({
       ...current,
       evidence: current.evidence.map((item, i) => (i === index ? { ...item, ...change } : item)),
     }));
+    clear("evidence");
+  };
 
   async function submit() {
     if (busy) return;
@@ -410,13 +427,14 @@ export function DecisionForm({
                 disabled={busy}
                 id={`decision-evidence-${choice.key}`}
                 name="decision-evidence-status"
-                onChange={() =>
+                onChange={() => {
                   setDraft((current) => ({
                     ...current,
                     evidenceStatus: choice.key as DecisionDraft["evidenceStatus"],
                     evidence: choice.key === "held" && current.evidence.length === 0 ? [{ ...EMPTY_EVIDENCE }] : current.evidence,
-                  }))
-                }
+                  }));
+                  clear("evidenceStatus", "evidence");
+                }}
                 type="radio"
                 value={choice.key}
               />
@@ -486,7 +504,10 @@ export function DecisionForm({
                   <button
                     className={`${buttonQuiet} mt-2 text-sm`}
                     disabled={busy}
-                    onClick={() => setDraft((current) => ({ ...current, evidence: current.evidence.filter((_, i) => i !== index) }))}
+                    onClick={() => {
+                      setDraft((current) => ({ ...current, evidence: current.evidence.filter((_, i) => i !== index) }));
+                      clear("evidence");
+                    }}
                     type="button"
                   >
                     Remove this item
