@@ -261,6 +261,9 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
     },
     /** A screenshot of one element (its full box, even beyond the viewport), at most 8000 px tall. */
     async screenshotOf(path, selector) {
+      // From the top, as for a full page: a sticky header then sits above the
+      // element instead of being drawn over it.
+      await page.eval("window.scrollTo({ top: 0, behavior: 'instant' })");
       const box = await page.eval(`(() => {
         const el = document.querySelector(${JSON.stringify(selector)});
         if (!el) throw new Error("no element " + ${JSON.stringify(selector)});
