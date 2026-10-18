@@ -115,16 +115,20 @@ DECISION_MAKER_SHAPE = (
 CONTROL = "('[' || chr(1) || '-' || chr(31) || chr(127) || '-' || chr(159) || ']')"
 SINGLE_LINE = "{column} !~ " + CONTROL
 MULTI_LINE = "translate({column}, chr(9) || chr(10), '') !~ " + CONTROL
+# Lengths as two comparisons, never BETWEEN: PostgreSQL keeps BETWEEN as a
+# nested AND, which a dump and restore flattens, so the restored constraint
+# would read differently (the backup/restore gate compares the catalogs exactly).
+LENGTH = "char_length({column}) >= 1 AND char_length({column}) <= {maximum}"
 TEXT = (
-    f"char_length(summary) BETWEEN 1 AND {MAX_SUMMARY} "
+    f"{LENGTH.format(column='summary', maximum=MAX_SUMMARY)} "
     f"AND {SINGLE_LINE.format(column='summary')} "
-    f"AND char_length(explanation) BETWEEN 1 AND {MAX_EXPLANATION} "
+    f"AND {LENGTH.format(column='explanation', maximum=MAX_EXPLANATION)} "
     f"AND {MULTI_LINE.format(column='explanation')} "
     "AND (decision_maker_role IS NULL OR "
-    f"(char_length(decision_maker_role) BETWEEN 1 AND {MAX_ROLE} "
+    f"({LENGTH.format(column='decision_maker_role', maximum=MAX_ROLE)} "
     f"AND {SINGLE_LINE.format(column='decision_maker_role')})) "
     "AND (change_reason IS NULL OR "
-    f"(char_length(change_reason) BETWEEN 1 AND {MAX_CHANGE_REASON} "
+    f"({LENGTH.format(column='change_reason', maximum=MAX_CHANGE_REASON)} "
     f"AND {MULTI_LINE.format(column='change_reason')}))"
 )
 # Held evidence is described by at least one reference; otherwise none is listed.
