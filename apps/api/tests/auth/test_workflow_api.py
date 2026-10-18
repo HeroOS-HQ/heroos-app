@@ -29,6 +29,7 @@ from app.db.models import (
     CaseFact,
     CompanyBlueprint,
     Membership,
+    WorkflowDecisionRecord,
     WorkflowEvaluation,
     WorkflowInstance,
     WorkflowProgressEvent,
@@ -71,6 +72,7 @@ def sessions(session_factory: sessionmaker[Session], seed: SeedData) -> sessionm
             CaseFact.__table__,
             WorkflowEvaluation.__table__,
             WorkflowProgressEvent.__table__,
+            WorkflowDecisionRecord.__table__,
         ],
     )
     return session_factory

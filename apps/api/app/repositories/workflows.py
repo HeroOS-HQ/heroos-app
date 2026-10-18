@@ -1,23 +1,26 @@
-"""Company-scoped persistence of workflow Cases, submissions, facts, evaluations
-and progress events.
+"""Company-scoped persistence of workflow Cases, submissions, facts, evaluations,
+progress events and employer decision records.
 
 Every function takes a ``CompanyScope`` and filters by ``scope.company_id``;
 PostgreSQL RLS enforces the same boundary underneath. Repositories flush but
 never commit (tenant-isolation.md §2). There is no update or delete of facts,
-submissions, evaluations or progress events: they are append-only, and the
-only instance update is the optimistic-concurrency revision bump.
+submissions, evaluations, progress events or decision records: they are
+append-only, and the only instance update is the optimistic-concurrency
+revision bump.
 """
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date
 from typing import cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import Select, case, func, select, update
 
 from app.db.models import (
     Case,
     CaseFact,
+    WorkflowDecisionRecord,
     WorkflowEvaluation,
     WorkflowInstance,
     WorkflowProgressEvent,
@@ -25,6 +28,13 @@ from app.db.models import (
 )
 from app.tenancy.scope import CompanyScope
 from app.workflows.conversation import SubmissionRecord
+from app.workflows.decisions import (
+    DecisionMaker,
+    DecisionRecord,
+    EvidenceReference,
+    EvidenceStatus,
+    Relation,
+)
 from app.workflows.definition import WorkflowDefinition
 from app.workflows.history import EvaluationRecord
 from app.workflows.intake import EarlierEscalation, HoldReason, IntakeEvaluation
@@ -454,3 +464,142 @@ def record_progress_event(
     scope.session.add(row)
     scope.session.flush()
     return _stored_event(row)
+
+
+def _decision_record(row: WorkflowDecisionRecord) -> DecisionRecord:
+    return DecisionRecord(
+        id=row.id,
+        chain_id=row.chain_id,
+        supersedes_id=row.supersedes_id,
+        # The CHECK constraints tie these columns to the domain vocabularies.
+        relation=cast(Relation, row.relation),
+        category=row.category,
+        summary=row.summary,
+        explanation=row.explanation,
+        occurred_on=row.occurred_on,
+        decision_maker=cast(DecisionMaker, row.decision_maker),
+        decision_maker_role=row.decision_maker_role,
+        evidence_status=cast(EvidenceStatus, row.evidence_status),
+        evidence=tuple(
+            EvidenceReference(
+                kind=str(item["kind"]),
+                description=str(item["description"]),
+                reference=None if item.get("reference") is None else str(item["reference"]),
+            )
+            for item in row.evidence
+        ),
+        change_reason=row.change_reason,
+        revision=row.revision,
+        request_key=row.request_key,
+        recorded_by_user_id=row.recorded_by_user_id,
+        intake_status=row.intake_status,
+        progression_status=row.progression_status,
+        recorded_at=row.recorded_at,
+    )
+
+
+def _decisions_query(scope: CompanyScope, instance_id: UUID) -> Select[WorkflowDecisionRecord]:
+    return select(WorkflowDecisionRecord).where(
+        WorkflowDecisionRecord.company_id == scope.company_id,
+        WorkflowDecisionRecord.instance_id == instance_id,
+    )
+
+
+def decision_records(scope: CompanyScope, instance_id: UUID) -> list[DecisionRecord]:
+    """The instance's decision records, in the order they were made (by revision)."""
+    rows = scope.session.scalars(
+        _decisions_query(scope, instance_id).order_by(WorkflowDecisionRecord.revision)
+    ).all()
+    return [_decision_record(row) for row in rows]
+
+
+def find_decision_record(
+    scope: CompanyScope, instance_id: UUID, request_key: UUID
+) -> DecisionRecord | None:
+    """The record stored by this request key (idempotency), if any."""
+    row = scope.session.scalar(
+        _decisions_query(scope, instance_id).where(
+            WorkflowDecisionRecord.request_key == request_key
+        )
+    )
+    return None if row is None else _decision_record(row)
+
+
+def get_decision_record(
+    scope: CompanyScope, instance_id: UUID, record_id: UUID
+) -> DecisionRecord | None:
+    """A record of this Case's instance; None for any other Case or Company."""
+    row = scope.session.scalar(
+        _decisions_query(scope, instance_id).where(WorkflowDecisionRecord.id == record_id)
+    )
+    return None if row is None else _decision_record(row)
+
+
+def decision_successor(scope: CompanyScope, instance_id: UUID, record_id: UUID) -> UUID | None:
+    """The record that superseded this one, if any (at most one exists)."""
+    successor: UUID | None = scope.session.scalar(
+        select(WorkflowDecisionRecord.id).where(
+            WorkflowDecisionRecord.company_id == scope.company_id,
+            WorkflowDecisionRecord.instance_id == instance_id,
+            WorkflowDecisionRecord.supersedes_id == record_id,
+        )
+    )
+    return successor
+
+
+def record_decision(
+    scope: CompanyScope,
+    instance_id: UUID,
+    *,
+    supersedes: DecisionRecord | None,
+    relation: Relation,
+    category: str,
+    summary: str,
+    explanation: str,
+    occurred_on: date,
+    decision_maker: str,
+    decision_maker_role: str | None,
+    evidence_status: str,
+    evidence: Sequence[EvidenceReference],
+    change_reason: str | None,
+    revision: int,
+    request_key: UUID,
+    user_id: UUID,
+    definition_version: int,
+    intake_status: str,
+    progression_status: str,
+) -> DecisionRecord:
+    """Append one record (call after ``advance_revision``, under the instance lock).
+
+    A first record starts its own chain; a correction or clarification joins
+    the chain of the record it supersedes. Raises IntegrityError if that
+    record was superseded meanwhile or the request key was used.
+    """
+    record_id = uuid4()
+    row = WorkflowDecisionRecord(
+        id=record_id,
+        company_id=scope.company_id,
+        instance_id=instance_id,
+        chain_id=record_id if supersedes is None else supersedes.chain_id,
+        supersedes_id=None if supersedes is None else supersedes.id,
+        relation=relation,
+        category=category,
+        summary=summary,
+        explanation=explanation,
+        occurred_on=occurred_on,
+        decision_maker=decision_maker,
+        decision_maker_role=decision_maker_role,
+        evidence_status=evidence_status,
+        evidence=[item.stored() for item in evidence],
+        change_reason=change_reason,
+        revision=revision,
+        request_key=request_key,
+        recorded_by_user_id=user_id,
+        definition_version=definition_version,
+        intake_status=intake_status,
+        progression_status=progression_status,
+    )
+    scope.session.add(row)
+    scope.session.flush()
+    scope.session.refresh(row)
+    return _decision_record(row)

@@ -26,13 +26,13 @@ from sqlalchemy.exc import DBAPIError
 RUNTIME_GROUP_ROLE: Final = "heroos_app_runtime"
 OPERATOR_GROUP_ROLE: Final = "heroos_identity_operator"
 
-# Schema the API needs (D3: workflow progress events, on top of D2 intake
-# evaluations, D1 workflow Cases and facts, C1 roles and jurisdiction readiness
-# and B1a/B1b identities and lifecycle).
-API_MINIMUM_SCHEMA_CONTRACT: Final = 6
+# Schema the API needs (D4: employer decision records, on top of D3 progress
+# events, D2 intake evaluations, D1 workflow Cases and facts, C1 roles and
+# jurisdiction readiness and B1a/B1b identities and lifecycle).
+API_MINIMUM_SCHEMA_CONTRACT: Final = 7
 # Schema the operator CLI needs exactly (C1 registration, role and jurisdiction
-# confirmation grants on top of B1b provisioning; D1 to D3 add nothing for it).
-OPERATOR_SCHEMA_CONTRACT: Final = 6
+# confirmation grants on top of B1b provisioning; D1 to D4 add nothing for it).
+OPERATOR_SCHEMA_CONTRACT: Final = 7
 
 
 class UnsafeDatabaseRoleError(RuntimeError):

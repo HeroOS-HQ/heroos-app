@@ -9,6 +9,7 @@ from app.db.models.user import User
 from app.db.models.user_identity import UserIdentity
 from app.db.models.workflow import (
     CaseFact,
+    WorkflowDecisionRecord,
     WorkflowEvaluation,
     WorkflowInstance,
     WorkflowProgressEvent,
@@ -28,6 +29,7 @@ __all__ = [
     "MembershipEvent",
     "User",
     "UserIdentity",
+    "WorkflowDecisionRecord",
     "WorkflowEvaluation",
     "WorkflowInstance",
     "WorkflowProgressEvent",

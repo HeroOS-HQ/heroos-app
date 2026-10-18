@@ -64,6 +64,9 @@ class HistoryItem:
     by_viewer: bool | None
     title: str
     detail: str | None
+    # The instance revision the entry belongs to (0: the Case's creation), for
+    # ordering it among other sources (app.workflows.timeline).
+    revision: int = 0
 
 
 def evaluation_results(evaluation: IntakeEvaluation, ruleset: RuleSet) -> list[dict[str, object]]:
@@ -136,11 +139,12 @@ def _evaluation_items(
     by_viewer: bool | None,
     previous: EvaluationRecord | None,
     current: EvaluationRecord,
+    revision: int,
 ) -> list[HistoryItem]:
     items: list[HistoryItem] = []
 
     def add(kind: HistoryKind, key: str, title: str, detail: str | None) -> None:
-        items.append(HistoryItem(f"{prefix}:{key}", kind, at, by_viewer, title, detail))
+        items.append(HistoryItem(f"{prefix}:{key}", kind, at, by_viewer, title, detail, revision))
 
     before_jurisdiction = previous.jurisdiction if previous else None
     if current.jurisdiction != before_jurisdiction:
@@ -262,6 +266,7 @@ def compose_history(
                 by_viewer,
                 f"Answers saved: {step.title if step else 'stage checklist'}",
                 ("Changed: " + ", ".join(changed)) if changed else None,
+                submission.revision,
             )
         )
         record = evaluations.get(submission.id)
@@ -272,6 +277,7 @@ def compose_history(
                 by_viewer,
                 previous,
                 record,
+                submission.revision,
             )
             previous = record
     return items
