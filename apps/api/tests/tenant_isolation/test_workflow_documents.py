@@ -91,9 +91,12 @@ def documents_client(
 
     def _db() -> Generator[Session, None, None]:
         with sessions() as db:
-            yield db
-            if db.in_transaction():
-                read_only.append(str(db.scalar(text("SHOW transaction_read_only"))))
+            try:
+                yield db
+            finally:
+                # Also when the route raised (a 422 from the endpoint itself).
+                if db.in_transaction():
+                    read_only.append(str(db.scalar(text("SHOW transaction_read_only"))))
 
     app.dependency_overrides[get_authentication_provider] = lambda: provider
     app.dependency_overrides[get_db] = _db
