@@ -794,3 +794,63 @@ def test_nonstandard_brackets_are_noted_and_must_be_confirmed_literal(tmp_path: 
     assert refused.value.code == "nonstandard_brackets"
     data["literal_highlights"] = [0]
     assert build_outputs(document, parse_mapping(data))["report"]["verification"] == "PASS"
+
+
+def test_a_tampered_source_map_cannot_hide_a_wording_change(letter: Path) -> None:
+    """The source map is trusted only as far as the approved mapping confirms it."""
+    document = read_docx(letter)
+    spec = parse_mapping(mapping(document.sha256))
+    outputs = build_outputs(document, spec)
+    engine, source_map = outputs["engine"], outputs["source_map"]
+    body = engine["template"]["body"]
+    # Paragraph 3 "Dear [Employee Name]," is body block 2.
+    assert source_map["body"][2] == {"paragraphs": [3], "gaps": [["[Employee Name]"]], "prefix": ""}
+
+    # Wording dropped from the copy and passed off as a "conditional prefix".
+    hidden = copy.deepcopy(engine)
+    hidden_map = copy.deepcopy(source_map)
+    hidden["template"]["body"][2]["content"] = [{"field": "recipient_name"}, {"text": ","}]
+    hidden_map["body"][2]["prefix"] = "Dear "
+    assert verify(document, spec, hidden, hidden_map) == [
+        "paragraph 3: condition isn't the mapped one"
+    ]
+
+    # Wording replaced by a field and passed off as a "gap".
+    as_field = copy.deepcopy(engine)
+    as_field_map = copy.deepcopy(source_map)
+    as_field["template"]["body"][2]["content"] = [
+        {"field": "signatory_name"},
+        {"field": "recipient_name"},
+        {"text": ","},
+    ]
+    as_field_map["body"][2]["gaps"] = [["Dear ", "[Employee Name]"]]
+    assert verify(document, spec, as_field, as_field_map) == [
+        "paragraph 3: a field isn't the mapped one"
+    ]
+
+    # The right gap, the wrong field.
+    wrong_field = copy.deepcopy(engine)
+    wrong_field["template"]["body"][2]["content"][1] = {"field": "signatory_name"}
+    assert verify(document, spec, wrong_field, source_map) == [
+        "paragraph 3: a field isn't the mapped one"
+    ]
+
+    # Two paragraphs swapped in both files: each still matches, the order doesn't.
+    swapped, swapped_map = copy.deepcopy(engine), copy.deepcopy(source_map)
+    b, m = swapped["template"]["body"], swapped_map["body"]
+    b[1], b[2] = b[2], b[1]
+    m[1], m[2] = m[2], m[1]
+    assert verify(document, spec, swapped, swapped_map) == ["paragraphs: out of order or repeated"]
+
+    # Instructions claimed for another paragraph.
+    moved = copy.deepcopy(source_map)
+    moved["instructions"] = [1]
+    assert "instructions: not the mapped paragraphs" in verify(document, spec, engine, moved)
+
+    # A condition removed from the copy.
+    unconditional = copy.deepcopy(engine)
+    del unconditional["template"]["body"][3]["when"]
+    assert verify(document, spec, unconditional, source_map) == [
+        "paragraph 4: condition isn't the mapped one"
+    ]
+    assert body == engine["template"]["body"]

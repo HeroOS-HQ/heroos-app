@@ -650,9 +650,36 @@ def verify(
         return ["working copy or source map: not in the expected structure"]
 
 
+def _allowed_fields(spec: MappingSpec, paragraphs: Sequence[int], gap: str) -> set[str]:
+    """The fields the mapping allows for this gap in these paragraphs."""
+    allowed = {spec.fields[gap]} if gap in spec.fields else set()
+    allowed |= {
+        field
+        for (paragraph, text, _), field in spec.occurrences.items()
+        if paragraph in paragraphs and text == gap and field is not None
+    }
+    return allowed
+
+
+def _fields_in(segments: Sequence[Mapping[str, Any]]) -> list[str]:
+    return [segment["field"] for segment in segments if "field" in segment]
+
+
+def _mapped_gaps(
+    spec: MappingSpec, paragraphs: Sequence[int], fields: Sequence[str], gaps_: Sequence[str]
+) -> bool:
+    """Every replaced text is a real bracketed gap the mapping maps to that same field."""
+    return len(fields) == len(gaps_) and all(
+        PLACEHOLDER.fullmatch(gap) is not None and field in _allowed_fields(spec, paragraphs, gap)
+        for field, gap in zip(fields, gaps_, strict=True)
+    )
+
+
 def _verify(
     document: Document, spec: MappingSpec, engine: Mapping[str, Any], source_map: Mapping[str, Any]
 ) -> list[str]:
+    """Compare the working copy with the source, trusting the source map only as far as
+    the approved mapping confirms it (prefixes, gaps, fields, instructions, order)."""
     problems: list[str] = []
     if (
         source_map.get("source_sha256") != document.sha256
@@ -661,40 +688,65 @@ def _verify(
         return ["source_sha256 differs"]
     expected = _source_texts(document, spec)
     template = engine["template"]
-    used: list[int] = []
 
-    for index, block in zip(
-        source_map["instructions"], template.get("instructions", []), strict=False
-    ):
-        rebuilt = _rebuilt(block["content"], [])
-        used.append(index)
-        if rebuilt != expected[index]:
+    instructions = list(source_map["instructions"])
+    mapped = (
+        []
+        if spec.instructions is None
+        else [
+            i
+            for i in range(spec.instructions[0], spec.instructions[1] + 1)
+            if expected.get(i, "").strip()
+        ]
+    )
+    if instructions != mapped:
+        problems.append("instructions: not the mapped paragraphs")
+    for index, block in zip(instructions, template.get("instructions", []), strict=False):
+        if _rebuilt(block["content"], []) != expected.get(index):
             problems.append(f"paragraph {index}: instructions differ")
-    if len(source_map["instructions"]) != len(template.get("instructions", [])):
+    if len(instructions) != len(template.get("instructions", [])):
         problems.append("instructions: block count differs")
 
     blocks = template["body"]
     if len(blocks) != len(source_map["body"]):
         return [*problems, "body: block count differs"]
+    body: list[int] = []
     for block, source in zip(blocks, source_map["body"], strict=True):
         if block["type"] == "table":
             for r, row in enumerate(block["rows"]):
                 for c, cell in enumerate(row):
                     cell_source = source["rows"][r][c]
+                    paragraphs = cell_source["paragraphs"]
                     rebuilt = _rebuilt(cell, cell_source["gaps"])
-                    original = "\n".join(expected[i] for i in cell_source["paragraphs"])
-                    used += cell_source["paragraphs"]
+                    original = "\n".join(expected[i] for i in paragraphs)
+                    body += paragraphs
+                    where = f"table {source['table']} row {r} cell {c}"
                     if rebuilt != original:
-                        problems.append(f"table {source['table']} row {r} cell {c}: text differs")
+                        problems.append(f"{where}: text differs")
+                    elif not _mapped_gaps(spec, paragraphs, _fields_in(cell), cell_source["gaps"]):
+                        problems.append(f"{where}: a field isn't the mapped one")
             continue
         for index, replaced in zip(source["paragraphs"], source["gaps"], strict=True):
+            body.append(index)
+            conditional = spec.conditionals.get(index)
+            prefix = "" if conditional is None else normalize(conditional.prefix)[0]
+            when = (
+                None
+                if conditional is None
+                else {"choice": conditional.choice, "in": list(conditional.options)}
+            )
             text = _rebuilt(block["content"], replaced)
-            used.append(index)
-            if text is None or source["prefix"] + text != expected[index]:
+            if source["prefix"] != prefix or block.get("when") != when:
+                problems.append(f"paragraph {index}: condition isn't the mapped one")
+            elif text is None or prefix + text != expected[index]:
                 problems.append(f"paragraph {index}: text differs")
-    # Every non-empty source paragraph is accounted for, once, in order.
+            elif not _mapped_gaps(spec, [index], _fields_in(block["content"]), replaced):
+                problems.append(f"paragraph {index}: a field isn't the mapped one")
+    # Every non-empty source paragraph is accounted for, once, in document order.
+    if body != sorted(set(body)):
+        problems.append("paragraphs: out of order or repeated")
     nonempty = [i for i, text in sorted(expected.items()) if text.strip()]
-    if sorted(used) != nonempty or len(set(used)) != len(used):
+    if sorted([*instructions, *body]) != nonempty:
         problems.append("paragraphs: missing, repeated or extra")
     return problems
 
