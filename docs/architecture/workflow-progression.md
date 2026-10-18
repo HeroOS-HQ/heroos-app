@@ -10,7 +10,8 @@ is unavailable (fail closed) until one is approved and installed (§4).\
 **Related:** [Workflow Case Foundation](workflow-foundation.md) (M2-01),
 [Disciplinary Intake](disciplinary-intake.md) (M2-02),
 [Decisions and Case History](workflow-decisions.md) (M2-04),
-[Tenant Isolation](tenant-isolation.md), [ADR-006](../decisions/ADR-006-workflow-orchestration.md)
+[Tenant Isolation](tenant-isolation.md), [ADR-006](../decisions/ADR-006-workflow-orchestration.md),
+[Document Templates and Safe Previews](document-templates.md) (M2-04C: templates are bound to this bundle's stages)
 
 ## 1. What M2-03 is
 

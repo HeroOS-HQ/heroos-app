@@ -299,4 +299,5 @@ Warning, suspension or dismissal letters and any document template; penalty
 recommendations or outcome decisions; specialist approval or hold release;
 evidence uploads; email; e-signatures; retention or deletion jobs; AI of any
 kind; Probation and Recruitment; AWS. Document templates and safe previews are
-the next M2-04 slice.
+the next M2-04 slice ([Document Templates and Safe Previews](document-templates.md));
+a decision record never makes a template available.

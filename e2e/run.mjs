@@ -221,7 +221,7 @@ const ctx = {
   sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
 };
 
-const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "progression", "decisions", "migration"];
+const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "progression", "decisions", "documents", "migration"];
 const selected = process.env.E2E_SUITES ? process.env.E2E_SUITES.split(",") : SUITES;
 
 let exitCode = 1;
