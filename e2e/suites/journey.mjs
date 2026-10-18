@@ -265,11 +265,15 @@ export async function run(ctx) {
   await page.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && location.pathname === "/"`, { message: "signed out" });
   await ctx.signIn(page, admin.subject);
   await page.goto(`${webOrigin}${casePath}`);
-  await page.waitFor(`Boolean(document.querySelector('section[aria-labelledby="history-heading"]'))`, { message: "history after sign-in" });
-  const again = await text();
+  // The page streams in sections: wait (bounded) until each expected part has arrived.
+  const expected = ["Specialist review needed", SUMMARY, "Stage completed: Test stage 2"];
+  const present = `${JSON.stringify(expected)}.map((t) => document.body.innerText.includes(t))`;
+  await page
+    .waitFor(`${present}.every(Boolean)`, { message: "the case after a new sign-in" })
+    .catch(() => {});
+  const found = await page.eval(present);
   check("JOURNEY-12", "after a reload and a new sign-in, the stages, the hold, the record and the history are all still there",
-    again.includes("Specialist review needed") && again.includes(SUMMARY) && again.includes("Stage completed: Test stage 2"),
-    again.slice(0, 300));
+    found.every(Boolean), JSON.stringify(Object.fromEntries(expected.map((t, i) => [t.slice(0, 40), found[i]]))));
 
   // For the live demo (make demo-synthetic): where to pick up by hand.
   ctx.demo = { subject: admin.subject, casePath, companyPath };
