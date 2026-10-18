@@ -1,5 +1,7 @@
 import "server-only";
 
+import { TEMPLATE_KEY } from "@/lib/documents/model";
+import { parsePreviewRequest } from "@/lib/documents/requests";
 import { type FieldName, parseBlueprintPatch, parseRegistrationRequest } from "@/lib/onboarding/model";
 import { ENTRY_ID } from "@/lib/workflows/decisions";
 import { KEY } from "@/lib/workflows/model";
@@ -18,7 +20,10 @@ import {
   type ApiFailure,
   correctDecision,
   createWorkflowCase,
+  getCaseDocuments,
   getCaseHistory,
+  getDocumentForm,
+  previewDocument,
   recordDecision,
   registerCompany,
   requestTransition,
@@ -38,7 +43,8 @@ import {
  * 1. come from this web app's own pages (`Origin`, or `Sec-Fetch-Site` when the
  *    browser sends `Origin: null`): CSRF;
  * 2. be `application/json` (a cross-site HTML form cannot send it without a
- *    CORS preflight, which this app never grants), at most 16 KiB;
+ *    CORS preflight, which this app never grants), at most 16 KiB (32 KiB for
+ *    a document preview, which carries a whole letter's details);
  * 3. carry a valid session.
  *
  * The body is re-validated and rebuilt field by field (unknown keys refused)
@@ -63,6 +69,7 @@ export type BffError =
   | "unavailable";
 
 export const MAX_BODY_BYTES = 16 * 1024;
+export const MAX_PREVIEW_BYTES = 32 * 1024;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -76,12 +83,12 @@ const error = (status: number, code: BffError, fields?: readonly string[]) =>
 
 type Guarded = { ok: true; accessToken: string; body: unknown } | { ok: false; response: Response };
 
-async function guard(request: Request, config: AuthConfig, deps: BffDeps): Promise<Guarded> {
+async function guard(request: Request, config: AuthConfig, deps: BffDeps, maxBytes = MAX_BODY_BYTES): Promise<Guarded> {
   if (!isSameOriginRequest(request, config)) return { ok: false, response: error(403, "forbidden_origin") };
   const type = (request.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase();
   if (type !== "application/json") return { ok: false, response: error(415, "unsupported_media_type") };
   const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_BODY_BYTES) return { ok: false, response: error(413, "payload_too_large") };
+  if (declared > maxBytes) return { ok: false, response: error(413, "payload_too_large") };
 
   const session = sessionFromRequest(request, config, Math.floor(deps.now() / 1000));
   if (session === null) return { ok: false, response: error(401, "session_expired") };
@@ -92,7 +99,7 @@ async function guard(request: Request, config: AuthConfig, deps: BffDeps): Promi
   } catch {
     return { ok: false, response: error(400, "invalid_request") };
   }
-  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) {
+  if (new TextEncoder().encode(text).length > maxBytes) {
     return { ok: false, response: error(413, "payload_too_large") };
   }
   try {
@@ -360,4 +367,89 @@ export async function handleHistoryPage(
   const result = await getCaseHistory(session.accessToken, config, companyId, caseId, before, deps.fetch);
   if (!result.ok) return workflowFailure(result.failure, []);
   return json(200, { page: result.data });
+}
+
+// --- document templates and previews (M2-04C) -----------------------------------------
+
+type ReadGuard = { ok: true; accessToken: string } | { ok: false; response: Response };
+
+/** A read: same-origin and a valid session, no body and no query. */
+function guardRead(request: Request, config: AuthConfig, deps: BffDeps): ReadGuard {
+  if (!isSameOriginRequest(request, config)) return { ok: false, response: error(403, "forbidden_origin") };
+  const session = sessionFromRequest(request, config, Math.floor(deps.now() / 1000));
+  if (session === null) return { ok: false, response: error(401, "session_expired") };
+  if ([...new URL(request.url).searchParams.keys()].length > 0) return { ok: false, response: error(422, "invalid", []) };
+  return { ok: true, accessToken: session.accessToken };
+}
+
+/**
+ * GET /bff/companies/{id}/cases/{caseId}/documents →
+ * `GET /companies/{id}/cases/{caseId}/documents` (M2-04C): every template and
+ * whether this Case can preview it now (the API decides).
+ */
+export async function handleDocumentsList(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = guardRead(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const result = await getCaseDocuments(guarded.accessToken, config, companyId, caseId, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, { documents: result.data });
+}
+
+/**
+ * GET /bff/companies/{id}/cases/{caseId}/documents/{template} →
+ * `GET /companies/{id}/cases/{caseId}/documents/{template}` (M2-04C): an
+ * available template's form; 409 `conflict` when it can't be previewed now.
+ */
+export async function handleDocumentForm(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  templateKey: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = guardRead(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId) || !TEMPLATE_KEY.test(templateKey)) return error(404, "not_found");
+  const result = await getDocumentForm(guarded.accessToken, config, companyId, caseId, templateKey, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, { form: result.data });
+}
+
+/**
+ * POST /bff/companies/{id}/cases/{caseId}/documents/{template}/preview →
+ * `POST /companies/{id}/cases/{caseId}/documents/{template}/preview` (M2-04C).
+ *
+ * 200 `{preview}`: structured text with a watermark, never stored anywhere
+ * (the response is `no-store`, and nothing here logs the body). 409
+ * `conflict` when the template can't be previewed now or changed; 422 names
+ * the fields only.
+ */
+export async function handleDocumentPreview(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  templateKey: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps, MAX_PREVIEW_BYTES);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId) || !TEMPLATE_KEY.test(templateKey)) return error(404, "not_found");
+  const parsed = parsePreviewRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await previewDocument(guarded.accessToken, config, companyId, caseId, templateKey, parsed.value, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, result.documentFields);
+  return json(200, { preview: result.data });
 }
