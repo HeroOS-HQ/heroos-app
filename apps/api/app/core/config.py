@@ -27,7 +27,7 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 # "synthetic_demo": the environment holds synthetic demo data only.
 SensitiveScreening = Literal["disabled", "synthetic_demo"]
 
-# The pinned SHA-256 of the rule bundle file (lowercase hex).
+# The pinned SHA-256 of the rule bundle (or template bundle) file (lowercase hex).
 RULE_BUNDLE_PIN = re.compile(r"^[0-9a-f]{64}$")
 
 # Loopback hosts of the local Docker Compose database. Deployed environments
@@ -161,6 +161,17 @@ class Settings(DatabaseSettings):
     heroos_rule_bundle_path: Path | None = None
     heroos_rule_bundle_sha256: str | None = None
 
+    # Document templates (M2-04C): the private template bundle, a JSON file in
+    # server-side storage only this service can read, and the SHA-256 the file
+    # must have (set both or neither). Unset: document previews are unavailable
+    # (fail closed) and everything else works. Set: the bundle is read and
+    # verified once at startup, together with the rule bundle it was written
+    # for; a missing, changed, invalid or mismatched file stops startup, and
+    # production refuses synthetic or provisional templates
+    # (docs/architecture/document-templates.md).
+    heroos_template_bundle_path: Path | None = None
+    heroos_template_bundle_sha256: str | None = None
+
     @model_validator(mode="after")
     def _validate_rule_bundle(self) -> Self:
         path, pin = self.heroos_rule_bundle_path, self.heroos_rule_bundle_sha256
@@ -172,6 +183,22 @@ class Settings(DatabaseSettings):
             raise ValueError("HEROOS_RULE_BUNDLE_PATH must be an absolute path")
         if pin is not None and not RULE_BUNDLE_PIN.fullmatch(pin):
             raise ValueError("HEROOS_RULE_BUNDLE_SHA256 must be 64 lowercase hex characters")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_template_bundle(self) -> Self:
+        path, pin = self.heroos_template_bundle_path, self.heroos_template_bundle_sha256
+        if (path is None) != (pin is None):
+            raise ValueError(
+                "HEROOS_TEMPLATE_BUNDLE_PATH and HEROOS_TEMPLATE_BUNDLE_SHA256 must be set together"
+            )
+        if path is not None and not path.is_absolute():
+            raise ValueError("HEROOS_TEMPLATE_BUNDLE_PATH must be an absolute path")
+        if pin is not None and not RULE_BUNDLE_PIN.fullmatch(pin):
+            raise ValueError("HEROOS_TEMPLATE_BUNDLE_SHA256 must be 64 lowercase hex characters")
+        if path is not None and self.heroos_rule_bundle_path is None:
+            # Templates are bound to the rule bundle's stages: never without it.
+            raise ValueError("HEROOS_TEMPLATE_BUNDLE_PATH requires HEROOS_RULE_BUNDLE_PATH")
         return self
 
     @model_validator(mode="after")

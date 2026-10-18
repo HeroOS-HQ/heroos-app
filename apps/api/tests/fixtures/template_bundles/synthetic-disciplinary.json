@@ -1,0 +1,471 @@
+{
+  "schema": "heroos.template-bundle/1",
+  "bundle": "synthetic-templates",
+  "version": "synthetic.1",
+  "provenance": "synthetic",
+  "approval": "provisional",
+  "workflow": "disciplinary",
+  "rule_bundle": {
+    "bundle": "synthetic-progression",
+    "versions": [
+      "synthetic.1"
+    ]
+  },
+  "notice": {
+    "title": "Synthetic test templates",
+    "body": "This environment uses fictional test templates that exercise the preview engine. They aren't HR or legal documents and don't reflect any approved HeroOS template."
+  },
+  "fields": [
+    {
+      "key": "document_date",
+      "label": "Date of the letter",
+      "kind": "date"
+    },
+    {
+      "key": "recipient_name",
+      "label": "Recipient's name",
+      "kind": "text",
+      "max": 120,
+      "suggest": "subject_name",
+      "help": "As you would address them in a letter."
+    },
+    {
+      "key": "company_name",
+      "label": "Company name",
+      "kind": "text",
+      "max": 120,
+      "suggest": "company_name"
+    },
+    {
+      "key": "meeting_date",
+      "label": "Date of the test conversation",
+      "kind": "date"
+    },
+    {
+      "key": "discussion_points",
+      "label": "Points discussed",
+      "kind": "list",
+      "max": 200,
+      "items": 5,
+      "reminder": true,
+      "help": "One point per entry."
+    },
+    {
+      "key": "summary",
+      "label": "Short summary",
+      "kind": "long_text",
+      "max": 2000,
+      "reminder": true
+    },
+    {
+      "key": "attendee_roles",
+      "label": "Attendees (roles only)",
+      "kind": "text",
+      "max": 200,
+      "reminder": true
+    },
+    {
+      "key": "questions",
+      "label": "Questions asked",
+      "kind": "list",
+      "max": 300,
+      "items": 30,
+      "reminder": true
+    }
+  ],
+  "templates": [
+    {
+      "key": "synthetic.check_in_note",
+      "code": "TEST-01",
+      "title": "Synthetic test letter: check-in note",
+      "kind": "letter",
+      "version": 1,
+      "source_sha256": null,
+      "review": "employer",
+      "jurisdictions": {
+        "uae_federal": {
+          "stages": [
+            "test_check_in"
+          ]
+        }
+      },
+      "instructions": [
+        {
+          "type": "heading",
+          "content": [
+            {
+              "text": "[SYNTHETIC] Test instructions"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "Fill in the fields to see how a preview works. This is fictional test content, not HR or legal guidance."
+            }
+          ]
+        }
+      ],
+      "choices": [
+        {
+          "key": "meeting_format",
+          "label": "How the test conversation took place",
+          "multiple": false,
+          "options": [
+            {
+              "value": "in_person",
+              "label": "In person"
+            },
+            {
+              "value": "online",
+              "label": "Online"
+            }
+          ]
+        }
+      ],
+      "body": [
+        {
+          "type": "heading",
+          "content": [
+            {
+              "text": "[SYNTHETIC] Test letter, not for real use"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "field": "document_date"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "To: "
+            },
+            {
+              "field": "recipient_name"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "This synthetic test letter from "
+            },
+            {
+              "field": "company_name"
+            },
+            {
+              "text": " refers to a test conversation held on "
+            },
+            {
+              "field": "meeting_date"
+            },
+            {
+              "text": "."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "when": {
+            "choice": "meeting_format",
+            "in": [
+              "in_person"
+            ]
+          },
+          "content": [
+            {
+              "text": "The test conversation took place in person."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "when": {
+            "choice": "meeting_format",
+            "in": [
+              "online"
+            ]
+          },
+          "content": [
+            {
+              "text": "The test conversation took place online."
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "Points discussed:"
+            }
+          ]
+        },
+        {
+          "type": "item",
+          "repeat": "discussion_points",
+          "content": [
+            {
+              "field": "discussion_points"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "Summary:"
+            },
+            {
+              "break": true
+            },
+            {
+              "field": "summary"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "Signed: "
+            },
+            {
+              "blank": "Signature"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "This letter is fictional test content. It isn't HR or legal guidance."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "synthetic.written_note",
+      "code": "TEST-02",
+      "title": "Synthetic test letter: written note",
+      "kind": "letter",
+      "version": 1,
+      "source_sha256": null,
+      "review": "employer",
+      "jurisdictions": {
+        "uae_federal": {
+          "stages": [
+            "test_written_note"
+          ],
+          "require": {
+            "answer": "progress.test_written_note.note_shared",
+            "in": [
+              "yes"
+            ]
+          }
+        }
+      },
+      "body": [
+        {
+          "type": "heading",
+          "content": [
+            {
+              "text": "[SYNTHETIC] Test written note"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "field": "document_date"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "To: "
+            },
+            {
+              "field": "recipient_name"
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "field": "summary"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "synthetic.specialist_letter",
+      "code": "TEST-03",
+      "title": "Synthetic test letter: specialist first",
+      "kind": "letter",
+      "version": 1,
+      "source_sha256": null,
+      "review": "specialist_first",
+      "jurisdictions": {
+        "uae_federal": {
+          "stages": [
+            "test_notice"
+          ]
+        }
+      },
+      "body": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "[SYNTHETIC] To: "
+            },
+            {
+              "field": "recipient_name"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "synthetic.meeting_record",
+      "code": "TEST-04",
+      "title": "Synthetic test record: meeting",
+      "kind": "minutes",
+      "version": 1,
+      "source_sha256": null,
+      "review": "employer",
+      "jurisdictions": {
+        "uae_federal": {
+          "stages": [
+            "test_meeting"
+          ]
+        }
+      },
+      "body": [
+        {
+          "type": "heading",
+          "content": [
+            {
+              "text": "[SYNTHETIC] Test meeting record"
+            }
+          ]
+        },
+        {
+          "type": "table",
+          "rows": [
+            [
+              [
+                {
+                  "text": "Meeting date"
+                }
+              ],
+              [
+                {
+                  "field": "meeting_date"
+                }
+              ]
+            ],
+            [
+              [
+                {
+                  "text": "Attendees"
+                }
+              ],
+              [
+                {
+                  "field": "attendee_roles"
+                }
+              ]
+            ],
+            [
+              [
+                {
+                  "text": "Signed"
+                }
+              ],
+              [
+                {
+                  "blank": "Signature"
+                }
+              ]
+            ]
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "Questions:"
+            }
+          ]
+        },
+        {
+          "type": "item",
+          "repeat": "questions",
+          "content": [
+            {
+              "text": "Q: "
+            },
+            {
+              "field": "questions"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "synthetic.difc_note",
+      "code": "TEST-05",
+      "title": "Synthetic test letter: DIFC review note",
+      "kind": "email",
+      "version": 1,
+      "source_sha256": null,
+      "review": "employer",
+      "jurisdictions": {
+        "difc": {
+          "stages": [
+            "test_difc_review"
+          ]
+        }
+      },
+      "body": [
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "text": "[SYNTHETIC] Dear "
+            },
+            {
+              "field": "recipient_name"
+            },
+            {
+              "text": ","
+            }
+          ]
+        },
+        {
+          "type": "paragraph",
+          "content": [
+            {
+              "field": "summary"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
