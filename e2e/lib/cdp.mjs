@@ -12,16 +12,19 @@ const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
 export const CHROME = process.env.E2E_CHROME ?? "google-chrome";
 
-export async function launchBrowser({ port, caCertificateSpki }) {
+/**
+ * Chrome under CDP. `visible` (the local synthetic demo, `make demo-synthetic`)
+ * opens a normal window a person can use, still trusting only this run's CA.
+ */
+export async function launchBrowser({ port, caCertificateSpki, visible = false }) {
   const profile = mkdtempSync(join(tmpdir(), "heroos-e2e-chrome-"));
   const args = [
-    "--headless=new",
+    ...(visible ? ["--window-size=1440,960"] : ["--headless=new", "--hide-scrollbars"]),
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profile}`,
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-gpu",
-    "--hide-scrollbars",
     "--force-color-profile=srgb",
     "--disable-features=Translate,OptimizationHints,MediaRouter",
     // Trust exactly this run's CA (by public-key pin), not "ignore all errors".

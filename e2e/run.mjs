@@ -221,7 +221,43 @@ const ctx = {
   sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
 };
 
-const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "progression", "decisions", "documents", "migration"];
+// The local synthetic founder demo (`make demo-synthetic`): after the suites (the
+// journey), keep everything running in a visible browser, signed in as the
+// fictional administrator on the finished case, until Ctrl-C or the time limit.
+// Disposable database, synthetic bundles, fictional data only.
+const DEMO = process.env.E2E_DEMO === "1";
+
+async function holdForDemo() {
+  const minutes = Number(process.env.E2E_DEMO_MINUTES ?? "60");
+  if (ctx.demo) {
+    const page = await ctx.newPage();
+    await page.viewport(1440, 900);
+    await ctx.signIn(page, ctx.demo.subject);
+    await page.goto(`${webOrigin}${ctx.demo.casePath}`);
+  }
+  console.log(
+    [
+      "",
+      "==> Synthetic demo running (fictional data, synthetic rules and templates; never HR or legal guidance)",
+      `    Web:      ${webOrigin}${ctx.demo ? ctx.demo.companyPath : ""}`,
+      ctx.demo ? `    Finished journey case: ${webOrigin}${ctx.demo.casePath}` : "    (no journey case: run with E2E_SUITES=journey)",
+      ctx.demo ? `    Sign in again by typing this subject on the test sign-in page: ${ctx.demo.subject}` : "",
+      `    Stops on Ctrl-C or after ${minutes} minutes; everything is then deleted.`,
+      "",
+    ].join("\n"),
+  );
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, minutes * 60_000);
+    for (const signal of ["SIGINT", "SIGTERM"]) {
+      process.once(signal, () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    }
+  });
+}
+
+const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "progression", "decisions", "documents", "journey", "migration"];
 const selected = process.env.E2E_SUITES ? process.env.E2E_SUITES.split(",") : SUITES;
 
 let exitCode = 1;
@@ -232,7 +268,11 @@ try {
   await secondIssuer.start();
   await api.start();
   await web.start();
-  ctx.browser = await launchBrowser({ port: Number(env("E2E_CHROME_PORT")), caCertificateSpki: [spki(tls.cert), spki(tls.ca)].join(",") });
+  ctx.browser = await launchBrowser({
+    port: Number(env("E2E_CHROME_PORT")),
+    caCertificateSpki: [spki(tls.cert), spki(tls.ca)].join(","),
+    visible: DEMO && process.env.E2E_DEMO_HEADLESS !== "1",
+  });
   report.check("SETUP-1", "issuer, API (staging, OIDC) and web (standalone, TLS) are up", true);
 
   for (const name of SUITES.filter((suite) => selected.includes(suite))) {
@@ -244,6 +284,8 @@ try {
       report.check(`${name.toUpperCase()}-ERR`, `suite ${name} completed without an unexpected error`, false, error.stack ?? String(error));
     }
   }
+
+  if (DEMO) await holdForDemo();
 
   report.section("logs");
   // Credentials must never reach logs: no access token issued in this run may appear.

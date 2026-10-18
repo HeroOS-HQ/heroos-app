@@ -24,7 +24,7 @@ build:
 
 check: lint format-check typecheck test build
 
-.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check backup-restore-check e2e-check
+.PHONY: local-up local-down local-logs local-ps migrate migration-check db-runtime-role db-setup tenant-isolation-check backup-restore-check e2e-check demo-synthetic
 
 # Root .env (if present) supplies DATABASE_URL / MIGRATION_DATABASE_URL. There
 # are no built-in database credentials: without .env (or exported variables)
@@ -72,6 +72,12 @@ backup-restore-check:
 # Provider; everything disposable (own container on tmpfs, no Compose, no .env).
 e2e-check:
 	./scripts/verify-e2e.sh
+
+# A live, local, synthetic founder demo: the M2-05 journey in a visible browser,
+# then the fictional environment stays up (disposable database, synthetic rules
+# and templates) until Ctrl-C or E2E_DEMO_MINUTES (default 60).
+demo-synthetic:
+	E2E_DEMO=1 E2E_SUITES=journey ./scripts/verify-e2e.sh
 
 .PHONY: privacy-decision-check
 
