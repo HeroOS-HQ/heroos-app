@@ -156,8 +156,9 @@ export async function run(ctx) {
   await ctx.signIn(page, fed.subject);
   await page.goto(`${webOrigin}${casePath}`);
   // (Section headings are upper-cased by CSS, so wait for the section itself.)
-  await page.waitFor(`Boolean(document.querySelector('section[aria-labelledby="progression-history-heading"]'))`, { message: "progression history" });
-  const history = await page.eval(`document.querySelector('section[aria-labelledby="progression-history-heading"]').innerText`);
+  // M2-04: progression events are in the unified case history ("Decisions & history").
+  await page.waitFor(`Boolean(document.querySelector('section[aria-labelledby="history-heading"]'))`, { message: "case history" });
+  const history = await page.eval(`document.querySelector('section[aria-labelledby="history-heading"]').innerText`);
   const header = await page.eval(`document.querySelector('[data-testid="current-stage"]').innerText`);
   check("PROG-6", "after a reload and a new sign-in the pathway, the stages and the progression history are all still there",
     history.includes("Pathway recorded: Less serious (your decision)") && history.includes("Stage started: Test stage 1") &&

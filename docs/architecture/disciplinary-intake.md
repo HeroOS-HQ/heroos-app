@@ -7,6 +7,7 @@ screening **disabled** (§7.1). Development content: not legally approved.\
 **Milestone:** M2 — Workflow Platform\
 **Related:** [Workflow Case Foundation](workflow-foundation.md) (M2-01),
 [Workflow Progression](workflow-progression.md) (M2-03: the gate this intake opens),
+[Decisions and Case History](workflow-decisions.md) (M2-04: the intake history is part of the unified case history),
 [Tenant Isolation](tenant-isolation.md), [ADR-006](../decisions/ADR-006-workflow-orchestration.md),
 [Privacy Decision Register](../privacy/decision-register.md)
 

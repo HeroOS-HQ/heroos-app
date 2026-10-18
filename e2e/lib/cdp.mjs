@@ -259,6 +259,22 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
       mkdirSync(dirname(path), { recursive: true });
       writeFileSync(path, Buffer.from(shot.data, "base64"));
     },
+    /** A screenshot of one element (its full box, even beyond the viewport), at most 8000 px tall. */
+    async screenshotOf(path, selector) {
+      const box = await page.eval(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) throw new Error("no element " + ${JSON.stringify(selector)});
+        const r = el.getBoundingClientRect();
+        return { x: r.left + window.scrollX, y: r.top + window.scrollY, width: r.width, height: r.height };
+      })()`);
+      const shot = await call("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: true,
+        clip: { x: Math.floor(box.x), y: Math.floor(box.y), width: Math.ceil(box.width), height: Math.min(Math.ceil(box.height), 8000), scale: 1 },
+      });
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, Buffer.from(shot.data, "base64"));
+    },
     async setCookie(cookie) {
       await call("Network.setCookie", cookie);
     },
