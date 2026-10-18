@@ -269,9 +269,12 @@ export async function run(ctx) {
     record(caseId, { ...recordBody(revision), legal_approval: true }),
     record(caseId, recordBody(revision, { category: "formal_warning_issued" })),
     record(caseId, recordBody(revision, { evidence_status: "held", evidence: [{ kind: "policy", description: "https://files.example.invalid/x" }] })),
+    // HeroOS can't be named as the decision-maker or as the source of evidence.
+    record(caseId, recordBody(revision, { decision_maker: "other", decision_maker_role: "HeroOS specialist" })),
+    record(caseId, recordBody(revision, { evidence_status: "held", evidence: [{ kind: "internal_document", description: "HeroOS verified document" }] })),
   ]);
-  check("DEC-10", "a forged actor, an approval flag, an unsafe category or a link as evidence is refused (422) and never echoed",
-    forged.every((r) => r.status === 422) && forged.every((r) => !r.text.includes("files.example.invalid") && !r.text.includes(founderUser)) &&
+  check("DEC-10", "a forged actor, an approval flag, an unsafe category, a link as evidence or HeroOS named as decision-maker or evidence source is refused (422) and never echoed",
+    forged.every((r) => r.status === 422) && forged.every((r) => !r.text.includes("files.example.invalid") && !r.text.includes(founderUser) && !r.text.includes("HeroOS specialist")) &&
       (await records()).length === 4,
     forged.map((r) => r.status).join(","));
 

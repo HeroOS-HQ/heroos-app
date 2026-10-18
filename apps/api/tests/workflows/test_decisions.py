@@ -100,10 +100,47 @@ def test_validators_refuse_with_fixed_messages(validator, value: str, message: s
 
 @pytest.mark.parametrize(
     "value",
-    ["File: HR-2026-014", "Data: shift handover log", "Policy 4.2 (Code of conduct)", "x"],
+    [
+        "File: HR-2026-014",
+        "Data: shift handover log",
+        "Policy 4.2 (Code of conduct)",
+        "x",
+        "Hero Oscar's notes",
+        "<b>Notes</b> caf\u00e9 \U0001f4dd",
+        "\\\\fileserver\\hr\\2026",
+    ],
 )
 def test_plain_evidence_references_are_accepted(value: str) -> None:
     assert decisions.evidence_text(value) == value
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        # Full-width look-alikes fold (NFKC) to a link.
+        ("\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0fx.invalid", "not link to it"),
+        ("file:/srv/notes", "not link to it"),
+        ("mailto:hr@x.invalid", "not link to it"),
+        ("blob:x", "not link to it"),
+        ("HeroOS verified document", "not a HeroOS document"),
+        ("Hero-OS approval 12", "not a HeroOS document"),
+        ("HEROOS-DOC-0001", "not a HeroOS document"),
+        ("\uff28\uff45\uff52\uff4f\uff2f\uff33 export", "not a HeroOS document"),
+        ("notes\u202egnp.exe", "control characters"),
+    ],
+)
+def test_evidence_can_be_neither_a_link_nor_a_heroos_artifact(value: str, message: str) -> None:
+    with pytest.raises(ValueError, match=message) as caught:
+        decisions.evidence_text(value)
+    assert value not in str(caught.value)
+
+
+def test_the_responsible_role_is_someone_in_the_company() -> None:
+    assert decisions.responsible_role("Operations manager") == "Operations manager"
+    assert decisions.responsible_role("Hero Oscar") == "Hero Oscar"
+    for value in ("HeroOS specialist", "HeroOS", "hero os reviewer"):
+        with pytest.raises(ValueError, match="HeroOS doesn't make decisions"):
+            decisions.responsible_role(value)
 
 
 def test_multi_line_text_keeps_line_breaks_and_tabs() -> None:

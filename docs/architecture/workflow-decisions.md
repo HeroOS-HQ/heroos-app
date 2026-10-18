@@ -85,7 +85,8 @@ payload says.
   (the administrator recording it) or `other`, with a role or job title
   (`decision_maker_role`, at most 120 characters; a name isn't needed). It is
   stored and shown as "as stated by your company", never as a verified identity
-  and never instead of the actor.
+  and never instead of the actor. It can't name HeroOS ("HeroOS specialist",
+  including full-width look-alikes): HeroOS makes no decision.
 
 ### 3.3 Evidence references
 
@@ -94,15 +95,23 @@ reference), `none` (explicitly unavailable) or `not_sure`. Each reference has a
 kind (internal document, meeting note, company policy, other), a description
 (at most 300 characters) and an optional location such as a reference number
 (at most 200), at most 10 references. HeroOS stores **references only**: no
-file is uploaded, no link is accepted (anything that looks like a URL, a
-`www.` address or a script/data URI is refused), nothing is fetched or parsed,
-and the screen says HeroOS doesn't check evidence.
+file is uploaded, no link is accepted (anything with `://`, a `www.` address,
+or a URI with a known scheme such as `javascript:`, `data:`, `file:` or
+`mailto:`; checked on the NFKC form, so full-width look-alikes count), nothing
+is fetched or parsed, and the screen says HeroOS doesn't check evidence. A
+reference can't present itself as a HeroOS document (it can't name HeroOS).
+Internal locations such as a share path or a folder name are references, not
+links: they are stored and shown as text only. Everything is rendered as text
+(React escapes it; nothing becomes a link or HTML).
 
 ### 3.4 Validation
 
 Text is validated, never normalized (the web app trims before sending): summary
 1–200 characters on one line, explanation 1–4,000 characters (line breaks and
-tabs allowed), change reason 1–500, no control characters. The date is exactly
+tabs allowed), change reason 1–500, no control or invisible formatting
+characters (bidi overrides, zero-width characters, line separators). The API
+counts code points; the browser and the BFF count UTF-16 units, so they are
+never more permissive than the API. The date is exactly
 `YYYY-MM-DD`, not before 1990 and not after tomorrow (UTC, for time zones ahead
 of it). Errors name the field only and never echo a value.
 
@@ -160,7 +169,11 @@ then the sources' own order. Timestamps alone can disagree with the commit order
 (a transaction's `now()` is its start), and many entries share one; the order
 never depends on the clock alone. **Paging**: newest first, `limit` 1–100
 (default 50), `before` = the id of the last entry seen; entries never change or
-disappear, so a cursor stays valid while new entries arrive.
+disappear, so a cursor stays valid while new entries arrive (they go on top).
+One rare exception: two requests refused at the same revision are ordered by
+their transaction's start time, so if they race, the later-starting one can
+commit first and the other then lands just below it; a reader paging at that
+moment sees it on the next reload.
 
 Never in the history: a screening answer or which sensitive question changed, a
 narrative, a record's explanation, evidence details or the named role, a rule

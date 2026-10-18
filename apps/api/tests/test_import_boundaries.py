@@ -186,3 +186,30 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/cases/{case_id}/decisions/{record_id}/corrections",
         "/companies/{company_id}/cases/{case_id}/history",
     }
+
+
+def test_the_rules_never_read_employer_decision_records() -> None:
+    """M2-04: a record is the employer's account, never a workflow authorization.
+
+    The intake rules, the progression engine and the answers they read can't
+    reach decision records or the history built from them, so no record can
+    start or complete a stage, release a hold or count as a prerequisite.
+    """
+    rule_modules = [
+        APP / "workflows" / "answers.py",
+        APP / "workflows" / "conditions.py",
+        APP / "workflows" / "intake.py",
+        APP / "workflows" / "progress.py",
+        *(APP / "workflows" / "progression").rglob("*.py"),
+    ]
+    forbidden = (
+        "app.workflows.decisions",
+        "app.workflows.timeline",
+        "app.api.decisions",
+        "app.db.models.workflow.WorkflowDecisionRecord",
+        "app.db.models.WorkflowDecisionRecord",
+    )
+    for path in rule_modules:
+        imported = _imports(path)
+        assert not any(name.startswith(forbidden) for name in imported), path
+        assert "decision_record" not in path.read_text(encoding="utf-8"), path

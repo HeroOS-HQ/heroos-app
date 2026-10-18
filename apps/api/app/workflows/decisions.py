@@ -20,6 +20,7 @@ policy); HeroOS stores no file and accepts no link. Pure module: no database.
 """
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -130,13 +131,23 @@ EVIDENCE_NOTICE: Final = (
 # --- validation (fixed messages; a submitted value is never echoed) -----------------
 
 # Anything that looks like a link: a scheme with "//" (http, https, ftp, file,
-# smb...), a "www." address, or a script or data URI. HeroOS stores no link it
-# might later render or open (evidence is described, never fetched). Plain
-# references such as "File: HR-2026-014" stay valid.
+# smb...), a "www." address, or a URI with a known scheme (script, data, file,
+# mail...). HeroOS stores no link it might later render or open (evidence is
+# described, never fetched). Plain references such as "File: HR-2026-014" stay
+# valid. Matched on the NFKC form, so full-width look-alikes count too.
 _LINK: Final = re.compile(
-    r"://|(?:^|[^a-z0-9])www\.|^\s*(?:javascript|vbscript|data):\S",
+    r"://|(?:^|[^a-z0-9])www\.|^\s*(?:javascript|vbscript|data|file|mailto|blob|https?|ftp|smb):\S",
     re.IGNORECASE,
 )
+# HeroOS named as the author of evidence or of a decision: an employer statement
+# must never pass for a HeroOS artifact or a HeroOS decision ("Hero Oscar" is a
+# name, not HeroOS). Matched on the NFKC form.
+_HEROOS: Final = re.compile(r"\bhero\W*os\b", re.IGNORECASE)
+
+
+def _compatible(value: str) -> str:
+    """What the text looks like: compatibility forms (full-width letters, ligatures) folded."""
+    return unicodedata.normalize("NFKC", value)
 
 
 def single_line(value: str) -> str:
@@ -162,10 +173,21 @@ def multi_line(value: str) -> str:
 
 
 def evidence_text(value: str) -> str:
-    """An evidence description or reference: one line, never a link."""
+    """An evidence description or reference: one line, never a link, never HeroOS's."""
     single_line(value)
-    if _LINK.search(value):
+    folded = _compatible(value)
+    if _LINK.search(folded):
         raise ValueError("must describe the evidence, not link to it")
+    if _HEROOS.search(folded):
+        raise ValueError("must describe the company's own evidence, not a HeroOS document")
+    return value
+
+
+def responsible_role(value: str) -> str:
+    """The role the employer names as responsible: one line, someone in the company."""
+    single_line(value)
+    if _HEROOS.search(_compatible(value)):
+        raise ValueError("must name a role in the company: HeroOS doesn't make decisions")
     return value
 
 

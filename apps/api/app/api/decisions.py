@@ -88,7 +88,7 @@ Explanation = Annotated[
 Role = Annotated[
     StrictStr,
     StringConstraints(min_length=1, max_length=MAX_DECISION_MAKER_ROLE),
-    AfterValidator(decisions.single_line),
+    AfterValidator(decisions.responsible_role),
 ]
 ChangeReason = Annotated[
     StrictStr,

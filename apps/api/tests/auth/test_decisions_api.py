@@ -67,6 +67,8 @@ EVIDENCE = [
     {"kind": "internal_document", "description": "[SYNTHETIC] Handover log, weeks 40-41"},
     {"kind": "meeting_note", "description": "[SYNTHETIC] Review notes", "reference": "HR-2026-014"},
 ]
+# "https://example.invalid" in full-width look-alike characters (NFKC folds them).
+FULLWIDTH_URL = "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0fexample.invalid"
 # Labels of the sensitive screening questions (never repeated in any history).
 SCREENING_WORDS = ("pregnan", "maternity", "sick leave", "medical", "whistleblow")
 
@@ -319,6 +321,51 @@ def test_unsafe_categories_are_refused(
         ({"evidence": [{"kind": "policy", "description": "javascript:alert(1)"}]}, "evidence"),
         ({"evidence": [{"kind": "policy", "description": "x", "url": "x"}]}, "evidence"),
         ({"evidence": [{"kind": "policy", "description": f"{i}"} for i in range(11)]}, "evidence"),
+        # Look-alike and scheme-only links (M2-04 audit).
+        (
+            {
+                "evidence": [
+                    {
+                        "kind": "policy",
+                        "description": FULLWIDTH_URL,
+                    }
+                ]
+            },
+            "evidence",
+        ),
+        (
+            {"evidence": [{"kind": "policy", "description": "x", "reference": "file:/srv/notes"}]},
+            "evidence",
+        ),
+        (
+            {
+                "evidence": [
+                    {"kind": "policy", "description": "x", "reference": "mailto:hr@example.invalid"}
+                ]
+            },
+            "evidence",
+        ),
+        # Unicode format characters (bidi override, zero-width space).
+        ({"evidence": [{"kind": "policy", "description": "notes\u202egnp.exe"}]}, "evidence"),
+        ({"summary": "Ref\u200bHR-1"}, "summary"),
+        # An employer statement can't pass for a HeroOS artifact or a HeroOS decision.
+        (
+            {
+                "evidence": [
+                    {"kind": "internal_document", "description": "HeroOS verified document"}
+                ]
+            },
+            "evidence",
+        ),
+        (
+            {"evidence": [{"kind": "policy", "description": "x", "reference": "HEROOS-DOC-0001"}]},
+            "evidence",
+        ),
+        ({"decision_maker_role": "HeroOS specialist"}, "decision_maker_role"),
+        (
+            {"decision_maker_role": "\uff28\uff45\uff52\uff4f\uff2f\uff33 expert"},
+            "decision_maker_role",
+        ),
         ({"expected_revision": -1}, "expected_revision"),
         ({"request_key": "not-a-key"}, "request_key"),
     ],  # fmt: skip
@@ -339,9 +386,145 @@ def test_invalid_or_forged_records_are_refused_without_echoing_them(
     assert {e["loc"][1] for e in detail} == {loc}
     assert all(set(e) <= {"type", "loc", "msg"} for e in detail)
     text = response.text
-    for value in ("example.invalid", "alert(1)", "leading space", "the_ceo", SUMMARY):
+    for value in ("example.invalid", "alert(1)", "leading space", "the_ceo", SUMMARY, "gnp.exe",
+                  "HeroOS verified", "HEROOS-DOC", "HeroOS specialist", "/srv/notes"):  # fmt: skip
         assert value not in text
     assert count(sessions, WorkflowDecisionRecord) == 0
+
+
+def test_plain_references_names_and_markup_are_kept_as_text(
+    client: TestClient,  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    case_id = new_case(client, admin_alice, seed)
+    evidence = [
+        {"kind": "internal_document", "description": "File: HR-2026-014", "reference": None},
+        {"kind": "meeting_note", "description": "<b>Notes</b> \u2014 caf\u00e9 \U0001f4dd",
+         "reference": "\\\\fileserver\\hr\\2026"},
+    ]  # fmt: skip
+    body = record_body(0, decision_maker_role="Hero Oscar, line manager", evidence=evidence)
+    saved = record(client, admin_alice, seed.company_a, case_id, body)
+    assert saved.status_code == 200, saved.json()
+    stored = saved.json()["decisions"]["records"][0]
+    # Stored and returned exactly as entered (never interpreted, never normalized).
+    assert stored["decision_maker_role"] == "Hero Oscar, line manager"
+    assert [(e["description"], e["reference"]) for e in stored["evidence"]] == [
+        (e["description"], e["reference"]) for e in evidence
+    ]
+
+
+def test_a_failed_write_leaves_nothing_behind(
+    client: TestClient,  # noqa: F811
+    sessions: sessionmaker[Session],  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_id = new_case(client, admin_alice, seed)
+    first = record(client, admin_alice, seed.company_a, case_id, record_body(0)).json()
+
+    def interrupted(*args: Any, **kwargs: Any) -> Any:
+        # After the revision bump, before the row: the request fails mid-transaction.
+        raise RuntimeError("interrupted")
+
+    monkeypatch.setattr("app.repositories.workflows.record_decision", interrupted)
+    for response in (
+        record(client, admin_alice, seed.company_a, case_id, record_body(1)),
+        correct(client, admin_alice, seed.company_a, case_id, first["decisions"]["saved"],
+                record_body(1)),
+    ):  # fmt: skip
+        assert response.status_code == 500
+        assert SUMMARY not in response.text
+    monkeypatch.undo()
+    # Nothing partial: no row, and the revision bump was rolled back with it.
+    after = view(client, admin_alice, seed.company_a, case_id)
+    assert after["workflow"]["revision"] == 1
+    assert len(after["decisions"]["records"]) == 1
+    assert count(sessions, WorkflowDecisionRecord) == 1
+
+
+def test_the_database_refuses_a_second_successor_when_the_check_is_bypassed(
+    client: TestClient,  # noqa: F811
+    sessions: sessionmaker[Session],  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case_id = new_case(client, admin_alice, seed)
+    original = record(client, admin_alice, seed.company_a, case_id, record_body(0)).json()
+    original_id = original["decisions"]["saved"]
+    assert correct(client, admin_alice, seed.company_a, case_id, original_id,
+                   record_body(1)).status_code == 200  # fmt: skip
+    # Pretend the application check missed the existing successor: the unique
+    # key on supersedes_id still refuses a branch, and the API answers 409.
+    monkeypatch.setattr("app.repositories.workflows.decision_successor", lambda *a, **k: None)
+    branch = correct(client, admin_alice, seed.company_a, case_id, original_id, record_body(2))
+    assert (branch.status_code, branch.json()) == CONFLICT
+    monkeypatch.undo()
+    assert count(sessions, WorkflowDecisionRecord) == 2
+    assert view(client, admin_alice, seed.company_a, case_id)["workflow"]["revision"] == 2
+
+
+def test_history_pages_stay_stable_while_entries_are_added(
+    client: TestClient,  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    case_id = new_case(client, admin_alice, seed)
+    revision = 0
+    for index in range(5):
+        saved = record(client, admin_alice, seed.company_a, case_id,
+                       record_body(revision, summary=f"[SYNTHETIC] Note {index}"))  # fmt: skip
+        revision = saved.json()["workflow"]["revision"]
+    before = [
+        e["id"] for e in history(client, admin_alice, seed.company_a, case_id).json()["entries"]
+    ]
+    first = history(client, admin_alice, seed.company_a, case_id, limit=2).json()
+    # New entries arrive between page reads: they go on top, never into later pages.
+    for index in range(2):
+        saved = record(client, admin_alice, seed.company_a, case_id,
+                       record_body(revision, summary=f"[SYNTHETIC] Late {index}"))  # fmt: skip
+        revision = saved.json()["workflow"]["revision"]
+    seen = [e["id"] for e in first["entries"]]
+    cursor = first["next_before"]
+    while cursor is not None:
+        page = history(client, admin_alice, seed.company_a, case_id, limit=2, before=cursor).json()
+        seen += [e["id"] for e in page["entries"]]
+        cursor = page["next_before"]
+    assert seen == before
+    latest = history(client, admin_alice, seed.company_a, case_id).json()
+    assert [e["detail"] for e in latest["entries"][:2]] == [
+        "“[SYNTHETIC] Late 1”",
+        "“[SYNTHETIC] Late 0”",
+    ]
+    assert len({e["id"] for e in latest["entries"]}) == len(latest["entries"]) == 8
+
+
+def test_one_sensitive_answer_is_never_named_anywhere_in_the_history(
+    client: TestClient,  # noqa: F811
+    sessions: sessionmaker[Session],  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    from app.workflows.definition import SAFETY_SCREENING
+
+    case_id, revision = recorded_case(client, sessions, seed, admin_alice)
+    held = put(client, admin_alice, seed.company_a, case_id, "safety_screening",
+               {"screening.pregnancy_maternity": "yes"}, revision=revision).json()  # fmt: skip
+    assert held["status"]["code"] == "held_for_specialist_review"
+    record(client, admin_alice, seed.company_a, case_id, record_body(held["workflow"]["revision"]))
+    page = history(client, admin_alice, seed.company_a, case_id, limit=100)
+    # The whole serialized history: titles, details, ids, kinds, sources, links.
+    text = page.text.lower()
+    for question in SAFETY_SCREENING.questions:
+        assert question.key.lower() not in text, question.key
+        assert question.label.lower() not in text, question.label
+    for word in ("pregnan", "maternity", "medical", "sick", "leave", "whistleblow", "harass"):
+        assert word not in text, word
+    entries = page.json()["entries"]
+    assert any(e["detail"] == "Changed: 1 screening answer" for e in entries)
+    assert any(e["kind"] == "hold_placed" for e in entries)
 
 
 def test_a_future_date_is_refused_but_a_time_zone_ahead_is_allowed(

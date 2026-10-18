@@ -146,6 +146,14 @@ describe("the form draft", () => {
     });
   });
 
+  it("names someone in the company as responsible, never HeroOS", () => {
+    const draft = draftFromRecord(parseDecisions(apiDecisions([apiRecord()]))!.records[0]);
+    const check = (role: string) => checkDraft({ ...draft, decisionMakerRole: role }, LIMITS, { correcting: false, todayUtc: "2026-10-18" });
+    expect(check("HeroOS specialist").decisionMakerRole).toBe("Give a role in your company. HeroOS doesn't make decisions.");
+    expect(check("Hero OS reviewer").decisionMakerRole).toBeDefined();
+    expect(check("Hero Oscar, line manager")).toEqual({});
+  });
+
   it("allows tomorrow (UTC) for time zones ahead, but not later", () => {
     const record = parseDecisions(apiDecisions([apiRecord()]))!.records[0];
     const base = draftFromRecord(record);
@@ -159,13 +167,34 @@ describe("the form draft", () => {
   it("refuses links as evidence and trims what it sends", () => {
     const record = parseDecisions(apiDecisions([apiRecord()]))!.records[0];
     const draft = draftFromRecord(record);
-    for (const link of ["https://x.invalid/a", "see www.x.invalid", "javascript:alert(1)"]) {
+    for (const link of [
+      "https://x.invalid/a",
+      "see www.x.invalid",
+      "javascript:alert(1)",
+      "file:/srv/notes",
+      "mailto:hr@x.invalid",
+      // Full-width look-alikes fold (NFKC) to a link, as the API checks them.
+      "\uff48\uff54\uff54\uff50\uff53\uff1a\uff0f\uff0fx.invalid",
+    ]) {
       const errors = checkDraft({ ...draft, evidence: [{ kind: "policy", description: link, reference: "" }] }, LIMITS, {
         correcting: false,
         todayUtc: "2026-10-18",
       });
       expect(errors.evidence).toMatch(/instead of a link/);
     }
+    for (const claim of ["HeroOS verified document", "HEROOS-DOC-0001", "\uff28\uff45\uff52\uff4f\uff2f\uff33 export"]) {
+      const errors = checkDraft({ ...draft, evidence: [{ kind: "policy", description: "x", reference: claim }] }, LIMITS, {
+        correcting: false,
+        todayUtc: "2026-10-18",
+      });
+      expect(errors.evidence).toBe("Describe your company's own evidence. It can't be a HeroOS document.");
+    }
+    expect(
+      checkDraft({ ...draft, evidence: [{ kind: "policy", description: "File: HR-2026-014", reference: "Hero Oscar" }] }, LIMITS, {
+        correcting: false,
+        todayUtc: "2026-10-18",
+      }).evidence,
+    ).toBeUndefined();
     const body = requestBody(
       { ...draft, summary: "  padded  ", evidence: [{ kind: "policy", description: " x ", reference: " " }] },
       { expectedRevision: 5, requestKey: KEY, relation: null },

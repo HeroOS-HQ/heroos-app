@@ -79,8 +79,12 @@ export function draftFromRecord(record: DecisionRecord): DecisionDraft {
 }
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-// The API refuses links in evidence (HeroOS stores and opens none); said here first.
-const LINK = /:\/\/|(?:^|[^a-z0-9])www\.|^\s*(?:javascript|vbscript|data):\S/i;
+// The API refuses links in evidence (HeroOS stores and opens none) and HeroOS
+// named as the source of evidence or of a decision; said here first. Both are
+// checked on the NFKC form, as the API does (full-width look-alikes count).
+const LINK = /:\/\/|(?:^|[^a-z0-9])www\.|^\s*(?:javascript|vbscript|data|file|mailto|blob|https?|ftp|smb):\S/i;
+const HEROOS = /\bhero\W*os\b/i;
+const looksLike = (pattern: RegExp, value: string) => pattern.test(value.normalize("NFKC"));
 const plural = (count: number) => count.toLocaleString("en-GB");
 
 function addDays(day: string, days: number): string {
@@ -117,6 +121,8 @@ export function checkDraft(
   else if (draft.decisionMaker === "other" && role === "") errors.decisionMakerRole = "Give their role or job title.";
   else if (role.length > limits.decisionMakerRole) {
     errors.decisionMakerRole = `Keep the role to ${plural(limits.decisionMakerRole)} characters or fewer.`;
+  } else if (draft.decisionMaker === "other" && looksLike(HEROOS, role)) {
+    errors.decisionMakerRole = "Give a role in your company. HeroOS doesn't make decisions.";
   }
   if (draft.evidenceStatus === "") errors.evidenceStatus = "Say whether supporting evidence exists.";
   else if (draft.evidenceStatus === "held") {
@@ -132,8 +138,10 @@ export function checkDraft(
       )
     ) {
       errors.evidence = `Keep each description to ${plural(limits.evidenceDescription)} characters and each reference to ${plural(limits.evidenceReference)}.`;
-    } else if (items.some((item) => LINK.test(item.description) || LINK.test(item.reference))) {
+    } else if (items.some((item) => looksLike(LINK, item.description) || looksLike(LINK, item.reference))) {
       errors.evidence = "Describe the evidence or give a reference number instead of a link.";
+    } else if (items.some((item) => looksLike(HEROOS, item.description) || looksLike(HEROOS, item.reference))) {
+      errors.evidence = "Describe your company's own evidence. It can't be a HeroOS document.";
     }
   }
   if (correcting) {
