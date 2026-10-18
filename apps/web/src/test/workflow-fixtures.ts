@@ -139,6 +139,9 @@ type Overrides = {
   screening?: "disabled" | "synthetic_demo";
   /** The M2-03 progression block (omitted: an API that doesn't send one). */
   progression?: Record<string, unknown>;
+  /** The M2-04 decision records and unified history (omitted: an older API). */
+  decisions?: Record<string, unknown>;
+  timeline?: Record<string, unknown>;
 };
 
 function jurisdictionOptions(company: Company) {
@@ -165,6 +168,8 @@ export function apiView({
   escalation = null,
   screening = "synthetic_demo",
   progression,
+  decisions,
+  timeline,
 }: Overrides = {}): Record<string, unknown> {
   const caseAnswer = answers["jurisdiction.case_confirmation"];
   const resolved = company !== null && caseAnswer === company ? company : null;
@@ -352,6 +357,8 @@ export function apiView({
       { id: "created", kind: "case_created", at: "2026-10-15T09:00:00Z", by_viewer: true, title: "Case created", detail: null },
     ],
     ...(progression === undefined ? {} : { progression }),
+    ...(decisions === undefined ? {} : { decisions }),
+    ...(timeline === undefined ? {} : { timeline }),
   });
 }
 
@@ -525,4 +532,97 @@ export function inStageProgression(overrides: Record<string, unknown> = {}): Rec
     checklist: CHECKLIST,
     ...overrides,
   });
+}
+
+// --- M2-04 decision records and the unified history (synthetic) ---------------------------
+
+export const RECORD_ID = "d0c00000-0000-4000-8000-0000000000d1";
+export const CORRECTION_ID = "d0c00000-0000-4000-8000-0000000000d2";
+
+const choiceOf = (key: string, label: string, description = `${label}.`) => ({ key, label, description });
+
+export const DECISION_OPTIONS = {
+  categories: [
+    choiceOf("internal_review_completed", "Internal review completed"),
+    choiceOf("information_requested", "Additional information requested"),
+    choiceOf("meeting_recorded", "Meeting or discussion recorded"),
+    choiceOf("employer_observation", "Employer observation"),
+    choiceOf("internal_pause_or_follow_up", "Internal pause or follow-up decision"),
+    choiceOf("other_note", "Other factual case note"),
+  ],
+  decision_makers: [choiceOf("recorder", "Me"), choiceOf("other", "Someone else in my company")],
+  evidence_statuses: [
+    choiceOf("held", "Yes, my company holds supporting evidence"),
+    choiceOf("none", "No supporting evidence is available"),
+    choiceOf("not_sure", "Not sure yet"),
+  ],
+  evidence_kinds: [
+    choiceOf("internal_document", "Internal document"),
+    choiceOf("meeting_note", "Meeting note"),
+    choiceOf("policy", "Company policy"),
+    choiceOf("other", "Other evidence"),
+  ],
+  limits: {
+    summary: 200,
+    explanation: 4000,
+    decision_maker_role: 120,
+    change_reason: 500,
+    evidence_items: 10,
+    evidence_description: 300,
+    evidence_reference: 200,
+  },
+  notice: "Records here are your company's own account of what it did or decided. A record isn't a warning, a penalty or any other disciplinary outcome.",
+  not_recordable: "Warnings, suspensions, penalties, dismissals, findings of misconduct and specialist approvals can't be recorded here.",
+  evidence_notice: "Describe evidence your company holds. Don't enter links.",
+};
+
+export function apiRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: RECORD_ID,
+    chain_id: RECORD_ID,
+    version: 1,
+    relation: "original",
+    supersedes: null,
+    superseded_by: null,
+    current: true,
+    category: "meeting_recorded",
+    category_label: "Meeting or discussion recorded",
+    summary: "[SYNTHETIC] Check-in meeting held",
+    explanation: "[SYNTHETIC] The supervisor met the team member.\nNotes were taken.",
+    occurred_on: "2026-10-12",
+    decision_maker: "other",
+    decision_maker_role: "[SYNTHETIC] Shift supervisor",
+    evidence_status: "held",
+    evidence: [{ kind: "meeting_note", kind_label: "Meeting note", description: "[SYNTHETIC] Meeting notes", reference: "HR-2026-014" }],
+    change_reason: null,
+    recorded_at: "2026-10-16T10:00:00Z",
+    recorded_by_viewer: true,
+    context: { revision: 5, intake_status: "intake_recorded", progression_status: "awaiting_pathway" },
+    ...overrides,
+  };
+}
+
+export function apiDecisions(records: Record<string, unknown>[] = [], overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return { options: DECISION_OPTIONS, records, can_record: true, saved: null, ...overrides };
+}
+
+export function apiEntry(id: string, overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    at: "2026-10-15T09:00:00Z",
+    category: "case",
+    kind: "case_created",
+    nature: "workflow_change",
+    title: "Case created",
+    detail: null,
+    by_viewer: true,
+    source: { type: "case", id: CASE_ID },
+    status: null,
+    link: null,
+    ...overrides,
+  };
+}
+
+export function apiTimeline(entries: Record<string, unknown>[] = [apiEntry("created")], overrides: Record<string, unknown> = {}) {
+  return { entries, next_before: null, total: entries.length, ...overrides };
 }

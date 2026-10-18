@@ -20,6 +20,16 @@ closes the gate later stages must check (``IntakeEvaluation.next_stage_open``).
 A specialist-review hold is never released by changed answers: once a save
 recorded one, the Case stays held (no release exists in the product yet).
 
+Decision records (M2-04): an administrator records the employer's own account
+of how it is handling the Case (``POST .../decisions``) and corrects or
+clarifies an earlier record with a new version that supersedes it
+(``POST .../decisions/{record}/corrections``); nothing is overwritten. A record
+is never a workflow authorization: its write path takes the instance lock and
+the revision like every write, but never evaluates or records a transition, so
+it can't move a stage, release a hold or stand for a warning. The unified case
+history (``GET .../history``, and its first page in the view) is projected on
+read from the existing records (``app.workflows.timeline``).
+
 The safety screening (health-related questions) is offered only when the
 deployment enables it for synthetic demo data (``HEROOS_SENSITIVE_SCREENING``);
 otherwise its step can't be answered and no intake can be completed.
@@ -40,6 +50,8 @@ Responses:
 - 404 ``Not found``: unknown workflow or step, or a Case that is not a workflow
   Case of the authorized Company (identical for another Company's Case).
 - 409 ``Conflict``: a reused creation ``request_key`` with different details,
+  a reused decision ``request_key`` with different content, a correction of a
+  record that a later version already superseded,
   a stale ``expected_revision`` (the answers changed since they were read), or
   a step that can't be answered in the Case's current state (its jurisdiction
   isn't confirmed, or no approved screening covers it). Progression: no
@@ -61,7 +73,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Final, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from pydantic import (
     AfterValidator,
@@ -75,6 +87,16 @@ from pydantic import (
 from sqlalchemy.exc import IntegrityError
 
 from app.api.companies import JurisdictionOut, jurisdiction_out, refuse_untidy_text
+from app.api.decisions import (
+    CorrectionIn,
+    DecisionIn,
+    DecisionOptionsOut,
+    DecisionsOut,
+    TimelinePageOut,
+    decision_options,
+    decisions_out,
+    timeline_out,
+)
 from app.api.progression import ProgressionOut, progression_out
 from app.auth.dependencies import CompanyContext
 from app.companies.jurisdiction import JurisdictionAssessment, assess_jurisdiction
@@ -89,6 +111,7 @@ from app.workflows import conversation
 from app.workflows.answers import validate_answers
 from app.workflows.conditions import RuleSet
 from app.workflows.conversation import StatusNotice, SubmissionRecord
+from app.workflows.decisions import DecisionRecord, Relation, same_request
 from app.workflows.definition import (
     Question,
     Step,
@@ -115,9 +138,16 @@ from app.workflows.progression.engine import (
     evaluate_progression,
     resolve_attempt,
 )
-from app.workflows.progression.presentation import progress_items
+from app.workflows.progression.presentation import compose_progress_history, progress_items
 from app.workflows.progression.records import StoredEvent
 from app.workflows.progression.spec import PROGRESSIONS, ProgressionSpec
+from app.workflows.timeline import (
+    DEFAULT_PAGE_SIZE,
+    MAX_PAGE_SIZE,
+    TimelineEntry,
+    compose_timeline,
+    timeline_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -465,6 +495,10 @@ class WorkflowViewOut(BaseModel):
     history: list[HistoryItemOut]
     # Workflow progression (M2-03): pathway, stages, transitions and their history.
     progression: ProgressionOut
+    # Employer decision records (M2-04): the employer's account, never an authorization.
+    decisions: DecisionsOut
+    # The unified case history (M2-04): its first page, newest first.
+    timeline: TimelinePageOut
 
 
 def _not_found() -> HTTPException:
@@ -673,6 +707,50 @@ def _next_notice(spec: ProgressionSpec, evaluation: ProgressionEvaluation) -> St
     )
 
 
+def _intake_history(
+    scope: CompanyScope,
+    item: workflows.WorkflowCase,
+    state: _CaseState,
+    checklists: Sequence[Step],
+    viewer_user_id: UUID,
+) -> list[HistoryItem]:
+    return compose_history(
+        state.definition,
+        created_at=item.case.created_at,
+        created_by_user_id=item.instance.created_by_user_id,
+        submissions=state.submissions,
+        evaluations=workflows.evaluations(scope, item.instance.id),
+        viewer_user_id=viewer_user_id,
+        extra_steps=checklists,
+    )
+
+
+def _timeline(
+    item: workflows.WorkflowCase,
+    state: _CaseState,
+    history: Sequence[HistoryItem],
+    records: Sequence[DecisionRecord],
+    viewer_user_id: UUID,
+) -> list[TimelineEntry]:
+    """Every entry of the Case's unified history, oldest first."""
+    program = None if state.progression is None else state.progression.program
+    progress_history = (
+        []
+        if state.spec is None
+        else compose_progress_history(
+            state.spec, program, state.events, viewer_user_id=viewer_user_id
+        )
+    )
+    return compose_timeline(
+        case_id=item.case.id,
+        history=history,
+        events=state.events,
+        progress_history=progress_history,
+        decisions=records,
+        viewer_user_id=viewer_user_id,
+    )
+
+
 def _view(
     scope: CompanyScope,
     item: workflows.WorkflowCase,
@@ -681,6 +759,7 @@ def _view(
     bundle: RuleBundle | None,
     *,
     attempt: StoredEvent | None = None,
+    saved: UUID | None = None,
 ) -> WorkflowViewOut:
     state = _evaluate_case(scope, item, policy, bundle)
     definition = state.definition
@@ -707,15 +786,14 @@ def _view(
         extra_steps=checklists,
         next_notice=_next_notice(spec, progression),
     )
-    history = compose_history(
-        definition,
-        created_at=item.case.created_at,
-        created_by_user_id=item.instance.created_by_user_id,
-        submissions=submissions,
-        evaluations=workflows.evaluations(scope, item.instance.id),
-        viewer_user_id=context.user_id,
-        extra_steps=checklists,
+    history = _intake_history(scope, item, state, checklists, context.user_id)
+    records = workflows.decision_records(scope, item.instance.id)
+    first_page = timeline_page(
+        _timeline(item, state, history, records, context.user_id),
+        before=None,
+        limit=DEFAULT_PAGE_SIZE,
     )
+    assert first_page is not None  # no cursor: always a page
     hold = (
         None
         if evaluation.hold is None
@@ -824,6 +902,13 @@ def _view(
             viewer_user_id=context.user_id,
             attempt=attempt,
         ),
+        decisions=decisions_out(
+            records,
+            viewer_user_id=context.user_id,
+            can_record=context.role == ROLE_COMPANY_ADMIN,
+            saved=saved,
+        ),
+        timeline=timeline_out(first_page),
     )
 
 
@@ -1359,6 +1444,247 @@ def request_transition(
         expected_revision=body.expected_revision,
         request_key=body.request_key,
         acknowledged=body.acknowledged_warnings,
+        scope=scope,
+        context=context,
+        policy=policy,
+        bundle=bundle,
+    )
+
+
+# --- employer decision records and the unified case history (M2-04) ----------------------
+
+# An entry id of the case history: "created", "submission:<id>", "progress:<id>",
+# "decision:<id>", "evaluation:<id>:<what changed>[:<caution>]".
+HISTORY_CURSOR = r"^[a-z]+(:[a-z0-9_-]+){0,3}$"
+
+
+@router.get("/workflows/{workflow_key}/decision-categories", response_model=DecisionOptionsOut)
+def list_decision_categories(workflow_key: str, scope: CompanyAdminDb) -> DecisionOptionsOut:
+    """What an administrator can record in this workflow's Cases (safe categories only)."""
+    _workflow(workflow_key)
+    return decision_options()
+
+
+@router.get("/cases/{case_id}/decisions", response_model=DecisionsOut)
+def get_case_decisions(
+    case_id: UUID, scope: CompanyAdminDb, context: CompanyContext
+) -> DecisionsOut:
+    """The Case's decision records, every version, newest first."""
+    item = workflows.get_workflow_case(scope, case_id)
+    if item is None:
+        raise _not_found()
+    return decisions_out(
+        workflows.decision_records(scope, item.instance.id),
+        viewer_user_id=context.user_id,
+        can_record=context.role == ROLE_COMPANY_ADMIN,
+    )
+
+
+@router.get("/cases/{case_id}/history", response_model=TimelinePageOut)
+def get_case_history(
+    case_id: UUID,
+    scope: CompanyAdminDb,
+    context: CompanyContext,
+    policy: ScreeningPolicy,
+    bundle: InstalledRules,
+    limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = DEFAULT_PAGE_SIZE,
+    # The ``next_before`` of the previous page.
+    before: Annotated[str | None, Query(max_length=200, pattern=HISTORY_CURSOR)] = None,
+) -> TimelinePageOut:
+    """One page of the unified case history, newest first."""
+    item = workflows.get_workflow_case(scope, case_id)
+    if item is None:
+        raise _not_found()
+    state = _evaluate_case(scope, item, policy, bundle)
+    checklists = _checklist_steps(None if state.progression is None else state.progression.program)
+    history = _intake_history(scope, item, state, checklists, context.user_id)
+    records = workflows.decision_records(scope, item.instance.id)
+    page = timeline_page(
+        _timeline(item, state, history, records, context.user_id), before=before, limit=limit
+    )
+    if page is None:
+        raise RequestValidationError(
+            [{"type": "value_error", "loc": ("query", "before"), "msg": "is not in this history"}]
+        )
+    return timeline_out(page)
+
+
+def _replayed_decision(
+    scope: CompanyScope,
+    instance_id: UUID,
+    body: DecisionIn,
+    *,
+    supersedes_id: UUID | None,
+    relation: Relation,
+    change_reason: str | None,
+    context: CompanyContext,
+) -> DecisionRecord | None:
+    """The record this same request stored, or 409 for a key reused otherwise."""
+    record = workflows.find_decision_record(scope, instance_id, body.request_key)
+    if record is None:
+        return None
+    if not same_request(
+        record,
+        user_id=context.user_id,
+        supersedes_id=supersedes_id,
+        relation=relation,
+        category=body.category,
+        summary=body.summary,
+        explanation=body.explanation,
+        occurred_on=body.occurred_on,
+        decision_maker=body.decision_maker,
+        decision_maker_role=body.decision_maker_role,
+        evidence_status=body.evidence_status,
+        evidence=body.evidence_references(),
+        change_reason=change_reason,
+    ):
+        raise _conflict()
+    return record
+
+
+def _record_decision(
+    case_id: UUID,
+    body: DecisionIn,
+    *,
+    supersedes_id: UUID | None,
+    relation: Relation,
+    change_reason: str | None,
+    scope: CompanyScope,
+    context: CompanyContext,
+    policy: SensitiveScreening,
+    bundle: RuleBundle | None,
+) -> WorkflowViewOut:
+    """Append a decision record under the instance lock; never touches progression.
+
+    The actor is the authenticated administrator (``context``); the request
+    carries no actor. Order of checks: the lock, a replay of this request key
+    (answered before anything state-dependent), the record being corrected
+    (404 unless it belongs to this Case), the revision (409 if stale), and the
+    record still being the current version of its chain (409 otherwise).
+    """
+    item = workflows.get_workflow_case(scope, case_id, for_update=True)
+    if item is None:
+        raise _not_found()
+    instance_id = item.instance.id
+
+    def replay_of(instance: UUID) -> DecisionRecord | None:
+        return _replayed_decision(
+            scope,
+            instance,
+            body,
+            supersedes_id=supersedes_id,
+            relation=relation,
+            change_reason=change_reason,
+            context=context,
+        )
+
+    replayed = replay_of(instance_id)
+    if replayed is not None:
+        return _view(scope, item, context, policy, bundle, saved=replayed.id)
+
+    target = None
+    if supersedes_id is not None:
+        # Another Case's or Company's record is indistinguishable from none.
+        target = workflows.get_decision_record(scope, instance_id, supersedes_id)
+        if target is None:
+            raise _not_found()
+    if body.expected_revision != item.instance.revision:
+        raise _conflict()
+    if target is not None and workflows.decision_successor(scope, instance_id, target.id):
+        # Only the current version of a chain can be corrected or clarified.
+        raise _conflict()
+
+    # The workflow context when the record is made: read, never changed.
+    state = _evaluate_case(scope, item, policy, bundle)
+    revision = workflows.advance_revision(scope, instance_id, body.expected_revision)
+    if revision is None:  # pragma: no cover - the lock serializes writers first
+        scope.rollback()
+        reloaded = _reload(scope, case_id)
+        replayed = replay_of(reloaded.instance.id)
+        if replayed is not None:
+            return _view(scope, reloaded, context, policy, bundle, saved=replayed.id)
+        raise _conflict()
+    try:
+        record = workflows.record_decision(
+            scope,
+            instance_id,
+            supersedes=target,
+            relation=relation,
+            category=body.category,
+            summary=body.summary,
+            explanation=body.explanation,
+            occurred_on=body.occurred_on,
+            decision_maker=body.decision_maker,
+            decision_maker_role=body.decision_maker_role,
+            evidence_status=body.evidence_status,
+            evidence=body.evidence_references(),
+            change_reason=change_reason,
+            revision=revision,
+            request_key=body.request_key,
+            user_id=context.user_id,
+            definition_version=state.definition.version,
+            intake_status=state.intake.status,
+            progression_status="unavailable"
+            if state.progression is None
+            else state.progression.status,
+        )
+        scope.commit()
+    except IntegrityError:
+        # The database's own guards (one successor per record, one row per
+        # request): another request got there first.
+        scope.rollback()
+        reloaded = _reload(scope, case_id)
+        replayed = replay_of(reloaded.instance.id)
+        if replayed is not None:
+            return _view(scope, reloaded, context, policy, bundle, saved=replayed.id)
+        raise _conflict() from None
+    # The relation only: never the category, a summary or any other content.
+    logger.info(
+        "Workflow decision recorded (company_id=%s, relation=%s)", scope.company_id, relation
+    )
+    return _view(scope, _reload(scope, case_id), context, policy, bundle, saved=record.id)
+
+
+@router.post("/cases/{case_id}/decisions", response_model=WorkflowViewOut)
+def record_case_decision(
+    case_id: UUID,
+    body: DecisionIn,
+    scope: CompanyAdminDb,
+    context: CompanyContext,
+    policy: ScreeningPolicy,
+    bundle: InstalledRules,
+) -> WorkflowViewOut:
+    """Record a factual employer decision or observation (never a workflow authorization)."""
+    return _record_decision(
+        case_id,
+        body,
+        supersedes_id=None,
+        relation="original",
+        change_reason=None,
+        scope=scope,
+        context=context,
+        policy=policy,
+        bundle=bundle,
+    )
+
+
+@router.post("/cases/{case_id}/decisions/{record_id}/corrections", response_model=WorkflowViewOut)
+def correct_case_decision(
+    case_id: UUID,
+    record_id: UUID,
+    body: CorrectionIn,
+    scope: CompanyAdminDb,
+    context: CompanyContext,
+    policy: ScreeningPolicy,
+    bundle: InstalledRules,
+) -> WorkflowViewOut:
+    """Correct or clarify the current version of a record (a new version; nothing erased)."""
+    return _record_decision(
+        case_id,
+        body,
+        supersedes_id=record_id,
+        relation=body.relation,
+        change_reason=body.change_reason,
         scope=scope,
         context=context,
         policy=policy,

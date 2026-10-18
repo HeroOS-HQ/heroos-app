@@ -21,6 +21,7 @@ EXPECTED_TABLES=(
   memberships
   user_identities
   users
+  workflow_decision_records
   workflow_evaluations
   workflow_instances
   workflow_progress_events
@@ -141,6 +142,27 @@ EXPECTED_CONSTRAINTS=(
   ck_workflow_progress_events_bundle
   ck_workflow_progress_events_intake_status
   ck_workflow_progress_events_detail
+  workflow_decision_records_pkey
+  fk_workflow_decision_records_company_id_companies
+  fk_workflow_decision_records_company_id_instance_id
+  fk_workflow_decision_records_supersedes
+  fk_workflow_decision_records_recorded_by_user_id_users
+  uq_workflow_decision_records_chain_member
+  uq_workflow_decision_records_supersedes_id
+  uq_workflow_decision_records_instance_id_request_key
+  uq_workflow_decision_records_instance_id_revision
+  ck_workflow_decision_records_category
+  ck_workflow_decision_records_relation
+  ck_workflow_decision_records_shape
+  ck_workflow_decision_records_decision_maker
+  ck_workflow_decision_records_evidence_status
+  ck_workflow_decision_records_intake_status
+  ck_workflow_decision_records_progression_status
+  ck_workflow_decision_records_revision
+  ck_workflow_decision_records_definition_version
+  ck_workflow_decision_records_text
+  ck_workflow_decision_records_evidence
+  ck_workflow_decision_records_occurred_on
 )
 
 # Tenant-owned tables: one tenant_isolation policy each.
@@ -154,6 +176,7 @@ TENANT_RLS_TABLES=(
   company_registrations
   membership_events
   memberships
+  workflow_decision_records
   workflow_evaluations
   workflow_instances
   workflow_progress_events
@@ -175,6 +198,7 @@ RLS_TABLES=(
   memberships
   user_identities
   users
+  workflow_decision_records
   workflow_evaluations
   workflow_instances
   workflow_progress_events
@@ -332,7 +356,7 @@ assert_schema() {
   fi
   echo "Runtime role write boundary OK (no Company creation, Membership or confirmation writes)"
 
-  # M2-01 (D1), M2-02 (D2) and M2-03 (D3): workflow entities are append-only
+  # M2-01 (D1), M2-02 (D2), M2-03 (D3) and M2-04 (D4): workflow entities are append-only
   # for the API role (no DELETE, no UPDATE except the instance revision) and
   # invisible to the operator.
   if [[ "$(psql_db "${db}" "SELECT has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_instances',
@@ -354,9 +378,13 @@ assert_schema() {
       OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_progress_events', 'UPDATE, DELETE, TRUNCATE')
       OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_progress_events', 'UPDATE')
       OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_progress_events', 'SELECT, INSERT, UPDATE')
-      OR heroos_schema_contract() <> 6;")" != "f" ]]; then
+      OR NOT has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'SELECT, INSERT')
+      OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE, DELETE, TRUNCATE')
+      OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE')
+      OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_decision_records', 'SELECT, INSERT, UPDATE')
+      OR heroos_schema_contract() <> 7;")" != "f" ]]; then
     echo "Workflow tables: unexpected privileges or schema contract." >&2
     return 1
   fi
-  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 6)"
+  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 7)"
 }

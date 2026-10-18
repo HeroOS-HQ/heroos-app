@@ -19,6 +19,8 @@ import {
   parseWorkflowView,
   type WorkflowView,
 } from "@/lib/workflows/model";
+import { ENTRY_ID, parseTimelinePage, type TimelinePage } from "@/lib/workflows/decisions";
+import type { CorrectionPayload, DecisionPayload } from "@/lib/workflows/requests";
 
 import type { AuthConfig } from "./config";
 
@@ -59,8 +61,11 @@ export type Registration = { outcome: "created" | "existing"; companyId: string;
 export type ApiFailure = "unauthenticated" | "forbidden" | "not_found" | "conflict" | "invalid" | "unavailable";
 export type ApiResult<T> =
   | { ok: true; data: T }
-  /** `answerKeys`: the workflow questions a 422 named (keys only, never values). */
-  | { ok: false; failure: ApiFailure; fields?: FieldName[]; answerKeys?: string[] };
+  /**
+   * `answerKeys`: the workflow questions a 422 named; `decisionFields`: the
+   * decision-record fields it named (names only, never values).
+   */
+  | { ok: false; failure: ApiFailure; fields?: FieldName[]; answerKeys?: string[]; decisionFields?: string[] };
 
 type Fetch = typeof fetch;
 const READ_TIMEOUT_MS = 10_000;
@@ -91,6 +96,31 @@ export function answerKeysFromApiDetail(detail: unknown): string[] {
       : [];
   });
   return [...new Set(keys)];
+}
+
+/** Decision-record fields a 422 named (`loc: ["body", field, ...]`), M2-04. */
+export const DECISION_FIELD_NAMES = [
+  "category",
+  "summary",
+  "explanation",
+  "occurred_on",
+  "decision_maker",
+  "decision_maker_role",
+  "evidence_status",
+  "evidence",
+  "relation",
+  "change_reason",
+] as const;
+
+export function decisionFieldsFromApiDetail(detail: unknown): string[] {
+  if (!Array.isArray(detail)) return [];
+  const fields = detail.flatMap((error) => {
+    const loc = typeof error === "object" && error !== null ? (error as { loc?: unknown }).loc : null;
+    return Array.isArray(loc) && loc[0] === "body" && (DECISION_FIELD_NAMES as readonly unknown[]).includes(loc[1])
+      ? [loc[1] as string]
+      : [];
+  });
+  return [...new Set(fields)];
 }
 
 async function apiCall<T>(
@@ -125,7 +155,14 @@ async function apiCall<T>(
         // No usable body: the fields stay unknown.
       }
       const answerKeys = answerKeysFromApiDetail(detail);
-      return { ok: false, failure, fields: fieldsFromApiDetail(detail), ...(answerKeys.length > 0 ? { answerKeys } : {}) };
+      const decisionFields = decisionFieldsFromApiDetail(detail);
+      return {
+        ok: false,
+        failure,
+        fields: fieldsFromApiDetail(detail),
+        ...(answerKeys.length > 0 ? { answerKeys } : {}),
+        ...(decisionFields.length > 0 ? { decisionFields } : {}),
+      };
     }
     const data = parse(await response.json());
     return data === null ? { ok: false, failure: "unavailable" } : { ok: true, data };
@@ -504,4 +541,71 @@ export function requestTransition(
   fetcher: Fetch = fetch,
 ): Promise<ApiResult<WorkflowView>> {
   return progressionCall(accessToken, config, companyId, caseId, "transitions", payload, fetcher);
+}
+
+/**
+ * `POST /companies/{id}/cases/{caseId}/decisions` (administrators only, M2-04).
+ * 200 with the Case view (a retry with the same `request_key` replays); a stale
+ * `expected_revision` or a reused key with other content is a conflict.
+ */
+export async function recordDecision(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  payload: DecisionPayload,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowView>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  if (!UUID.test(caseId)) return { ok: false, failure: "not_found" };
+  const result = await apiCall(config, accessToken, fetcher, `/companies/${companyId}/cases/${caseId}/decisions`, parseWorkflowView, {
+    method: "POST",
+    body: payload,
+  });
+  if (result.ok && result.data.case.id !== caseId) return { ok: false, failure: "unavailable" };
+  return result;
+}
+
+/**
+ * `POST /companies/{id}/cases/{caseId}/decisions/{recordId}/corrections`
+ * (administrators only, M2-04): a new version of the record's current version.
+ * A record of another Case is not found; a version already replaced is a conflict.
+ */
+export async function correctDecision(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  recordId: string,
+  payload: CorrectionPayload,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<WorkflowView>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  if (!UUID.test(caseId) || !UUID.test(recordId)) return { ok: false, failure: "not_found" };
+  const result = await apiCall(
+    config,
+    accessToken,
+    fetcher,
+    `/companies/${companyId}/cases/${caseId}/decisions/${recordId}/corrections`,
+    parseWorkflowView,
+    { method: "POST", body: payload },
+  );
+  if (result.ok && result.data.case.id !== caseId) return { ok: false, failure: "unavailable" };
+  return result;
+}
+
+/** `GET /companies/{id}/cases/{caseId}/history?before=…`: an older page of the unified history. */
+export async function getCaseHistory(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  before: string | null,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<TimelinePage>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  if (!UUID.test(caseId)) return { ok: false, failure: "not_found" };
+  if (before !== null && (before.length > 200 || !ENTRY_ID.test(before))) return { ok: false, failure: "invalid" };
+  const query = before === null ? "" : `?before=${encodeURIComponent(before)}`;
+  return apiCall(config, accessToken, fetcher, `/companies/${companyId}/cases/${caseId}/history${query}`, parseTimelinePage);
 }

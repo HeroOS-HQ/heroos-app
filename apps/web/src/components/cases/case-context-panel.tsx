@@ -101,8 +101,9 @@ function HistoryEntry({ item }: { item: HistoryItem | ProgressHistoryItem }) {
 /**
  * The Case at a glance: progress, the Case's jurisdiction and its basis, any
  * hold and cautions (all from the API's intake evaluation), the facts as the
- * employer gave them, what is missing or uncertain, the case history and what
- * this version doesn't do yet. Nothing here is an assessment.
+ * employer gave them, what is missing or uncertain, where the case history is
+ * (M2-04: under "Decisions & history"; before it, the per-source histories
+ * here) and what this version doesn't do yet. Nothing here is an assessment.
  */
 export function CaseContextPanel({ view }: { view: WorkflowView }) {
   const questions: Question[] = view.steps.flatMap((step) => step.questions);
@@ -214,23 +215,38 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
         </Section>
       ) : null}
 
-      <Section id="history-heading" title="Case history">
-        <ol className="mt-3 flex flex-col">
-          {[...view.history].reverse().map((item) => (
-            <HistoryEntry item={item} key={item.id} />
-          ))}
-        </ol>
-      </Section>
-
-      {view.progression && view.progression.history.length > 0 ? (
-        <Section id="progression-history-heading" title="Progression history">
-          <ol className="mt-3 flex flex-col">
-            {[...view.progression.history].reverse().map((item) => (
-              <HistoryEntry item={item} key={item.id} />
-            ))}
-          </ol>
+      {view.timeline ? (
+        // M2-04: one unified history, with the employer's records, under "Decisions & history".
+        <Section id="history-pointer-heading" title="History">
+          <p className="mt-3 text-[0.9375rem] leading-relaxed text-hero-navy">
+            Everything that happened to this case, with your company&apos;s records, is in one place.{" "}
+            <a className="font-bold text-hero-blue-ink underline" href="#case-history">
+              See the case history
+            </a>
+          </p>
         </Section>
-      ) : null}
+      ) : (
+        <>
+          {/* An API without the unified history (before M2-04): the per-source lists. */}
+          <Section id="history-heading" title="Case history">
+            <ol className="mt-3 flex flex-col">
+              {[...view.history].reverse().map((item) => (
+                <HistoryEntry item={item} key={item.id} />
+              ))}
+            </ol>
+          </Section>
+
+          {view.progression && view.progression.history.length > 0 ? (
+            <Section id="progression-history-heading" title="Progression history">
+              <ol className="mt-3 flex flex-col">
+                {[...view.progression.history].reverse().map((item) => (
+                  <HistoryEntry item={item} key={item.id} />
+                ))}
+              </ol>
+            </Section>
+          ) : null}
+        </>
+      )}
 
       <Section id="later-heading" title="Not available yet">
         <ul className="mt-3 flex flex-col gap-2">

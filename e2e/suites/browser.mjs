@@ -87,7 +87,14 @@ export async function run(ctx) {
   await page.waitForHydrated("#company-name");
   await page.clickText("button", "Continue");
   await page.waitForText("Enter your company name");
-  check("UI-4", "validation: an empty company name is refused next to the field, focus on it", (await page.eval("document.activeElement?.id")) === "company-name");
+  // The wizard shows the error at once and moves focus on the next animation
+  // frame (requestAnimationFrame): wait for focus instead of sampling it, which
+  // raced on slower CI runners.
+  const focusedName = await page
+    .waitFor(`document.activeElement?.id === "company-name"`, { timeout: 2_000, message: "focus on the company name" })
+    .then(() => true, () => false);
+  check("UI-4", "validation: an empty company name is refused next to the field, focus on it", focusedName,
+    await page.eval("document.activeElement?.id ?? 'none'"));
   await shot(page, "validation-error-390");
   await fillWizard(page, { name: "[SYNTHETIC E2E] UI Founder Co.", legal: "UI Founder Trading LLC", industry: "Hospitality", employees: "14", location: "other", authority: "Example Free Zone Authority" });
   await shot(page, "r1-review-390");

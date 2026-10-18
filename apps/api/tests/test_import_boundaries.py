@@ -2,9 +2,10 @@
 
 - Only the operator CLI may reach the identity provisioning and Company
   registration code.
-- The application exposes exactly four mutating HTTP routes: the administrator-
-  only Blueprint update, founder self-registration and (M2-01) the
-  administrator-only workflow Case creation and answer save. No request can
+- The application's mutating HTTP routes are exactly: the administrator-only
+  Blueprint update, founder self-registration and the administrator-only
+  workflow writes (M2-01 Case creation and answer save, M2-03 pathway and
+  transitions, M2-04 decision records and corrections). No request can
   grant access to an existing Company, provision anyone into one, assign a
   role, suspend, revoke or confirm a jurisdiction, and nothing deletes.
 - Founder self-registration is the only route an authenticated identity that
@@ -41,12 +42,27 @@ WORKFLOW_TRANSITION = (
     "POST",
     "/companies/{company_id}/cases/{case_id}/workflow/progression/transitions",
 )
+# M2-04: employer decision records and their corrections (never an authorization).
+WORKFLOW_DECISION = ("POST", "/companies/{company_id}/cases/{case_id}/decisions")
+WORKFLOW_DECISION_CORRECTION = (
+    "POST",
+    "/companies/{company_id}/cases/{case_id}/decisions/{record_id}/corrections",
+)
 ADMIN_ROUTES = {
     ADMIN_BLUEPRINT_UPDATE,
     WORKFLOW_CASE_CREATE,
     WORKFLOW_ANSWERS_SAVE,
     WORKFLOW_PATHWAY,
     WORKFLOW_TRANSITION,
+    WORKFLOW_DECISION,
+    WORKFLOW_DECISION_CORRECTION,
+}
+# M2-04 reads: decision records, their categories and the case history are for
+# administrators only, like every Disciplinary read.
+ADMIN_READS = {
+    ("GET", "/companies/{company_id}/workflows/{workflow_key}/decision-categories"),
+    ("GET", "/companies/{company_id}/cases/{case_id}/decisions"),
+    ("GET", "/companies/{company_id}/cases/{case_id}/history"),
 }
 MUTATING_ROUTES = {*ADMIN_ROUTES, FOUNDER_REGISTRATION}
 
@@ -126,6 +142,14 @@ def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() ->
         assert require_company_admin in admin, route
         assert get_company_admin_scope in admin, route
 
+    reads = {
+        (method, route.path): route for route in _app_routes() for method in route.methods or set()
+    }
+    for route in ADMIN_READS:
+        admin = _dependency_calls(reads[route].dependant)
+        assert require_company_admin in admin, route
+        assert get_company_admin_scope in admin, route
+
     registration = _dependency_calls(mutating[FOUNDER_REGISTRATION].dependant)
     # A verified credential and the activation switch; never a client claim.
     assert get_verified_identity in registration
@@ -157,4 +181,35 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/cases/{case_id}/workflow/steps/{step_key}/answers",
         "/companies/{company_id}/cases/{case_id}/workflow/progression/pathway",
         "/companies/{company_id}/cases/{case_id}/workflow/progression/transitions",
+        "/companies/{company_id}/workflows/{workflow_key}/decision-categories",
+        "/companies/{company_id}/cases/{case_id}/decisions",
+        "/companies/{company_id}/cases/{case_id}/decisions/{record_id}/corrections",
+        "/companies/{company_id}/cases/{case_id}/history",
     }
+
+
+def test_the_rules_never_read_employer_decision_records() -> None:
+    """M2-04: a record is the employer's account, never a workflow authorization.
+
+    The intake rules, the progression engine and the answers they read can't
+    reach decision records or the history built from them, so no record can
+    start or complete a stage, release a hold or count as a prerequisite.
+    """
+    rule_modules = [
+        APP / "workflows" / "answers.py",
+        APP / "workflows" / "conditions.py",
+        APP / "workflows" / "intake.py",
+        APP / "workflows" / "progress.py",
+        *(APP / "workflows" / "progression").rglob("*.py"),
+    ]
+    forbidden = (
+        "app.workflows.decisions",
+        "app.workflows.timeline",
+        "app.api.decisions",
+        "app.db.models.workflow.WorkflowDecisionRecord",
+        "app.db.models.WorkflowDecisionRecord",
+    )
+    for path in rule_modules:
+        imported = _imports(path)
+        assert not any(name.startswith(forbidden) for name in imported), path
+        assert "decision_record" not in path.read_text(encoding="utf-8"), path

@@ -19,21 +19,32 @@ and completed, transitions refused, and escalations recorded, each with the
 decision, its reason codes, the warnings acknowledged and the rule bundle
 (id, version, digest) that decided it. The Case's position is derived from
 these rows on read; nothing here is a mutable snapshot.
+
+``WorkflowDecisionRecord`` (M2-04, migration ``c4a7e2d9b310``) is the
+append-only record of what the employer reports about its own handling of the
+Case: a factual record in a safe category, who the employer says is
+responsible, the date, an explanation and references to evidence the employer
+holds (never the evidence itself). A correction or clarification is a new row
+that supersedes exactly one earlier row of the same chain; nothing is updated.
+A record is the employer's account, never a workflow authorization: it moves
+no stage and releases no hold.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Final
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
     text,
@@ -111,6 +122,68 @@ PROGRESS_EVENT_SHAPE: Final = (
     "AND (decision = 'block' OR decision = 'escalate') AND request_key IS NOT NULL) "
     "OR (kind = 'escalation_recorded' AND previous_pathway IS NULL "
     "AND decision = 'escalate' AND request_key IS NULL)"
+)
+
+# Stored employer decision-record vocabularies (app.workflows.decisions). Only
+# factual categories that authorize nothing: warnings, suspensions, penalties,
+# dismissals, findings and specialist approvals are deliberately absent, so the
+# database itself refuses them.
+DECISION_CATEGORIES: Final = (
+    "internal_review_completed",
+    "information_requested",
+    "meeting_recorded",
+    "employer_observation",
+    "internal_pause_or_follow_up",
+    "other_note",
+)
+# original: a first record; correction / clarification: supersedes one record.
+DECISION_RELATIONS: Final = ("original", "correction", "clarification")
+# recorder: the signed-in administrator; other: someone the employer names by role
+# (an unverified employer statement, never the authenticated actor).
+DECISION_MAKERS: Final = ("recorder", "other")
+# held: the employer holds evidence (described by reference); none: it says none
+# is available; not_sure: it doesn't know yet. HeroOS never holds or checks it.
+DECISION_EVIDENCE_STATUSES: Final = ("held", "none", "not_sure")
+DECISION_EVIDENCE_KINDS: Final = ("internal_document", "meeting_note", "policy", "other")
+# The progression status when the record was made (app.workflows.progression.engine).
+PROGRESSION_STATUSES: Final = (
+    "unavailable",
+    "incompatible",
+    "held",
+    "paused",
+    "intake_incomplete",
+    "not_covered",
+    "awaiting_pathway",
+    "undetermined",
+    "pathway_not_covered",
+    "ready",
+    "in_stage",
+    "no_further_stage",
+    "closed",
+)
+# Bounds on employer-entered text (characters) and on the evidence references.
+MAX_DECISION_SUMMARY: Final = 200
+MAX_DECISION_EXPLANATION: Final = 4000
+MAX_DECISION_MAKER_ROLE: Final = 120
+MAX_DECISION_CHANGE_REASON: Final = 500
+MAX_DECISION_EVIDENCE_ITEMS: Final = 10
+MAX_EVIDENCE_DESCRIPTION: Final = 300
+MAX_EVIDENCE_REFERENCE: Final = 200
+# A storage backstop for the evidence references, not a product rule.
+MAX_DECISION_EVIDENCE_BYTES: Final = 8192
+# A first record starts its own chain; a later version supersedes one record of
+# the same chain (the foreign key below keeps it in the chain, Case and Company)
+# and says why it was made.
+DECISION_RECORD_SHAPE: Final = (
+    "(relation = 'original' AND supersedes_id IS NULL AND chain_id = id "
+    "AND change_reason IS NULL) "
+    "OR ((relation = 'correction' OR relation = 'clarification') "
+    "AND supersedes_id IS NOT NULL AND supersedes_id <> id AND chain_id <> id "
+    "AND change_reason IS NOT NULL)"
+)
+DECISION_MAKER_SHAPE: Final = (
+    "(decision_maker = 'recorder' AND decision_maker_role IS NULL) "
+    "OR (decision_maker = 'other' AND decision_maker_role IS NOT NULL)"
 )
 
 # JSONB on PostgreSQL; plain JSON for the SQLite stand-ins in unit tests. Python
@@ -402,5 +475,126 @@ class WorkflowProgressEvent(Base):
     # The intake status when the event was decided (e.g. held for specialist review).
     intake_status: Mapped[str] = mapped_column(String(40), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+class WorkflowDecisionRecord(Base):
+    """One employer decision record or observation (append-only; supersede, never update)."""
+
+    __tablename__ = "workflow_decision_records"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["company_id", "instance_id"],
+            ["workflow_instances.company_id", "workflow_instances.id"],
+            name="fk_workflow_decision_records_company_id_instance_id",
+        ),
+        # The target of a correction: a record of the same chain, Case and Company.
+        UniqueConstraint(
+            "company_id",
+            "instance_id",
+            "chain_id",
+            "id",
+            name="uq_workflow_decision_records_chain_member",
+        ),
+        ForeignKeyConstraint(
+            ["company_id", "instance_id", "chain_id", "supersedes_id"],
+            [
+                "workflow_decision_records.company_id",
+                "workflow_decision_records.instance_id",
+                "workflow_decision_records.chain_id",
+                "workflow_decision_records.id",
+            ],
+            name="fk_workflow_decision_records_supersedes",
+        ),
+        # A record is superseded at most once: every chain is a single line.
+        UniqueConstraint("supersedes_id", name="uq_workflow_decision_records_supersedes_id"),
+        # Idempotency: one record per employer request.
+        UniqueConstraint(
+            "instance_id",
+            "request_key",
+            name="uq_workflow_decision_records_instance_id_request_key",
+        ),
+        # Every record produced its own instance revision.
+        UniqueConstraint(
+            "instance_id", "revision", name="uq_workflow_decision_records_instance_id_revision"
+        ),
+        CheckConstraint(
+            _one_of("category", DECISION_CATEGORIES), name="ck_workflow_decision_records_category"
+        ),
+        CheckConstraint(
+            _one_of("relation", DECISION_RELATIONS), name="ck_workflow_decision_records_relation"
+        ),
+        CheckConstraint(DECISION_RECORD_SHAPE, name="ck_workflow_decision_records_shape"),
+        CheckConstraint(
+            f"({_one_of('decision_maker', DECISION_MAKERS)}) AND ({DECISION_MAKER_SHAPE})",
+            name="ck_workflow_decision_records_decision_maker",
+        ),
+        CheckConstraint(
+            _one_of("evidence_status", DECISION_EVIDENCE_STATUSES),
+            name="ck_workflow_decision_records_evidence_status",
+        ),
+        CheckConstraint(
+            _one_of("intake_status", EVALUATION_STATUSES),
+            name="ck_workflow_decision_records_intake_status",
+        ),
+        CheckConstraint(
+            _one_of("progression_status", PROGRESSION_STATUSES),
+            name="ck_workflow_decision_records_progression_status",
+        ),
+        CheckConstraint("revision >= 1", name="ck_workflow_decision_records_revision"),
+        CheckConstraint(
+            "definition_version >= 1", name="ck_workflow_decision_records_definition_version"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
+    company_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey(
+            "companies.id",
+            ondelete="CASCADE",
+            name="fk_workflow_decision_records_company_id_companies",
+        ),
+        nullable=False,
+    )
+    instance_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    # The first record of the chain (its own id for a first record).
+    chain_id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    # The record this one corrects or clarifies; None for a first record.
+    supersedes_id: Mapped[UUID | None] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=True)
+    relation: Mapped[str] = mapped_column(String(20), nullable=False)
+    category: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Employer-entered text, stored exactly as sent (validated, never normalized).
+    summary: Mapped[str] = mapped_column(String(MAX_DECISION_SUMMARY), nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False)
+    # The date the employer says the decision or event happened.
+    occurred_on: Mapped[date] = mapped_column(Date, nullable=False)
+    decision_maker: Mapped[str] = mapped_column(String(20), nullable=False)
+    # "other": the role the employer names (unverified); never a HeroOS User.
+    decision_maker_role: Mapped[str | None] = mapped_column(
+        String(MAX_DECISION_MAKER_ROLE), nullable=True
+    )
+    evidence_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    # References to evidence the employer holds: [{kind, description, reference}].
+    evidence: Mapped[Any] = mapped_column(EvaluationResults, nullable=False)
+    # Why a correction or clarification was made; None for a first record.
+    change_reason: Mapped[str | None] = mapped_column(
+        String(MAX_DECISION_CHANGE_REASON), nullable=True
+    )
+    # The instance revision this record produced (optimistic concurrency).
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_key: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), nullable=False)
+    # The authenticated administrator (from the session, never from the request).
+    recorded_by_user_id: Mapped[UUID] = mapped_column(
+        PostgreSQLUUID(as_uuid=True),
+        ForeignKey("users.id", name="fk_workflow_decision_records_recorded_by_user_id_users"),
+        nullable=False,
+    )
+    # The workflow context when it was recorded (codes only).
+    definition_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    intake_status: Mapped[str] = mapped_column(String(40), nullable=False)
+    progression_status: Mapped[str] = mapped_column(String(30), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -84,7 +84,7 @@ RUNTIME_WRITABLE_TABLES = {
 RUNTIME_INSERTABLE_TABLES = {
     table: column for table, column in RUNTIME_WRITABLE_TABLES.items() if table != "companies"
 }
-# Workflow entities (M2-01 D1, M2-02 D2, M2-03 D3): tenant-owned,
+# Workflow entities (M2-01 D1, M2-02 D2, M2-03 D3, M2-04 D4): tenant-owned,
 # append-only for the API role (SELECT/INSERT; only the instance revision is
 # updatable), never deleted. Kept apart from TENANT_TABLES, whose generic tests
 # build rows per table.
@@ -94,6 +94,7 @@ WORKFLOW_TABLES = {
     "case_facts": "company_id",
     "workflow_evaluations": "company_id",
     "workflow_progress_events": "company_id",
+    "workflow_decision_records": "company_id",
 }
 # Tenant-owned audit tables: written only by owner-run triggers; no API grant.
 TENANT_AUDIT_TABLES = {

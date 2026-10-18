@@ -9,6 +9,7 @@ is unavailable (fail closed) until one is approved and installed (§4).\
 **Milestone:** M2 — Workflow Platform ("Prevent skipped HR steps")\
 **Related:** [Workflow Case Foundation](workflow-foundation.md) (M2-01),
 [Disciplinary Intake](disciplinary-intake.md) (M2-02),
+[Decisions and Case History](workflow-decisions.md) (M2-04),
 [Tenant Isolation](tenant-isolation.md), [ADR-006](../decisions/ADR-006-workflow-orchestration.md)
 
 ## 1. What M2-03 is
@@ -219,8 +220,9 @@ answers route as `workflow_submissions` + `case_facts` under keys
 M2-02 invariant of one intake evaluation per submission.
 
 **Deploy order:** D3 → API and operator CLI → web. The M2-02 API keeps working
-on D3; the M2-03 API refuses to start on D2; the operator CLI needs contract 6
-exactly. The web tolerates an API without the `progression` block (it shows
+on D3; the M2-03 API refuses to start on D2; the M2-03 operator CLI needs
+contract 6 exactly (since M2-04 and D4: 7, see
+[Decisions and Case History §6](workflow-decisions.md#6-persistence-migration-d4-c4a7e2d9b310)). The web tolerates an API without the `progression` block (it shows
 that next steps aren't available). Rollback: the web at any time; the API to
 M2-02 at any time (it ignores the new table); D3 only while it is empty
 (rehearsed in `make e2e-check`, MIG-42 to MIG-47).
@@ -254,8 +256,9 @@ choice; HeroOS suggests nothing), the stage list with the current stage, the
 actions the API would accept (a button) or refuses (the reasons, what is still
 needed, and "specialist review needed" for an escalation, never a button), the
 checklist form, unresolved specialist reviews, and the outcome of each
-request. The header shows the current stage; the right panel adds the
-progression history. Two BFF routes (`/bff/companies/{id}/cases/{case}/progression/pathway`
+request. The header shows the current stage. The progression history was shown
+in the right panel; since M2-04 it is part of the unified case history under
+“Decisions & history” ([Decisions and Case History §5](workflow-decisions.md#5-web)). Two BFF routes (`/bff/companies/{id}/cases/{case}/progression/pathway`
 and `…/transitions`) use the shared CSRF, content-type, size and session guard
 and rebuild the body field by field. The parser never treats a refused
 transition as available, whatever the payload says.

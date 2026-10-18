@@ -1,14 +1,25 @@
 import "server-only";
 
 import { type FieldName, parseBlueprintPatch, parseRegistrationRequest } from "@/lib/onboarding/model";
+import { ENTRY_ID } from "@/lib/workflows/decisions";
 import { KEY } from "@/lib/workflows/model";
-import { parseAnswersSave, parseCaseCreate, parsePathwayRequest, parseTransitionRequest } from "@/lib/workflows/requests";
+import {
+  parseAnswersSave,
+  parseCaseCreate,
+  parseCorrectionRequest,
+  parseDecisionRequest,
+  parsePathwayRequest,
+  parseTransitionRequest,
+} from "@/lib/workflows/requests";
 
 import { isSameOriginRequest, sessionFromRequest } from "./auth-flow";
 import type { AuthConfig } from "./config";
 import {
   type ApiFailure,
+  correctDecision,
   createWorkflowCase,
+  getCaseHistory,
+  recordDecision,
   registerCompany,
   requestTransition,
   saveStepAnswers,
@@ -269,4 +280,84 @@ export async function handleTransitionRequest(
   const result = await requestTransition(guarded.accessToken, config, companyId, caseId, parsed.value, deps.fetch);
   if (!result.ok) return workflowFailure(result.failure, []);
   return json(200, { view: result.data });
+}
+
+/**
+ * POST /bff/companies/{id}/cases/{caseId}/decisions →
+ * `POST /companies/{id}/cases/{caseId}/decisions` (M2-04).
+ *
+ * 200 `{view}` with the record saved (a retry with the same `requestKey` is
+ * applied once); 409 `conflict` when the case changed since it was read; 422
+ * names the fields only. A record never moves the case on.
+ */
+export async function handleDecisionRecord(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const parsed = parseDecisionRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await recordDecision(guarded.accessToken, config, companyId, caseId, parsed.value, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, result.decisionFields);
+  return json(200, { view: result.data });
+}
+
+/**
+ * POST /bff/companies/{id}/cases/{caseId}/decisions/{recordId}/corrections →
+ * `POST /companies/{id}/cases/{caseId}/decisions/{recordId}/corrections` (M2-04).
+ * Same answers as a new record; 409 also when that version was already replaced.
+ */
+export async function handleDecisionCorrection(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  recordId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId) || !UUID.test(recordId)) return error(404, "not_found");
+  const parsed = parseCorrectionRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await correctDecision(guarded.accessToken, config, companyId, caseId, recordId, parsed.value, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, result.decisionFields);
+  return json(200, { view: result.data });
+}
+
+/**
+ * GET /bff/companies/{id}/cases/{caseId}/history?before=… →
+ * `GET /companies/{id}/cases/{caseId}/history` (M2-04): an older page of the
+ * unified case history. A read: same-origin and a valid session, no body.
+ */
+export async function handleHistoryPage(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  if (!isSameOriginRequest(request, config)) return error(403, "forbidden_origin");
+  const session = sessionFromRequest(request, config, Math.floor(deps.now() / 1000));
+  if (session === null) return error(401, "session_expired");
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const params = new URL(request.url).searchParams;
+  const before = params.get("before");
+  if ([...params.keys()].some((key) => key !== "before") || (before !== null && (before.length > 200 || !ENTRY_ID.test(before)))) {
+    return error(422, "invalid", []);
+  }
+
+  const result = await getCaseHistory(session.accessToken, config, companyId, caseId, before, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, { page: result.data });
 }

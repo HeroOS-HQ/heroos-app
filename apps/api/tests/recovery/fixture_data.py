@@ -12,7 +12,7 @@ Seeds the disposable source database (``make backup-restore-check``)::
 import os
 import re
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from uuid import UUID
 
 from sqlalchemy import create_engine, text
@@ -29,6 +29,7 @@ from app.db.models import (
     Membership,
     User,
     UserIdentity,
+    WorkflowDecisionRecord,
     WorkflowEvaluation,
     WorkflowInstance,
     WorkflowProgressEvent,
@@ -71,6 +72,14 @@ PROGRESS_A = UUID("ae000000-0000-4000-8000-00000000000a")
 PROGRESS_B = UUID("be000000-0000-4000-8000-00000000000b")
 PROGRESS_KEY_A = UUID("af000000-0000-4000-8000-00000000000a")
 PROGRESS_KEY_B = UUID("bf000000-0000-4000-8000-00000000000b")
+# M2-04: each Case has an employer decision record; A's was corrected once (a
+# chain through the self-referencing foreign key, which a restore must keep).
+DECISION_A = UUID("c0000000-0000-4000-8000-00000000000a")
+DECISION_B = UUID("c1000000-0000-4000-8000-00000000000b")
+DECISION_A_CORRECTION = UUID("c2000000-0000-4000-8000-00000000000a")
+DECISION_KEY_A = UUID("c3000000-0000-4000-8000-00000000000a")
+DECISION_KEY_B = UUID("c4000000-0000-4000-8000-00000000000b")
+DECISION_KEY_A_CORRECTION = UUID("c5000000-0000-4000-8000-00000000000a")
 # A synthetic intake evaluation trace (M2-02): codes and enumerated answers only.
 EVALUATION_RESULTS = [
     {
@@ -190,7 +199,8 @@ def build() -> list[object]:
                 case_id=case,
                 workflow_key="disciplinary",
                 definition_version=1,
-                revision=1,
+                # The submission (1), then the decision record(s) (2; A: 3).
+                revision=3 if label == "A" else 2,
                 request_key=request_key,
                 created_by_user_id=user,
             )
@@ -258,6 +268,50 @@ def build() -> list[object]:
                 intake_status="awaiting_jurisdiction",
             )
         )
+        decision, decision_key = (
+            (DECISION_A, DECISION_KEY_A) if label == "A" else (DECISION_B, DECISION_KEY_B)
+        )
+        recorded = {
+            "company_id": company,
+            "instance_id": instance,
+            "chain_id": decision,
+            "category": "meeting_recorded",
+            "summary": f"Synthetic recovery meeting {label}",
+            "explanation": "Synthetic recovery explanation.\nSecond line.",
+            "occurred_on": date(2026, 10, 12),
+            "decision_maker": "other",
+            "decision_maker_role": "Synthetic operations lead",
+            "evidence_status": "held",
+            "evidence": [{"kind": "meeting_note", "description": "Synthetic note",
+                          "reference": "SYN-1"}],
+            "recorded_by_user_id": user,
+            "definition_version": 2,
+            "intake_status": "awaiting_jurisdiction",
+            "progression_status": "unavailable",
+        }  # fmt: skip
+        rows.append(
+            WorkflowDecisionRecord(
+                id=decision,
+                supersedes_id=None,
+                relation="original",
+                change_reason=None,
+                revision=2,
+                request_key=decision_key,
+                **recorded,
+            )
+        )
+        if label == "A":
+            rows.append(
+                WorkflowDecisionRecord(
+                    id=DECISION_A_CORRECTION,
+                    supersedes_id=DECISION_A,
+                    relation="correction",
+                    change_reason="Synthetic correction reason.",
+                    revision=3,
+                    request_key=DECISION_KEY_A_CORRECTION,
+                    **{**recorded, "occurred_on": date(2026, 10, 13)},
+                )
+            )
     return rows
 
 

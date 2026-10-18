@@ -1,3 +1,4 @@
+import { DECISION_CATEGORIES, type DecisionCategory, EVIDENCE_KINDS, type EvidenceKind } from "./decisions";
 import { FACT_KEY, KEY, TITLE_MAX, UUID } from "./model";
 import { CODE } from "./progression";
 
@@ -123,4 +124,137 @@ export function parseTransitionRequest(body: unknown): ParsedRequest<Progression
   const { transition } = body;
   if (!base.ok || typeof transition !== "string" || !STAGE_TRANSITION.test(transition)) return { ok: false };
   return { ok: true, value: { ...base.value, transition } };
+}
+
+// --- employer decision records (M2-04) -------------------------------------------------
+
+/** The API's bounds (characters, counts); the API checks them again. */
+export const DECISION_LIMITS = {
+  summary: 200,
+  explanation: 4000,
+  decisionMakerRole: 120,
+  changeReason: 500,
+  evidenceItems: 10,
+  evidenceDescription: 300,
+  evidenceReference: 200,
+} as const;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+const MULTI_LINE_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
+
+type EvidencePayload = { kind: EvidenceKind; description: string; reference: string | null };
+export type DecisionPayload = {
+  expected_revision: number;
+  request_key: string;
+  category: DecisionCategory;
+  summary: string;
+  explanation: string;
+  occurred_on: string;
+  decision_maker: "recorder" | "other";
+  decision_maker_role: string | null;
+  evidence_status: "held" | "none" | "not_sure";
+  evidence: EvidencePayload[];
+};
+export type CorrectionPayload = DecisionPayload & { relation: "correction" | "clarification"; change_reason: string };
+
+const singleLine = (value: unknown, max: number): value is string =>
+  typeof value === "string" && value.length > 0 && value.length <= max && value === value.trim() && !CONTROL.test(value);
+const multiLine = (value: unknown, max: number): value is string =>
+  typeof value === "string" &&
+  value.trim().length > 0 &&
+  value.length <= max &&
+  value === value.trim() &&
+  !MULTI_LINE_CONTROL.test(value);
+
+function evidenceItems(value: unknown): EvidencePayload[] | null {
+  if (!Array.isArray(value) || value.length > DECISION_LIMITS.evidenceItems) return null;
+  const items = value.map((item): EvidencePayload | null => {
+    if (!isRecord(item) || !onlyKeys(item, ["kind", "description", "reference"])) return null;
+    const { kind, description, reference } = item;
+    if (
+      typeof kind !== "string" ||
+      !(EVIDENCE_KINDS as readonly string[]).includes(kind) ||
+      !singleLine(description, DECISION_LIMITS.evidenceDescription) ||
+      !(reference === undefined || reference === null || singleLine(reference, DECISION_LIMITS.evidenceReference))
+    ) {
+      return null;
+    }
+    return { kind: kind as EvidenceKind, description, reference: reference ?? null };
+  });
+  return items.every((item): item is EvidencePayload => item !== null) ? items : null;
+}
+
+const DECISION_FIELDS = [
+  "expectedRevision",
+  "requestKey",
+  "category",
+  "summary",
+  "explanation",
+  "occurredOn",
+  "decisionMaker",
+  "decisionMakerRole",
+  "evidenceStatus",
+  "evidence",
+];
+
+function decision(body: Json): DecisionPayload | null {
+  const { expectedRevision, requestKey, category, summary, explanation, occurredOn, decisionMaker, decisionMakerRole, evidenceStatus } =
+    body;
+  const evidence = evidenceItems(body.evidence ?? []);
+  const role = decisionMakerRole ?? null;
+  if (
+    typeof expectedRevision !== "number" ||
+    !Number.isInteger(expectedRevision) ||
+    expectedRevision < 0 ||
+    typeof requestKey !== "string" ||
+    !UUID.test(requestKey) ||
+    typeof category !== "string" ||
+    // Only factual categories: nothing here can stand for a warning or an outcome.
+    !(DECISION_CATEGORIES as readonly string[]).includes(category) ||
+    !singleLine(summary, DECISION_LIMITS.summary) ||
+    !multiLine(explanation, DECISION_LIMITS.explanation) ||
+    typeof occurredOn !== "string" ||
+    !DAY.test(occurredOn) ||
+    !(decisionMaker === "recorder" || decisionMaker === "other") ||
+    !(role === null || singleLine(role, DECISION_LIMITS.decisionMakerRole)) ||
+    (decisionMaker === "other") !== (role !== null) ||
+    !(evidenceStatus === "held" || evidenceStatus === "none" || evidenceStatus === "not_sure") ||
+    evidence === null ||
+    (evidenceStatus === "held") !== evidence.length > 0
+  ) {
+    return null;
+  }
+  return {
+    expected_revision: expectedRevision,
+    request_key: requestKey,
+    category: category as DecisionCategory,
+    summary,
+    explanation,
+    occurred_on: occurredOn,
+    decision_maker: decisionMaker,
+    decision_maker_role: role,
+    evidence_status: evidenceStatus,
+    evidence,
+  };
+}
+
+/** A new employer decision record (M2-04). The API decides; the actor is the session's. */
+export function parseDecisionRequest(body: unknown): ParsedRequest<DecisionPayload> {
+  if (!isRecord(body) || !onlyKeys(body, DECISION_FIELDS)) return { ok: false };
+  const value = decision(body);
+  return value === null ? { ok: false } : { ok: true, value };
+}
+
+/** A correction or clarification of an earlier record (a new version; nothing is erased). */
+export function parseCorrectionRequest(body: unknown): ParsedRequest<CorrectionPayload> {
+  if (!isRecord(body) || !onlyKeys(body, [...DECISION_FIELDS, "relation", "changeReason"])) return { ok: false };
+  const value = decision(body);
+  const { relation, changeReason } = body;
+  if (
+    value === null ||
+    !(relation === "correction" || relation === "clarification") ||
+    !multiLine(changeReason, DECISION_LIMITS.changeReason)
+  ) {
+    return { ok: false };
+  }
+  return { ok: true, value: { ...value, relation, change_reason: changeReason } };
 }

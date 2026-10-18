@@ -1,8 +1,9 @@
 # Workflow Case Foundation (M2-01)
 
 **Status:** Implemented (M2-01, PR #29, deployed to temporary staging). Extended by
-M2-02: [Disciplinary Intake](disciplinary-intake.md) and M2-03:
-[Workflow Progression](workflow-progression.md).\
+M2-02: [Disciplinary Intake](disciplinary-intake.md), M2-03:
+[Workflow Progression](workflow-progression.md) and M2-04:
+[Decisions and Case History](workflow-decisions.md).\
 **Owner:** Technical Lead\
 **Milestone:** M2 — Workflow Platform\
 **Related:** [ADR-006](../decisions/ADR-006-workflow-orchestration.md),
@@ -50,8 +51,8 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
   decisions (PRIV-001/002/004/020), not technical defaults. Downgrading D1
   refuses once any workflow data exists.
 - `heroos_schema_contract()` = 4 after D1, 5 after D2 (M2-02), 6 after D3
-  (M2-03). The current API needs at least 6; the identity operator CLI needs
-  exactly 6. **Deployment
+  (M2-03), 7 after D4 (M2-04). The current API needs at least 7; the identity
+  operator CLI needs exactly 7. **Deployment
   order:** apply the migration, then deploy the API and the operator CLI, then
   the web app. The M1-10C API keeps working on D1 and the M2-01 API on D2
   (rehearsed in `make e2e-check`, MIG-30 to MIG-41).

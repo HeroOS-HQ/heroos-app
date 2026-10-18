@@ -214,10 +214,14 @@ const ctx = {
   async screenshot(page, name) {
     await page.screenshot(join(outputDir, "screenshots", `${name}.png`));
   },
+  /** A screenshot of one element of the page (e.g. a section further down a long page). */
+  async screenshotOf(page, name, selector) {
+    await page.screenshotOf(join(outputDir, "screenshots", `${name}.png`), selector);
+  },
   sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
 };
 
-const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "progression", "migration"];
+const SUITES = ["api-auth", "registration", "isolation", "jurisdiction", "bff", "browser", "cases", "intake", "progression", "decisions", "migration"];
 const selected = process.env.E2E_SUITES ? process.env.E2E_SUITES.split(",") : SUITES;
 
 let exitCode = 1;
