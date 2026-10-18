@@ -101,19 +101,68 @@ def _import_app(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         [sys.executable, "-c", "import app.main"],
         cwd=API_ROOT,
         env={
-            **clean_env,
-            "HEROOS_ENV": "development",
-            "HEROOS_AUTH_PROVIDER": "development",
-            "HEROOS_DEV_AUTH_SECRET": DEV_SECRET,
-            "HEROOS_RULE_BUNDLE_PATH": str(SYNTHETIC_BUNDLE),
-            "HEROOS_RULE_BUNDLE_SHA256": synthetic_bundle_pin(),
-            **env,
+            name: value
+            for name, value in {
+                **clean_env,
+                "HEROOS_ENV": "development",
+                "HEROOS_AUTH_PROVIDER": "development",
+                "HEROOS_DEV_AUTH_SECRET": DEV_SECRET,
+                "HEROOS_RULE_BUNDLE_PATH": str(SYNTHETIC_BUNDLE),
+                "HEROOS_RULE_BUNDLE_SHA256": synthetic_bundle_pin(),
+                **env,
+            }.items()
+            # An empty value removes the variable (an unset rule bundle).
+            if value != ""
         },
         capture_output=True,
         text=True,
         timeout=60,
         check=False,
     )
+
+
+def test_without_templates_the_application_starts_healthy_and_previews_are_unavailable() -> None:
+    """Absent (not configured) is a normal state: the API runs, previews are off."""
+    result = _import_app({})
+    assert result.returncode == 0, result.stderr
+    output = result.stdout + result.stderr
+    assert "Workflow progression rules loaded" in output
+    assert "Document templates not installed" in output
+
+
+@pytest.mark.parametrize(
+    ("env", "refusal"),
+    [
+        # Configured but missing: never silently treated as "not installed".
+        (
+            {"HEROOS_TEMPLATE_BUNDLE_PATH": "/nonexistent/templates.json",
+             "HEROOS_TEMPLATE_BUNDLE_SHA256": "a" * 64},
+            "template bundle refused: unreadable",
+        ),
+        # Half configured.
+        ({"HEROOS_TEMPLATE_BUNDLE_SHA256": "a" * 64}, "must be set together"),
+        # Templates without the rules they are bound to.
+        (
+            {"HEROOS_TEMPLATE_BUNDLE_PATH": "TEMPLATES", "HEROOS_RULE_BUNDLE_PATH": "",
+             "HEROOS_RULE_BUNDLE_SHA256": ""},
+            "requires HEROOS_RULE_BUNDLE_PATH",
+        ),
+    ],
+)  # fmt: skip
+def test_a_configured_but_unusable_template_bundle_stops_startup(
+    env: dict[str, str], refusal: str
+) -> None:
+    """Configured is a promise: missing, partial or rule-less templates refuse to start."""
+    env = {
+        key: str(SYNTHETIC_TEMPLATES) if value == "TEMPLATES" else value
+        for key, value in env.items()
+    }
+    if env.get("HEROOS_TEMPLATE_BUNDLE_PATH") == str(SYNTHETIC_TEMPLATES):
+        env["HEROOS_TEMPLATE_BUNDLE_SHA256"] = synthetic_templates_pin()
+    result = _import_app(env)
+    assert result.returncode != 0
+    assert refusal in result.stderr
+    assert not any(words in result.stderr + result.stdout for words in WORDING)
 
 
 def test_the_application_starts_with_valid_templates_and_logs_no_wording() -> None:
