@@ -700,3 +700,97 @@ def test_conflicting_field_definitions_are_refused() -> None:
     with pytest.raises(ConversionError) as refused:
         template_import.assemble(META, [engine, other])
     assert refused.value.code == "conflicting_field"
+
+
+# --- audit hardening ------------------------------------------------------------------------
+
+
+def _patch_headers(
+    path: Path, part: str, *, method: int | None = None, encrypted: bool = False
+) -> None:
+    """Rewrite a part's ZIP headers in place (local header and central directory)."""
+    data = bytearray(path.read_bytes())
+    name = part.encode()
+    # (signature, flags offset, method offset, name offset)
+    for signature, flags_at, method_at, name_at in (
+        (b"PK\x03\x04", 6, 8, 30),
+        (b"PK\x01\x02", 8, 10, 46),
+    ):
+        start = 0
+        while (at := data.find(signature, start)) >= 0:
+            if data[at + name_at : at + name_at + len(name)] == name:
+                if method is not None:
+                    data[at + method_at : at + method_at + 2] = method.to_bytes(2, "little")
+                if encrypted:
+                    data[at + flags_at] |= 0x1
+            start = at + 4
+    path.write_bytes(bytes(data))
+
+
+def test_two_parts_with_the_same_name_are_refused(tmp_path: Path) -> None:
+    path = make_docx(tmp_path / "dup.docx", p(r("[SYNTHETIC] Text")))
+    with zipfile.ZipFile(path, "a") as archive, pytest.warns(UserWarning):
+        archive.writestr("word/document.xml", "<x/>")
+    with pytest.raises(DocxRefused) as refused:
+        read_docx(path)
+    assert refused.value.code == "duplicate_part"
+
+
+@pytest.mark.parametrize(
+    ("patch", "code"),
+    [({"encrypted": True}, "encrypted_part"), ({"method": 99}, "unreadable_part")],
+)
+def test_encrypted_or_unreadable_parts_are_refused_not_crashed_on(
+    tmp_path: Path, patch: dict[str, Any], code: str
+) -> None:
+    path = make_docx(
+        tmp_path / "odd.docx", p(r("[SYNTHETIC] Text")), parts={"word/extra.xml": b"<x/>"}
+    )
+    _patch_headers(path, "word/extra.xml", **patch)
+    with pytest.raises(DocxRefused) as refused:
+        read_docx(path)
+    assert refused.value.code == code
+
+
+def test_footnote_or_endnote_text_is_flagged_but_empty_separators_are_not(tmp_path: Path) -> None:
+    def notes(text: str) -> bytes:
+        return f'<w:footnotes xmlns:w="{W_NS}"><w:footnote><w:p><w:r><w:t>{text}</w:t></w:r></w:p></w:footnote></w:footnotes>'.encode()  # noqa: E501
+
+    with_text = make_docx(
+        tmp_path / "n1.docx",
+        p(r("[SYNTHETIC] Body")),
+        parts={"word/footnotes.xml": notes("[SYNTHETIC] Note")},
+    )
+    empty = make_docx(
+        tmp_path / "n2.docx", p(r("[SYNTHETIC] Body")), parts={"word/footnotes.xml": notes(" ")}
+    )
+    assert read_docx(with_text).flags == ["footnotes_or_endnotes"]
+    assert read_docx(empty).flags == []
+
+
+def test_pathologically_deep_nesting_is_refused(tmp_path: Path) -> None:
+    deep = "<w:hyperlink>" * 40 + r("[SYNTHETIC] Deep") + "</w:hyperlink>" * 40
+    path = make_docx(tmp_path / "deep.docx", f"<w:p>{deep}</w:p>")
+    with pytest.raises(DocxRefused) as refused:
+        read_docx(path)
+    assert refused.value.code == "nesting_too_deep"
+
+
+def test_nonstandard_brackets_are_noted_and_must_be_confirmed_literal(tmp_path: Path) -> None:
+    path = make_docx(
+        tmp_path / "fw.docx", p(r("Dear ［Employee Name］,")) + p(hl("[Employee Name]"))
+    )
+    document = read_docx(path)
+    assert scan(document)["paragraphs"][0]["notes"] == ["nonstandard_brackets"]
+    data = {
+        "schema": "heroos.template-mapping/1",
+        "source_sha256": document.sha256,
+        "template": mapping("x")["template"],
+        "fields": {"[Employee Name]": "recipient_name"},
+        "field_specs": [FIELD_SPECS[1]],
+    }
+    with pytest.raises(ConversionError) as refused:
+        build_outputs(document, parse_mapping(data))
+    assert refused.value.code == "nonstandard_brackets"
+    data["literal_highlights"] = [0]
+    assert build_outputs(document, parse_mapping(data))["report"]["verification"] == "PASS"

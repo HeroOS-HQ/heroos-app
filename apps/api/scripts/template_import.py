@@ -70,6 +70,8 @@ PLACEHOLDER: Final = re.compile(r"\[[^\[\]\n]*\]")
 # Layout characters that become a plain space, or nothing, in a working copy.
 SPACES: Final = frozenset("\t   ")
 DROPPED: Final = frozenset("­")
+# Brackets that look like placeholder marks but aren't the template convention.
+NONSTANDARD_BRACKETS: Final = re.compile(r"[［］【】〔〕〖〗⟦⟧]")
 CONDITIONAL_HINT: Final = re.compile(r"^\[\s*(if|where|when)\b", re.IGNORECASE)
 INSTRUCTION_HINT: Final = re.compile(r"^\[\s*(select|choose|delete|remove|note)\b", re.IGNORECASE)
 
@@ -149,6 +151,8 @@ def _paragraph_scan(paragraph: Paragraph) -> dict[str, Any]:
         notes.append("unbalanced_brackets")
     if highlighted_outside(paragraph.chars, found):
         notes.append("highlighted_text_outside_brackets")
+    if NONSTANDARD_BRACKETS.search(paragraph.text):
+        notes.append("nonstandard_brackets")
     return {
         "index": paragraph.index,
         "cell": None if paragraph.cell is None else list(paragraph.cell),
@@ -431,9 +435,13 @@ def _segments(
     """A paragraph's segments, and the gap text each field segment replaced (in order)."""
     where = f"paragraph {paragraph.index}"
     found = gaps(chars)
-    if highlighted_outside(chars, found) and paragraph.index not in spec.literal_highlights:
-        raise ConversionError("highlighted_text_outside_brackets", where)
     text = "".join(c.char for c in chars)
+    # A person confirms these paragraphs' marks are wording, not placeholders.
+    if paragraph.index not in spec.literal_highlights:
+        if highlighted_outside(chars, found):
+            raise ConversionError("highlighted_text_outside_brackets", where)
+        if NONSTANDARD_BRACKETS.search(text):
+            raise ConversionError("nonstandard_brackets", where)
     segments: list[dict[str, Any]] = []
     replaced: list[str] = []
     position = 0

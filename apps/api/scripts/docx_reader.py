@@ -7,16 +7,18 @@ It refuses, with a fixed code and a structural location (never wording):
 
 - anything that isn't a plain, bounded ZIP: more than 200 parts, a part
   larger than 5 MiB or 20 MiB in all, a suspicious compression ratio, an
-  absolute or ``..`` part name;
+  absolute or ``..`` part name, two parts with the same name, an encrypted
+  or otherwise unreadable part;
 - active or external content: macros (``vbaProject.bin``, macro-enabled
   content types), embedded or ActiveX objects, relationships to external
   targets;
 - XML with a document type declaration or entities (no DTD is ever parsed);
 - content the converter can't place with certainty: tracked changes, field
-  codes, text boxes, unknown body elements.
+  codes, text boxes, unknown body elements, nesting deeper than 32 levels.
 
-Things a person must look at (text in headers or footers, comments, images,
-symbol characters) are reported as flags, never silently dropped.
+Things a person must look at (text in headers or footers, footnotes or
+endnotes, comments, images, symbol characters) are reported as flags, never
+silently dropped.
 
 Uses the standard library only (``zipfile``, ``xml.etree``); nothing is
 written and nothing is executed.
@@ -25,6 +27,7 @@ written and nothing is executed.
 import hashlib
 import re
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
@@ -35,6 +38,7 @@ MAX_PARTS: Final = 200
 MAX_PART_BYTES: Final = 5 * 1024 * 1024
 MAX_TOTAL_BYTES: Final = 20 * 1024 * 1024
 MAX_RATIO: Final = 200
+MAX_DEPTH: Final = 32
 
 W: Final = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 DOCUMENT_PART: Final = "word/document.xml"
@@ -45,6 +49,8 @@ _ACTIVE_PARTS: Final = re.compile(
     r"(^|/)(vbaProject\.bin|vbaData\.xml)$|^word/(embeddings|activeX)/", re.IGNORECASE
 )
 # Elements whose content isn't plain flowing text the converter can place.
+# Inline containers whose runs are part of the paragraph's text.
+_CONTAINERS: Final = (f"{W}hyperlink", f"{W}smartTag", f"{W}sdt", f"{W}sdtContent", f"{W}customXml")
 _REFUSED: Final[dict[str, str]] = {
     f"{W}ins": "tracked_changes",
     f"{W}del": "tracked_changes",
@@ -129,6 +135,10 @@ def _check_archive(archive: zipfile.ZipFile) -> dict[str, bytes]:
     infos = archive.infolist()
     if len(infos) > MAX_PARTS:
         raise DocxRefused("too_many_parts")
+    names = [info.filename for info in infos]
+    if len(set(names)) != len(names):
+        # Which of two same-named parts a reader takes is ambiguous: refuse.
+        raise DocxRefused("duplicate_part")
     total = 0
     parts: dict[str, bytes] = {}
     for info in infos:
@@ -146,8 +156,19 @@ def _check_archive(archive: zipfile.ZipFile) -> dict[str, bytes]:
             raise DocxRefused("active_content")
         if info.is_dir():
             continue
-        with archive.open(info) as handle:
-            data = handle.read(MAX_PART_BYTES + 1)
+        if info.flag_bits & 0x1:
+            raise DocxRefused("encrypted_part")
+        try:
+            with archive.open(info) as handle:
+                data = handle.read(MAX_PART_BYTES + 1)
+        except (
+            RuntimeError,
+            NotImplementedError,
+            zipfile.BadZipFile,
+            zlib.error,
+            OSError,
+        ) as error:
+            raise DocxRefused("unreadable_part") from error
         if len(data) > MAX_PART_BYTES:
             raise DocxRefused("part_too_large")
         parts[name] = data
@@ -200,24 +221,20 @@ def _run_chars(run: ElementTree.Element, where: str, flags: list[str]) -> list[C
 def _paragraph_chars(paragraph: ElementTree.Element, where: str, flags: list[str]) -> list[Char]:
     chars: list[Char] = []
 
-    def walk(element: ElementTree.Element) -> None:
+    def walk(element: ElementTree.Element, depth: int) -> None:
+        if depth > MAX_DEPTH:
+            raise DocxRefused("nesting_too_deep", where)
         for child in element:
             refused = _REFUSED.get(child.tag)
             if refused is not None:
                 raise DocxRefused(refused, where)
             if child.tag == f"{W}r":
                 chars.extend(_run_chars(child, where, flags))
-            elif child.tag in (
-                f"{W}hyperlink",
-                f"{W}smartTag",
-                f"{W}sdt",
-                f"{W}sdtContent",
-                f"{W}customXml",
-            ):
-                walk(child)
+            elif child.tag in _CONTAINERS:
+                walk(child, depth + 1)
             # Properties, bookmarks, proofing marks and comment anchors carry no text.
 
-    walk(paragraph)
+    walk(paragraph, 0)
     return chars
 
 
@@ -262,6 +279,10 @@ def read_docx(path: Path) -> Document:
                 flags.append("header_or_footer_text")
         if name in ("word/comments.xml", "word/commentsExtended.xml"):
             flags.append("comments")
+        if name in ("word/footnotes.xml", "word/endnotes.xml"):
+            root = _parse(data, name)
+            if "".join(t.text or "" for t in root.iter(f"{W}t")).strip():
+                flags.append("footnotes_or_endnotes")
         if name.startswith("word/media/"):
             flags.append("images")
 
@@ -279,7 +300,9 @@ def read_docx(path: Path) -> Document:
         chars = _paragraph_chars(element, f"paragraph {index}", flags)
         return Paragraph(index, tuple(chars), heading, list_item, cell)
 
-    def visit(element: ElementTree.Element) -> None:
+    def visit(element: ElementTree.Element, depth: int = 0) -> None:
+        if depth > MAX_DEPTH:
+            raise DocxRefused("nesting_too_deep", "body")
         for child in element:
             if child.tag == f"{W}p":
                 items.append(paragraph(child, None))
@@ -297,7 +320,7 @@ def read_docx(path: Path) -> Document:
                     rows.append(tuple(cells))
                 items.append(Table(t, tuple(rows)))
             elif child.tag in (f"{W}sdt", f"{W}sdtContent", f"{W}customXml"):
-                visit(child)
+                visit(child, depth + 1)
             elif child.tag in (
                 f"{W}sectPr",
                 f"{W}bookmarkStart",

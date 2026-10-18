@@ -194,10 +194,12 @@ uv run python -m scripts.template_import assemble META ENGINE_COPY... --out FILE
 - **Reading** (`scripts/docx_reader.py`, standard library only): text,
   paragraphs, runs and their highlighting, headings, list items and tables;
   nothing else. Refused: more than 200 parts, a part over 5 MiB or 20 MiB in
-  all, a suspicious compression ratio, unsafe part names, macros, embedded or
-  ActiveX objects, external relationships, any DTD or entity, tracked
-  changes, field codes, text boxes and unknown body elements. Text in headers
-  or footers, comments, images and symbols are flagged for a person.
+  all, a suspicious compression ratio, unsafe or duplicate part names,
+  encrypted or unreadable parts, macros, embedded or ActiveX objects, external
+  relationships, any DTD or entity, tracked changes, field codes, text boxes,
+  unknown body elements and nesting deeper than 32 levels. Text in headers or
+  footers, footnotes or endnotes, comments, images and symbols are flagged
+  for a person.
 - **Scan** reports every bracketed gap and what needs a decision: gaps not
   (fully) highlighted, conditional or instruction-like gaps, highlighted text
   outside brackets, unbalanced brackets, and the flags above.
@@ -207,9 +209,10 @@ uv run python -m scripts.template_import assemble META ENGINE_COPY... --out FILE
   repeated identical paragraphs (per list entry), and wording changes
   ("patches") each with a recorded approval. **Nothing is guessed:** an
   un-highlighted or partly highlighted gap is never mapped by its text alone
-  (only by a confirmed occurrence), highlighted text outside brackets must be
-  confirmed literal, a patch can't touch a gap, flags must be acknowledged,
-  and anything unsettled stops the conversion.
+  (only by a confirmed occurrence), highlighted text outside brackets and
+  non-standard brackets (`［ ］`, `【 】`…) must be confirmed literal, a patch
+  can't touch a gap, flags must be acknowledged, and anything unsettled stops
+  the conversion.
 - **Verify, always:** the working copy turned back into text (each field
   replaced by its original gap, prefixes and repeated paragraphs restored,
   approved patches reversed) must equal the source text exactly, paragraph by
