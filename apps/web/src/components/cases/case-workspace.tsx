@@ -11,13 +11,15 @@ import type { CaseSummary, WorkflowView } from "@/lib/workflows/model";
 import { AnswersForm } from "./answers-form";
 import { CaseContextPanel } from "./case-context-panel";
 import { Conversation } from "./conversation";
+import { DecisionsPanel } from "./decisions-panel";
 import { ProgressionPanel } from "./progression-panel";
 
 /**
  * CASE_READY: the guided Case workspace. Left: the Company's Disciplinary
  * Cases. Centre: the conversation, the next steps (workflow progression:
- * pathway, stages and what can be done now) and, for administrators, the
- * question groups (one step at a time). Right (below the conversation on
+ * pathway, stages and what can be done now), for administrators the
+ * question groups (one step at a time), and "Decisions & history" (M2-04:
+ * employer records, their corrections and the unified case history). Right (below the conversation on
  * smaller screens): progress, hold, jurisdiction, cautions, facts, missing and
  * uncertain answers, and the case and progression history.
  *
@@ -139,6 +141,11 @@ export function CaseWorkspace({
             <a className="ml-2 font-bold text-hero-blue-ink underline xl:hidden" href="#case-details">
               Progress and details
             </a>
+            {view.decisions ? (
+              <a className="ml-2 font-bold text-hero-blue-ink underline" href="#decisions-history">
+                Decisions &amp; history
+              </a>
+            ) : null}
           </p>
           {view.progression && view.progression.status.code !== "unavailable" ? (
             <p className="text-sm font-semibold text-hero-navy" data-testid="current-stage">
@@ -238,6 +245,14 @@ export function CaseWorkspace({
               step={step}
             />
           ) : null}
+        </section>
+
+        <section
+          aria-labelledby="decisions-heading"
+          className="mt-8 scroll-mt-24 rounded-3xl border border-hero-border bg-hero-surface/40 p-5 sm:p-7"
+          id="decisions-history"
+        >
+          <DecisionsPanel caseId={caseId} companyId={companyId} fetcher={fetcher} onUpdated={setView} view={view} />
         </section>
       </div>
 

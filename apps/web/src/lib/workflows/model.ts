@@ -1,7 +1,9 @@
+import { type Decisions, parseDecisions, parseTimeline, type TimelinePage } from "./decisions";
 import { parseProgression, type Progression } from "./progression";
 
 /**
- * Guided workflow Cases (M2-01, M2-02 intake, M2-03 progression): the shapes
+ * Guided workflow Cases (M2-01, M2-02 intake, M2-03 progression, M2-04
+ * decision records and the unified history): the shapes
  * the web app works with, and strict parsers for the HeroOS API's JSON. Client-safe (no server
  * imports): the same parsers check the API's answers on the web server and, in
  * the browser, the BFF's answers.
@@ -174,6 +176,10 @@ export type WorkflowView = {
   history: HistoryItem[];
   /** Workflow progression (M2-03); null from an API that doesn't send it. */
   progression: Progression | null;
+  /** Employer decision records (M2-04); null from an API that doesn't send them. */
+  decisions: Decisions | null;
+  /** The unified case history's first page, newest first (M2-04); null from an older API. */
+  timeline: TimelinePage | null;
 };
 
 export const WORKFLOW_DISCIPLINARY = "disciplinary";
@@ -554,8 +560,12 @@ export function parseWorkflowView(body: unknown): WorkflowView | null {
   const messages = body.conversation.map(parseMessage);
   const history = body.history.map(parseHistoryItem);
   const progression = parseProgression(body.progression);
+  const decisions = parseDecisions(body.decisions);
+  const timeline = parseTimeline(body.timeline);
   if (
     progression === undefined ||
+    decisions === undefined ||
+    timeline === undefined ||
     !steps.every((step) => step !== null) ||
     !progress.every((item) => item !== null) ||
     status === null ||
@@ -596,6 +606,8 @@ export function parseWorkflowView(body: unknown): WorkflowView | null {
     conversation: messages.filter((message): message is Message => message !== undefined && message !== null),
     history: history as HistoryItem[],
     progression,
+    decisions,
+    timeline,
   };
 }
 
