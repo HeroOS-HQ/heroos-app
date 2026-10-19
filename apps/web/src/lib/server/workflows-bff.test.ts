@@ -1,10 +1,11 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 
+import { parseWorkflowView } from "@/lib/workflows/model";
 import { API_BASE_URL, COMPANY_ID, CONFIG, WEB_ORIGIN } from "@/test/fixtures";
 import { apiCaseSummary, apiProgression, apiView, CASE_ID, OTHER_CASE_ID, WORKFLOW_CASES_PATH } from "@/test/workflow-fixtures";
 
-import { caseState, casesState } from "./app-state";
+import { assistantLoad, caseState, casesState } from "./app-state";
 import { handleAnswersSave, handleCaseCreate, handlePathwaySelect, handleTransitionRequest } from "./bff";
 import { SESSION_COOKIE } from "./cookies";
 import { answerKeysFromApiDetail, getCaseWorkflow, listWorkflowCases, saveStepAnswers } from "./heroos-api";
@@ -227,6 +228,28 @@ describe("page states", () => {
     const list = { ok: true as const, data: [] };
     expect(caseState(admin, workspaces, list, { ok: false, failure: "not_found" }).kind).toBe("case_not_found");
     expect(caseState(admin, workspaces, list, { ok: false, failure: "unavailable" }).kind).toBe("api_unavailable");
+  });
+
+  it("reads the Hannah AI demo's status with the Case, and never fails the Case page over it", () => {
+    const notice = "Hannah AI Demo";
+    const ready = { available: true, reason: null, notice };
+    expect(assistantLoad({ ok: true, data: ready })).toEqual({ state: "ready", status: ready });
+    const unset = { available: false, reason: "not_configured" as const, notice };
+    expect(assistantLoad({ ok: true, data: unset })).toEqual({ state: "ready", status: unset });
+    // Switched off, refused, unknown Case, an API without the demo: out of sight.
+    expect(assistantLoad({ ok: true, data: { available: false, reason: "disabled", notice } })).toEqual({ state: "hidden" });
+    for (const failure of ["forbidden", "not_found", "unauthenticated", "invalid"] as const) {
+      expect(assistantLoad({ ok: false, failure })).toEqual({ state: "hidden" });
+    }
+    // A waking or failing API (or an answer this page can't read): said plainly on the page.
+    expect(assistantLoad({ ok: false, failure: "unavailable" })).toEqual({ state: "unreachable" });
+
+    const list = { ok: true as const, data: [] };
+    const view = { ok: true as const, data: parseWorkflowView(apiView())! };
+    const state = caseState(admin, workspaces, list, view, { state: "unreachable" });
+    expect(state.kind === "case_ready" && state.assistant).toEqual({ state: "unreachable" });
+    const plain = caseState(admin, workspaces, list, view);
+    expect(plain.kind === "case_ready" && plain.assistant).toEqual({ state: "hidden" });
   });
 });
 

@@ -1,9 +1,9 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { boundedHistory, MAX_HISTORY_CHARS, MAX_HISTORY_TURNS } from "@/lib/assistant/model";
+import { type AssistantLoad, boundedHistory, MAX_HISTORY_CHARS, MAX_HISTORY_TURNS } from "@/lib/assistant/model";
 import { COMPANY_ID } from "@/test/fixtures";
-import { CASE_ID, OTHER_CASE_ID, view } from "@/test/workflow-fixtures";
+import { apiProgression, CASE_ID, OTHER_CASE_ID, view } from "@/test/workflow-fixtures";
 
 import { CaseWorkspace } from "./case-workspace";
 import { HannahChat, NOTICE } from "./hannah-chat";
@@ -39,8 +39,23 @@ function fetcherOf(...responses: (Response | Error | Promise<Response>)[]) {
   });
 }
 
-const chat = (fetcher: ReturnType<typeof fetcherOf>) =>
-  render(<HannahChat caseId={CASE_ID} companyId={COMPANY_ID} fetcher={fetcher as unknown as typeof fetch} />);
+const READY: AssistantLoad = { state: "ready", status: { available: true, reason: null, notice: NOTICE } };
+
+function chat(fetcher: ReturnType<typeof fetcherOf>, load: AssistantLoad = READY) {
+  const onLoad = vi.fn<(load: AssistantLoad) => void>();
+  const onOpenWorkflow = vi.fn<() => void>();
+  const utils = render(
+    <HannahChat
+      caseId={CASE_ID}
+      companyId={COMPANY_ID}
+      fetcher={fetcher as unknown as typeof fetch}
+      load={load}
+      onLoad={onLoad}
+      onOpenWorkflow={onOpenWorkflow}
+    />,
+  );
+  return { ...utils, onLoad, onOpenWorkflow };
+}
 const box = () => screen.getByRole("textbox", { name: "Message Hannah" });
 const type = (text: string) => fireEvent.change(box(), { target: { value: text } });
 const log = () => within(screen.getByRole("log", { name: /Conversation with Hannah/ }));
@@ -61,52 +76,59 @@ afterEach(() => {
 });
 
 describe("HannahChat (Hannah AI demo)", () => {
-  it("renders the demo notice and composer only when the API says this person can use it", async () => {
-    const fetcher = fetcherOf(available());
+  it("opens with the demo notice, Hannah's introduction and the composer, asking nothing yet", () => {
+    const fetcher = fetcherOf();
     chat(fetcher);
-    expect(
-      await screen.findByRole("heading", {
-        name: "Talk it through with Hannah",
-      }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Conversation with Hannah (AI demo)" })).toBeInTheDocument();
     expect(screen.getByText(NOTICE)).toBeInTheDocument();
-    expect(screen.getByText(/AI demo · not part of the case record/)).toBeInTheDocument();
-    expect(box()).toBeInTheDocument();
+    expect(screen.getByText(/AI demo · not part of the case record · not saved/)).toBeInTheDocument();
+    expect(log().getByText("Hi, I'm Hannah.")).toBeInTheDocument();
+    expect(log().getByText(/can't see this case's saved answers/)).toBeInTheDocument();
+    expect(box()).toHaveAttribute("maxlength", "2000");
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start over" })).toBeDisabled();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing while the demo is hidden", () => {
+    const { container } = chat(fetcherOf(), { state: "hidden" });
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("says when the environment has no model provider, with no composer and a way to the workflow", () => {
+    const { onOpenWorkflow } = chat(fetcherOf(), {
+      state: "ready",
+      status: { available: false, reason: "not_configured", notice: NOTICE },
+    });
+    expect(screen.getByRole("heading", { name: "Hannah AI isn't set up in this environment" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message Hannah" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open the guided case workflow" }));
+    expect(onOpenWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["Hannah is available", available(), { state: "ready", status: { available: true, reason: null, notice: NOTICE } }],
+    ["the demo was switched off", available("disabled"), { state: "hidden" }],
+    ["the person is no longer an administrator", reply(403, { error: "refused" }), { state: "hidden" }],
+    ["the API is still failing", reply(503, { error: "unavailable" }), { state: "unreachable" }],
+    ["the network is down", new Error("offline"), { state: "unreachable" }],
+  ])("says plainly when the status couldn't be read and checks again: %s", async (_, response, expected) => {
+    const fetcher = fetcherOf(response);
+    const { onLoad } = chat(fetcher, { state: "unreachable" });
+    expect(screen.getByRole("heading", { name: "Hannah AI isn't responding right now" })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message Hannah" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Check again" }));
+    await waitFor(() => expect(onLoad).toHaveBeenCalledWith(expected));
+    if (expected.state === "unreachable") {
+      expect(await screen.findByText("Still not responding. Try again in a minute.")).toBeInTheDocument();
+    }
     const [url, init] = fetcher.mock.calls[0] as Call;
     expect(url).toBe(base);
     expect(init?.method ?? "GET").toBe("GET");
   });
 
-  it.each([
-    ["the demo is off", available("disabled")],
-    ["the person is a member", reply(403, { error: "refused" })],
-    ["the API is older", reply(404, { error: "not_found" })],
-    ["the status can't be read", new Error("offline")],
-  ])("stays out of the page when %s", async (_, response) => {
-    const fetcher = fetcherOf(response);
-    const { container } = chat(fetcher);
-    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-    await act(async () => {});
-    expect(container).toBeEmptyDOMElement();
-  });
-
-  it("says when the environment has no model provider, with no composer", async () => {
-    chat(fetcherOf(available("not_configured")));
-    expect(await screen.findByText("Hannah AI isn't set up in this environment")).toBeInTheDocument();
-    expect(screen.queryByRole("textbox", { name: "Message Hannah" })).toBeNull();
-  });
-
-  it("hides itself for an unknown reason from a newer or older API", async () => {
-    const fetcher = fetcherOf(available("not_a_tester"));
-    const { container } = chat(fetcher);
-    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
-    await act(async () => {});
-    expect(container).toBeEmptyDOMElement();
-  });
-
   it("explains a refusal (e.g. the role changed) without offering a retry", async () => {
-    chat(fetcherOf(available(), reply(403, { error: "refused" })));
-    await screen.findByRole("textbox", { name: "Message Hannah" });
+    chat(fetcherOf(reply(403, { error: "refused" })));
     type("Hello");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const alert = await screen.findByRole("alert");
@@ -116,9 +138,8 @@ describe("HannahChat (Hannah AI demo)", () => {
 
   it("sends a message to the BFF, shows it pending, then Hannah's reply as an AI message", async () => {
     let answer!: (response: Response) => void;
-    const fetcher = fetcherOf(available(), new Promise<Response>((resolve) => (answer = resolve)));
+    const fetcher = fetcherOf(new Promise<Response>((resolve) => (answer = resolve)));
     chat(fetcher);
-    await screen.findByRole("textbox", { name: "Message Hannah" });
     type("One of our employees has been coming late to work repeatedly.");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -126,7 +147,7 @@ describe("HannahChat (Hannah AI demo)", () => {
     expect(screen.getByRole("button", { name: "Sending…" })).toBeDisabled();
     expect(log().getByText("One of our employees has been coming late to work repeatedly.")).toBeInTheDocument();
     expect(box()).toHaveValue("");
-    const { url, init, body } = sent(fetcher, 1);
+    const { url, init, body } = sent(fetcher, 0);
     expect(url).toBe(`${base}/messages`);
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("same-origin");
@@ -143,16 +164,15 @@ describe("HannahChat (Hannah AI demo)", () => {
   });
 
   it("remembers the conversation: earlier turns go with the next message", async () => {
-    const fetcher = fetcherOf(available(), hannah("Have there been earlier warnings?"), hannah("Thanks, that helps."));
+    const fetcher = fetcherOf(hannah("Have there been earlier warnings?"), hannah("Thanks, that helps."));
     chat(fetcher);
-    await screen.findByRole("textbox", { name: "Message Hannah" });
     type("Sam has been late six times this month.");
     fireEvent.keyDown(box(), { key: "Enter" });
     await screen.findByText("Have there been earlier warnings?");
     type("One verbal warning in May.");
     fireEvent.keyDown(box(), { key: "Enter" });
     await screen.findByText("Thanks, that helps.");
-    expect(sent(fetcher, 2).body).toEqual({
+    expect(sent(fetcher, 1).body).toEqual({
       message: "One verbal warning in May.",
       history: [
         { role: "user", content: "Sam has been late six times this month." },
@@ -162,18 +182,17 @@ describe("HannahChat (Hannah AI demo)", () => {
   });
 
   it("Shift+Enter adds a line instead of sending; nothing is sent twice while waiting", async () => {
-    const fetcher = fetcherOf(available(), new Promise<Response>(() => {}));
+    const fetcher = fetcherOf(new Promise<Response>(() => {}));
     chat(fetcher);
-    await screen.findByRole("textbox", { name: "Message Hannah" });
     type("First line");
     fireEvent.keyDown(box(), { key: "Enter", shiftKey: true });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(0);
     fireEvent.keyDown(box(), { key: "Enter" });
     await screen.findByText("Hannah is thinking…");
     type("Another message");
     fireEvent.keyDown(box(), { key: "Enter" });
     fireEvent.click(screen.getByRole("button", { name: "Sending…" }));
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -182,9 +201,8 @@ describe("HannahChat (Hannah AI demo)", () => {
     [reply(503, { error: "unavailable" }), "Hannah couldn't answer just now"],
     [new Error("network down"), "Hannah couldn't answer just now"],
   ])("recovers from a failure and retries the same message once", async (failure, title) => {
-    const fetcher = fetcherOf(available(), failure, hannah("Let's take it step by step."));
+    const fetcher = fetcherOf(failure, hannah("Let's take it step by step."));
     chat(fetcher);
-    await screen.findByRole("textbox", { name: "Message Hannah" });
     type("An employee shouted at a colleague.");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const alert = await screen.findByRole("alert");
@@ -197,15 +215,14 @@ describe("HannahChat (Hannah AI demo)", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     // Shown once, sent again unchanged (not added to its own history).
     expect(log().getAllByText("An employee shouted at a colleague.")).toHaveLength(1);
-    expect(sent(fetcher, 2).body).toEqual({
+    expect(sent(fetcher, 1).body).toEqual({
       message: "An employee shouted at a colleague.",
       history: [],
     });
   });
 
   it("explains a missing provider key without offering a retry", async () => {
-    chat(fetcherOf(available(), reply(503, { error: "not_configured" })));
-    await screen.findByRole("textbox", { name: "Message Hannah" });
+    chat(fetcherOf(reply(503, { error: "not_configured" })));
     type("Hello");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     const alert = await screen.findByRole("alert");
@@ -214,9 +231,8 @@ describe("HannahChat (Hannah AI demo)", () => {
   });
 
   it("starts over with an empty conversation", async () => {
-    const fetcher = fetcherOf(available(), hannah("Tell me more."), hannah("Fresh start."));
+    const fetcher = fetcherOf(hannah("Tell me more."), hannah("Fresh start."));
     chat(fetcher);
-    await screen.findByRole("textbox", { name: "Message Hannah" });
     type("First scenario");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Tell me more.");
@@ -225,7 +241,7 @@ describe("HannahChat (Hannah AI demo)", () => {
     type("Second scenario");
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByText("Fresh start.");
-    expect(sent(fetcher, 2).body.history).toEqual([]);
+    expect(sent(fetcher, 1).body.history).toEqual([]);
   });
 });
 
@@ -245,40 +261,119 @@ describe("boundedHistory", () => {
 });
 
 describe("CaseWorkspace with the Hannah AI demo", () => {
-  it("adds the chat under the guided conversation and keeps the workflow controls", async () => {
-    const assistantFetcher = fetcherOf(available());
+  function workspace(assistant: AssistantLoad | undefined, overrides: Parameters<typeof view>[0] = {}) {
+    const assistantFetcher = fetcherOf(hannah("Tell me what happened first."));
     render(
       <CaseWorkspace
+        assistant={assistant}
         assistantFetcher={assistantFetcher as unknown as typeof fetch}
         cases={[]}
         companyId={COMPANY_ID}
         fetcher={fetcherOf() as unknown as typeof fetch}
-        initialView={view()}
+        initialView={view(overrides)}
       />,
     );
-    expect(
-      await screen.findByRole("heading", {
-        name: "Talk it through with Hannah",
-      }),
-    ).toBeInTheDocument();
+    return assistantFetcher;
+  }
+  const tab = (name: RegExp) => screen.getByRole("tab", { name });
+
+  it("opens on the conversation with Hannah and keeps the guided workflow one tab away", async () => {
+    const assistantFetcher = workspace(READY);
+    expect(screen.getByRole("tablist", { name: "Case views" })).toBeInTheDocument();
+    expect(tab(/Chat with Hannah/)).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tabpanel", { name: /Chat with Hannah/ })).toBeVisible();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("[SYNTHETIC] Attendance concern");
+    // The official workflow is there, just not shown.
+    expect(screen.queryByRole("navigation", { name: "Question groups" })).toBeNull();
+    expect(document.getElementById("case-panel-workflow")).not.toBeVisible();
+    // The case details stay beside the conversation.
+    const details = within(screen.getByRole("complementary", { name: "Case details" }));
+    expect(details.getByRole("heading", { name: "Case status" })).toBeInTheDocument();
+    expect(details.getByText("Next step in the guided workflow")).toBeInTheDocument();
+
+    type("A fictional employee keeps arriving late.");
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await log().findByText("Tell me what happened first.");
+    expect(sent(assistantFetcher, 0).url).toBe(`${base}/messages`);
+
+    fireEvent.click(tab(/Guided case workflow/));
+    expect(tab(/Guided case workflow/)).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("list", { name: "Conversation" })).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Question groups" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Save answers/ })).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "Case details" })).toBeInTheDocument();
-    expect(OTHER_CASE_ID).not.toBe(CASE_ID);
+    expect(screen.getByText(/guided workflow, no AI/)).toBeVisible();
+
+    // Back to Hannah: the conversation is still there (never saved, kept while the page is open).
+    fireEvent.click(tab(/Chat with Hannah/));
+    expect(log().getByText("A fictional employee keeps arriving late.")).toBeInTheDocument();
+    expect(log().getByText("Tell me what happened first.")).toBeInTheDocument();
   });
 
-  it("doesn't ask about Hannah for a member (view only)", () => {
-    const assistantFetcher = fetcherOf(available());
-    render(
-      <CaseWorkspace
-        assistantFetcher={assistantFetcher as unknown as typeof fetch}
-        cases={[]}
-        companyId={COMPANY_ID}
-        initialView={view({ canEdit: false })}
-      />,
-    );
+  it("moves between the views with the arrow keys", () => {
+    workspace(READY);
+    tab(/Chat with Hannah/).focus();
+    fireEvent.keyDown(tab(/Chat with Hannah/), { key: "ArrowRight" });
+    expect(tab(/Guided case workflow/)).toHaveAttribute("aria-selected", "true");
+    fireEvent.keyDown(tab(/Guided case workflow/), { key: "Home" });
+    expect(tab(/Chat with Hannah/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it.each([
+    ["switched off", { state: "hidden" } as AssistantLoad],
+    ["not read (no status from the page)", undefined],
+  ])("shows the guided workflow alone when the demo is %s", (_, assistant) => {
+    workspace(assistant);
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByTestId("hannah-chat")).toBeNull();
+    expect(screen.getByRole("navigation", { name: "Question groups" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Save answers/ })).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "has no model provider",
+      { state: "ready", status: { available: false, reason: "not_configured", notice: NOTICE } } as AssistantLoad,
+      "Hannah AI isn't set up in this environment",
+    ],
+    ["couldn't be checked", { state: "unreachable" } as AssistantLoad, "Hannah AI isn't responding right now"],
+  ])("leads with the guided workflow when Hannah %s, and says why on her tab", (_, assistant, title) => {
+    workspace(assistant);
+    expect(tab(/Guided case workflow/)).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("navigation", { name: "Question groups" })).toBeInTheDocument();
+    fireEvent.click(tab(/Chat with Hannah/));
+    expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "Message Hannah" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Open the guided case workflow" }));
+    expect(tab(/Guided case workflow/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("opens the guided workflow from the case details", () => {
+    workspace(READY);
+    const details = within(screen.getByRole("complementary", { name: "Case details" }));
+    fireEvent.click(details.getByRole("button", { name: "Open in the guided workflow" }));
+    expect(tab(/Guided case workflow/)).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("navigation", { name: "Question groups" })).toBeInTheDocument();
+
+    fireEvent.click(tab(/Chat with Hannah/));
+    fireEvent.click(details.getByRole("button", { name: "Documents" }));
+    expect(tab(/Guided case workflow/)).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("follows a link into the guided workflow from the Hannah view", () => {
+    workspace(READY, { company: "uae_federal", revision: 5, progression: apiProgression() });
+    expect(tab(/Chat with Hannah/)).toHaveAttribute("aria-selected", "true");
+    const link = document.querySelector<HTMLAnchorElement>('a[href="#next-steps"]')!;
+    fireEvent.click(link);
+    expect(tab(/Guided case workflow/)).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("heading", { name: "Next steps" })).toBeVisible();
+  });
+
+  it("doesn't offer Hannah to a member (view only)", () => {
+    const assistantFetcher = workspace(READY, { canEdit: false });
     expect(assistantFetcher).not.toHaveBeenCalled();
-    expect(screen.queryByRole("heading", { name: "Talk it through with Hannah" })).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByTestId("hannah-chat")).toBeNull();
+    expect(screen.getByText("View only")).toBeInTheDocument();
+    expect(OTHER_CASE_ID).not.toBe(CASE_ID);
   });
 });
