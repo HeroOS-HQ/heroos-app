@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { AppShell } from "@/components/app/app-shell";
+import { CompanyShell } from "@/components/app/company-shell";
 import { LoadingView } from "@/components/app/loading-view";
 import {
   AccessDeniedView,
@@ -10,12 +10,12 @@ import {
   SessionExpiredView,
   SignedOutView,
 } from "@/components/app/state-views";
-import { ArrowLeftIcon } from "@/components/site/icons";
 import { CompanySettingsForm } from "@/components/settings/company-settings-form";
 import { Notice } from "@/components/ui/notice";
-import { buttonQuiet, card, lede, pageTitle, sectionTitle } from "@/components/ui/styles";
+import { card, lede, pageTitle, sectionTitle } from "@/components/ui/styles";
 import { CompanyFacts } from "@/components/workspace/company-facts";
 import { JurisdictionStatus } from "@/components/workspace/jurisdiction-status";
+import { pageGutter } from "@/components/workspace/page-banner";
 import { loadWorkspace } from "@/lib/server/app-state";
 
 export const metadata: Metadata = { title: "Company details · HeroOS" };
@@ -26,7 +26,7 @@ export const metadata: Metadata = { title: "Company details · HeroOS" };
  */
 export default function SettingsPage({ params }: PageProps<"/workspaces/[companyId]/settings">) {
   return (
-    <Suspense fallback={<LoadingView label="Loading company details…" />}>
+    <Suspense fallback={<LoadingView label="Loading company details…" layout="full" />}>
       <SettingsContent params={params} />
     </Suspense>
   );
@@ -52,17 +52,12 @@ async function SettingsContent({ params }: Pick<PageProps<"/workspaces/[companyI
   const { company, membership, blueprint } = state.details;
   const editable = membership?.canUpdateBlueprint === true && blueprint !== null;
   return (
-    <AppShell
-      context={company.name}
-      switcher={{ currentId: company.id, items: state.workspaces.map(({ companyId: id, name }) => ({ companyId: id, name })) }}
-    >
-      <div className="mx-auto flex w-full max-w-[52rem] flex-col gap-6 px-4 py-8 sm:px-6 sm:py-12">
+    <CompanyShell current="blueprint" details={state.details} workspaces={state.workspaces}>
+      {/* A readable form width inside the full-width page. */}
+      <div className={`${pageGutter} flex max-w-[56rem] flex-col gap-6 pb-10 pt-7 sm:pt-10`}>
         <div>
-          <a className={buttonQuiet} href={`/workspaces/${encodeURIComponent(company.id)}`}>
-            <ArrowLeftIcon className="size-4" />
-            {company.name}
-          </a>
-          <h1 className={`${pageTitle} mt-3`}>Company details</h1>
+          <p className="text-xs font-bold uppercase tracking-[0.16em] text-hero-blue-ink">Company Blueprint</p>
+          <h1 className={`${pageTitle} mt-2`}>Company details</h1>
           <p className={`mt-2 ${lede}`}>
             {editable
               ? "Keep your company profile up to date. Changes are saved only when you select “Save changes”."
@@ -93,6 +88,6 @@ async function SettingsContent({ params }: Pick<PageProps<"/workspaces/[companyI
           </>
         )}
       </div>
-    </AppShell>
+    </CompanyShell>
   );
 }

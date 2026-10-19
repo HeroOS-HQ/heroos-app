@@ -14,13 +14,18 @@ const DOTS: Record<Tone, string> = {
   muted: "bg-hero-muted",
 };
 
-/** A short status in words; the colour only reinforces it. */
-export function StatusBadge({ tone, children }: { tone: Tone; children: string }) {
+/**
+ * A short status in words; the colour only reinforces it. `wrap` lets a long
+ * status (an API label) wrap in a narrow column instead of widening it.
+ */
+export function StatusBadge({ tone, children, wrap = false }: { tone: Tone; children: string; wrap?: boolean }) {
   return (
     <span
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-0.5 text-[0.8125rem] font-bold ${TONES[tone]}`}
+      className={`inline-flex items-center gap-1.5 border px-2.5 py-0.5 text-[0.8125rem] font-bold ${
+        wrap ? "max-w-full rounded-xl leading-snug" : "whitespace-nowrap rounded-full"
+      } ${TONES[tone]}`}
     >
-      <span aria-hidden="true" className={`size-1.5 rounded-full ${DOTS[tone]}`} />
+      <span aria-hidden="true" className={`size-1.5 shrink-0 rounded-full ${DOTS[tone]}`} />
       {children}
     </span>
   );

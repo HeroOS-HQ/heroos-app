@@ -82,7 +82,7 @@ const TIME = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-di
  * (the CSP forbids inline style attributes).
  */
 export function HannahAvatar({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const box = size === "lg" ? "size-14" : size === "sm" ? "size-6" : "size-10 sm:size-11";
+  const box = size === "lg" ? "size-14" : size === "sm" ? "size-6" : "size-10 sm:size-12 xl:size-14";
   return (
     <span
       aria-hidden="true"
@@ -105,7 +105,7 @@ function YouAvatar() {
   return (
     <span
       aria-hidden="true"
-      className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[#e8e4fb] text-xs font-extrabold text-hero-navy sm:size-11"
+      className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-[#e8e4fb] text-xs font-extrabold text-hero-navy sm:size-12"
     >
       You
     </span>
@@ -126,7 +126,7 @@ function Speaker({ name, at, end = false }: { name: string; at?: number; end?: b
 }
 
 const hannahBubble =
-  "whitespace-pre-wrap break-words rounded-2xl rounded-tl-md border border-[#d6e4fa] bg-hero-blue-tint px-4 py-3 text-[0.9375rem] leading-relaxed text-hero-navy";
+  "whitespace-pre-wrap break-words rounded-2xl rounded-tl-md bg-[#eef4fd] px-4 py-2.5 text-[0.9375rem] leading-relaxed text-hero-navy";
 const quietButton =
   "inline-flex min-h-10 items-center gap-1.5 rounded-full border border-hero-control bg-white px-4 text-sm font-bold text-hero-navy transition-colors duration-150 hover:bg-hero-blue-tint disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -345,7 +345,8 @@ export function HannahChat({
       <h2 className="sr-only" id="hannah-heading">
         Conversation with Hannah (AI demo)
       </h2>
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-[#f1df8d] bg-hero-yellow-tint px-4 py-2.5 sm:px-6 lg:px-8">
+      {/* The demo's disclosure stays in view above the conversation, compact so the messages keep the space. */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#f1df8d] bg-hero-yellow-tint/80 px-4 py-1.5 sm:px-6 lg:px-7">
         <p className="flex min-w-0 flex-1 items-start gap-2 text-[0.8125rem] font-semibold leading-snug text-hero-navy">
           <AlertIcon className="mt-px size-4 shrink-0" />
           <span>
@@ -356,7 +357,7 @@ export function HannahChat({
           </span>
         </p>
         <button
-          className="inline-flex min-h-9 items-center rounded-full border border-hero-control bg-white px-3.5 text-sm font-bold text-hero-navy transition-colors duration-150 hover:bg-hero-blue-tint disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-hero-control bg-white px-3.5 text-sm font-bold text-hero-navy transition-colors duration-150 hover:bg-hero-blue-tint disabled:cursor-not-allowed disabled:opacity-60"
           disabled={turns.length === 0 && draft.length === 0 && failure === null}
           onClick={restart}
           type="button"
@@ -369,28 +370,28 @@ export function HannahChat({
         aria-label="Conversation with Hannah (AI demo)"
         aria-live="polite"
         // relative: the screen-reader-only labels inside stay within the scrolling list (else they stretch the page).
-        className="relative flex flex-col gap-6 px-4 py-6 sm:px-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:px-8"
+        className="relative flex flex-col gap-5 px-4 py-5 sm:px-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:px-7"
         role="log"
       >
         <li className="flex items-start gap-3 sm:gap-4">
           <HannahAvatar />
-          <div className="min-w-0 max-w-[42rem] flex-1">
+          <div className="min-w-0 max-w-[36rem] flex-1">
             <Speaker name="Hannah" />
-            <div className={`mt-1.5 ${hannahBubble}`}>
+            <div className={`mt-1 ${hannahBubble}`}>
               <p>Hi, I&apos;m Hannah.</p>
-              <p className="mt-2">
+              <p className="mt-1.5">
                 Tell me about the made-up situation you&apos;re thinking through, and we&apos;ll work through it together,
                 one question at a time.
               </p>
             </div>
-            <div className="mt-2 rounded-2xl border border-[#d6e4fa] bg-white px-4 py-3 text-sm leading-relaxed text-hero-navy/85">
-              <p className="font-semibold text-hero-navy">You can include, for example:</p>
-              <ul className="mt-1 list-disc pl-5 marker:text-hero-blue">
+            <div className="mt-1.5 rounded-2xl bg-[#f3f7fe] px-4 py-2.5 text-sm leading-relaxed text-hero-navy/85">
+              <p>You can include, for example:</p>
+              <ul className="mt-0.5 list-disc pl-5 marker:text-hero-blue">
                 <li>what happened (a fictional example)</li>
                 <li>when it happened, and how often</li>
                 <li>any relevant context, like earlier conversations</li>
               </ul>
-              <p className="mt-2 text-xs text-hero-muted">
+              <p className="mt-1.5 text-xs text-hero-muted">
                 Hannah gives general, exploratory guidance. She can&apos;t see this case&apos;s saved answers, and nothing
                 said here changes the case.
               </p>
@@ -400,10 +401,10 @@ export function HannahChat({
         {turns.map((turn) =>
           turn.role === "user" ? (
             <li className="flex items-start justify-end gap-3 sm:gap-4" key={turn.id}>
-              <div className="flex min-w-0 max-w-[38rem] flex-col items-end">
+              <div className="flex min-w-0 max-w-[32rem] flex-col items-end">
                 <Speaker at={turn.at} end name="You" />
                 <p className="sr-only">You:</p>
-                <p className="mt-1.5 whitespace-pre-wrap break-words rounded-2xl rounded-tr-md border border-[#c4e5d1] bg-[#e8f6ee] px-4 py-3 text-[0.9375rem] leading-relaxed text-hero-navy">
+                <p className="mt-1 whitespace-pre-wrap break-words rounded-2xl rounded-tr-md bg-[#e3f5ea] px-4 py-2.5 text-[0.9375rem] leading-relaxed text-hero-navy">
                   {turn.content}
                 </p>
                 {turn.failed ? <span className="mt-1 text-xs font-bold text-hero-danger">Not answered</span> : null}
@@ -413,10 +414,10 @@ export function HannahChat({
           ) : (
             <li className="flex items-start gap-3 sm:gap-4" data-role="assistant" key={turn.id}>
               <HannahAvatar />
-              <div className="min-w-0 max-w-[42rem] flex-1">
+              <div className="min-w-0 max-w-[36rem] flex-1">
                 <Speaker at={turn.at} name="Hannah" />
                 <p className="sr-only">Hannah (AI demo):</p>
-                <p className={`mt-1.5 ${hannahBubble}`}>{turn.content}</p>
+                <p className={`mt-1 ${hannahBubble}`}>{turn.content}</p>
                 <span className="mt-1 inline-block text-xs font-bold text-hero-muted">AI · exploratory, not saved</span>
               </div>
             </li>
@@ -426,7 +427,7 @@ export function HannahChat({
           <li className="flex items-center gap-3 sm:gap-4">
             <HannahAvatar />
             <p
-              className="inline-flex items-center gap-2 rounded-2xl rounded-tl-md border border-[#d6e4fa] bg-hero-blue-tint px-4 py-2.5 text-sm font-semibold text-hero-muted"
+              className="inline-flex items-center gap-2 rounded-2xl rounded-tl-md bg-[#eef4fd] px-4 py-2.5 text-sm font-semibold text-hero-muted"
               role="status"
             >
               <span aria-hidden="true" className="inline-flex gap-1">
@@ -442,7 +443,7 @@ export function HannahChat({
         <li aria-hidden="true" className="h-px scroll-mb-44 lg:scroll-mb-0" ref={endRef} />
       </ol>
 
-      <div className="sticky bottom-0 z-10 shrink-0 border-t border-hero-border bg-white/95 px-4 pb-4 pt-3 backdrop-blur-md sm:px-6 lg:static lg:px-8 lg:pb-5">
+      <div className="sticky bottom-0 z-10 shrink-0 border-t border-hero-border bg-white/95 px-4 pb-3 pt-3 backdrop-blur-md sm:px-6 lg:static lg:border-t-0 lg:bg-white lg:px-4 lg:pb-4 lg:pt-1">
         {failure ? (
           <div
             className="mb-3 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-[#e9b4c0] bg-hero-danger-tint px-4 py-3 text-hero-navy"
@@ -465,35 +466,38 @@ export function HannahChat({
 
         <form autoComplete="off" onSubmit={send}>
           {/* One focus outline around the whole composer instead of the page's outline on the text box. */}
-          <div className="rounded-2xl border border-hero-control bg-white shadow-hero-card transition-colors duration-150 focus-within:border-hero-blue focus-within:outline-3 focus-within:outline-offset-2 focus-within:outline-hero-blue">
+          <div className="flex items-end gap-2 rounded-2xl border border-hero-control bg-white py-2.5 pl-2 pr-2.5 shadow-hero-card transition-colors duration-150 focus-within:border-hero-blue focus-within:outline-3 focus-within:outline-offset-2 focus-within:outline-hero-blue sm:pl-3">
             <label className="sr-only" htmlFor="hannah-message">
               Message Hannah
             </label>
             <textarea
               aria-describedby="hannah-hint"
-              className="block max-h-44 min-h-[3.25rem] w-full resize-none rounded-2xl border-0 bg-transparent px-4 pb-1 pt-3.5 text-base text-hero-navy outline-none! [field-sizing:content] placeholder:text-hero-muted"
+              className="block max-h-44 min-h-11 min-w-0 flex-1 resize-none border-0 bg-transparent px-2 py-3 text-base text-hero-navy outline-none! [field-sizing:content] placeholder:text-hero-muted"
               id="hannah-message"
               maxLength={MAX_MESSAGE_CHARS}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onKeyDown}
               placeholder="Type your message to Hannah…"
-              rows={2}
+              rows={1}
               value={draft}
             />
-            <div className="flex items-center justify-between gap-3 px-3 pb-2.5 pl-4">
-              <p className="min-w-0 text-xs text-hero-muted" id="hannah-hint">
-                Enter to send · Shift+Enter for a new line
-                {left < 200 ? ` · ${left} characters left` : ""}
-              </p>
-              <button
-                className="inline-flex min-h-10 shrink-0 items-center gap-2 rounded-full bg-hero-blue px-4 text-sm font-bold text-white transition-colors duration-150 hover:bg-hero-blue-ink disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={pending || draft.trim().length === 0}
-                type="submit"
-              >
-                <SendIcon className="size-4" />
-                {pending ? "Sending…" : "Send"}
-              </button>
-            </div>
+            <p className="mb-3 shrink-0 text-xs text-hero-muted" id="hannah-hint">
+              <span className="sr-only md:not-sr-only">Enter to send · Shift+Enter for a new line</span>
+              {left < 200 ? (
+                <span className="font-semibold text-hero-navy">
+                  <span className="max-md:hidden"> · </span>
+                  {left} characters left
+                </span>
+              ) : null}
+            </p>
+            <button
+              className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-hero-yellow text-hero-navy transition-colors duration-150 hover:bg-[#f6cb00] disabled:cursor-not-allowed disabled:bg-hero-bg disabled:text-hero-muted"
+              disabled={pending || draft.trim().length === 0}
+              type="submit"
+            >
+              <SendIcon className="size-5" />
+              <span className="sr-only">{pending ? "Sending…" : "Send"}</span>
+            </button>
           </div>
         </form>
       </div>

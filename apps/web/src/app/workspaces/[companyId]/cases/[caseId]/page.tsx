@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
+import { CompanyShell } from "@/components/app/company-shell";
 import { LoadingView } from "@/components/app/loading-view";
-import { CaseNotFoundView, commonStateView, CompanyShell } from "@/components/cases/case-states";
+import { CaseNotFoundView, commonStateView } from "@/components/cases/case-states";
 import { CaseWorkspace } from "@/components/cases/case-workspace";
 import { loadCase } from "@/lib/server/app-state";
 import { WORKFLOW_DISCIPLINARY } from "@/lib/workflows/model";
@@ -15,7 +16,7 @@ export const metadata: Metadata = { title: "Disciplinary case · HeroOS" };
  */
 export default function CasePage({ params }: PageProps<"/workspaces/[companyId]/cases/[caseId]">) {
   return (
-    <Suspense fallback={<LoadingView label="Loading the case…" />}>
+    <Suspense fallback={<LoadingView label="Loading the case…" layout="full" />}>
       <CaseContent params={params} />
     </Suspense>
   );
@@ -30,7 +31,7 @@ async function CaseContent({ params }: Pick<PageProps<"/workspaces/[companyId]/c
   if (state.kind === "case_not_found") return <CaseNotFoundView details={state.details} workspaces={state.workspaces} />;
   if (state.kind !== "case_ready") return null;
   return (
-    <CompanyShell details={state.details} workspaces={state.workspaces}>
+    <CompanyShell details={state.details} mode="case" workspaces={state.workspaces}>
       {/* Keyed by Case: opening another Case never carries form state over. */}
       <CaseWorkspace
         assistant={state.assistant}

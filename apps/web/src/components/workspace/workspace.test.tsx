@@ -1,7 +1,8 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { AppShell } from "@/components/app/app-shell";
+import { CompanyFrame } from "@/components/app/company-frame";
 import {
   AccessDeniedView,
   NoActiveWorkspaceView,
@@ -11,6 +12,8 @@ import {
 } from "@/components/app/state-views";
 import type { Blueprint, Membership, WorkspaceDetails } from "@/lib/server/heroos-api";
 
+import { DisciplineOverview } from "./discipline-overview";
+import { HrServices } from "./hr-services";
 import { WorkspaceChooser } from "./workspace-chooser";
 import { setupSteps, WorkspaceHome } from "./workspace-home";
 import { WorkspaceReady } from "./workspace-ready";
@@ -45,17 +48,25 @@ const details = (overrides: Partial<WorkspaceDetails> = {}): WorkspaceDetails =>
 });
 
 describe("WorkspaceHome", () => {
-  it("welcomes the administrator and links to editing the company details", () => {
+  it("welcomes the administrator to the company's dashboard and links to editing the company details", () => {
     render(<WorkspaceHome details={details()} />);
-    expect(screen.getByRole("heading", { level: 1, name: "Gamma Trading" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Welcome to HeroOS");
     expect(screen.getByText("Administrator")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Edit company details/ })).toHaveAttribute(
       "href",
       `/workspaces/${COMPANY_ID}/settings`,
     );
-    const info = screen.getByRole("region", { name: "Company information" });
+    const info = screen.getByRole("region", { name: "Your company at a glance" });
+    expect(within(info).getByText("Gamma Trading")).toBeInTheDocument();
     expect(within(info).getByText("1,200")).toBeInTheDocument();
     expect(within(info).getByText("Example Free Zone Authority")).toBeInTheDocument();
+    expect(within(info).getByText("Gamma Trading FZ-LLC")).toBeInTheDocument();
+  });
+
+  it("shows a missing detail as not provided instead of inventing one", () => {
+    render(<WorkspaceHome details={details({ blueprint: { ...BLUEPRINT, industry: null, employeeCount: null } })} />);
+    const info = screen.getByRole("region", { name: "Your company at a glance" });
+    expect(within(info).getAllByText("Not provided")).toHaveLength(2);
   });
 
   it("gives an ordinary member a read-only view", () => {
@@ -64,14 +75,16 @@ describe("WorkspaceHome", () => {
     expect(screen.getByRole("link", { name: /View company details/ })).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: /Edit company details/ })).toBeNull();
     expect(screen.getByText("Only company administrators can change these details.")).toBeInTheDocument();
+    // No way into the cases for a member, only the reason.
+    expect(screen.queryByRole("link", { name: /Disciplinary cases/ })).toBeNull();
   });
 
   it("states an unconfirmed jurisdiction in words, without naming a regime", () => {
     render(<WorkspaceHome details={details()} />);
-    const info = screen.getByRole("region", { name: "Company information" });
-    expect(within(info).getByRole("heading", { name: "Jurisdiction not yet confirmed" })).toBeInTheDocument();
-    expect(within(info).getByText("Not yet confirmed")).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/MOHRE|UAE Federal|compliant|verified|eligible/);
+    const jurisdiction = screen.getByRole("region", { name: "Jurisdiction status" });
+    expect(within(jurisdiction).getByRole("heading", { name: "Jurisdiction not yet confirmed" })).toBeInTheDocument();
+    expect(within(jurisdiction).getByText("Not yet confirmed")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/MOHRE|UAE Federal|compliant|verified|eligible|suggest/i);
   });
 
   it("explains an unsupported confirmed jurisdiction and offers nothing for it", () => {
@@ -87,30 +100,38 @@ describe("WorkspaceHome", () => {
     };
     render(<WorkspaceHome details={details({ blueprint: unsupported })} />);
     expect(screen.getByRole("heading", { name: "ADGM isn't supported yet" })).toBeInTheDocument();
-    expect(screen.getByText(/doesn't currently support guidance for this jurisdiction/)).toBeInTheDocument();
+    expect(screen.getAllByText(/doesn't currently support guidance for this jurisdiction/).length).toBeGreaterThan(0);
     expect(document.body.textContent).not.toMatch(/subscri|upgrade|buy/i);
   });
 
-  it("opens Disciplinary (intake only) and shows the other workflows as coming soon", () => {
+  it("offers real next actions: HR Services, the company details and, for administrators, the cases", () => {
     render(<WorkspaceHome details={details()} />);
-    const workflows = screen.getByRole("region", { name: "HR workflows" });
-    expect(within(workflows).getAllByRole("heading", { level: 3 }).map((h) => h.textContent)).toEqual([
-      "Disciplinary",
-      "Probation",
-      "Recruitment",
+    const actions = screen.getByRole("region", { name: "What you can do now" });
+    expect(within(actions).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
+      `/workspaces/${COMPANY_ID}/hr-services`,
+      `/workspaces/${COMPANY_ID}/settings`,
+      `/workspaces/${COMPANY_ID}/cases`,
     ]);
-    // Only Disciplinary is a link, and it says how far it goes.
+    // Nothing the product can't do yet (team invitations, reports, notifications).
+    expect(document.body.textContent).not.toMatch(/invite|report|notification|template/i);
+  });
+
+  it("lists the HR services with their availability; only Disciplinary opens, for administrators", () => {
+    render(<WorkspaceHome details={details()} />);
+    const workflows = screen.getByRole("region", { name: "HR services" });
+    expect(within(workflows).getByText("Conduct & Discipline")).toBeInTheDocument();
     const links = within(workflows).getAllByRole("link");
     expect(links).toHaveLength(1);
-    expect(links[0]).toHaveAttribute("href", `/workspaces/${details().company.id}/cases`);
-    expect(links[0]).toHaveTextContent("In development");
+    expect(links[0]).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/disciplinary`);
+    expect(links[0]).toHaveTextContent("Limited");
+    expect(links[0]).toHaveTextContent("jurisdiction-specific steps wait for confirmation");
     expect(within(workflows).getAllByText("Coming soon")).toHaveLength(2);
     expect(within(workflows).queryAllByRole("button")).toHaveLength(0);
   });
 
   it("shows Disciplinary as administrator-only to a member, with nothing to click", () => {
     render(<WorkspaceHome details={details({ membership: MEMBER })} />);
-    const workflows = screen.getByRole("region", { name: "HR workflows" });
+    const workflows = screen.getByRole("region", { name: "HR services" });
     expect(within(workflows).queryAllByRole("link")).toHaveLength(0);
     expect(within(workflows).getByText("Administrators only")).toBeInTheDocument();
     expect(within(workflows).getAllByText("Coming soon")).toHaveLength(2);
@@ -147,7 +168,8 @@ describe("WorkspaceHome", () => {
   it("still opens against an API without company profiles (legacy demo)", () => {
     render(<WorkspaceHome details={details({ membership: null, blueprint: null })} />);
     expect(screen.getByText("Company profile isn't available yet")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /company details/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /company details|Company Blueprint/ })).toBeNull();
+    expect(screen.queryByRole("region", { name: "Jurisdiction status" })).toBeNull();
   });
 
   it("describes setup progress in words", () => {
@@ -163,6 +185,68 @@ describe("WorkspaceHome", () => {
     expect(setupSteps({ ...BLUEPRINT, licensing: { location: "other", authority: null } })[2].status).toBe(
       "Authority missing",
     );
+    render(<WorkspaceHome details={details()} />);
+    expect(within(screen.getByRole("list", { name: "Company setup" })).getAllByRole("listitem")).toHaveLength(4);
+  });
+});
+
+describe("HrServices", () => {
+  it("shows the three workflows; Disciplinary opens its overview, the others are honestly not available", () => {
+    render(<HrServices details={details()} />);
+    expect(screen.getByRole("heading", { level: 1, name: "HR Services" })).toBeInTheDocument();
+    const workflows = screen.getByRole("list", { name: "HR workflows" });
+    expect(within(workflows).getAllByRole("heading", { level: 2 }).map((h) => h.textContent)).toEqual([
+      "Conduct & Discipline",
+      "Probation",
+      "Recruitment",
+    ]);
+    expect(within(workflows).getAllByRole("link").map((a) => a.getAttribute("href"))).toEqual([
+      `/workspaces/${COMPANY_ID}/disciplinary`,
+    ]);
+    expect(within(workflows).getAllByText("Coming soon")).toHaveLength(2);
+    // No "Learn more" or other actions for what isn't there.
+    expect(within(workflows).queryByText(/learn more/i)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/generate|automatic|guarantee|compliant/i);
+  });
+
+  it("asks for the jurisdiction first while it is unconfirmed, and not once it is confirmed", () => {
+    const { unmount } = render(<HrServices details={details()} />);
+    expect(screen.getByRole("link", { name: /View jurisdiction details/ })).toHaveAttribute(
+      "href",
+      `/workspaces/${COMPANY_ID}/settings`,
+    );
+    unmount();
+    const confirmed: Blueprint = {
+      ...BLUEPRINT,
+      jurisdiction: { ...BLUEPRINT.jurisdiction, readiness: "supported_confirmed", employmentJurisdiction: "uae_federal", guidanceAllowed: true },
+    };
+    render(<HrServices details={details({ blueprint: confirmed })} />);
+    expect(screen.queryByRole("link", { name: /View jurisdiction details/ })).toBeNull();
+    expect(screen.getByText("In development")).toBeInTheDocument();
+  });
+
+  it("gives a member no way into Disciplinary", () => {
+    render(<HrServices details={details({ membership: MEMBER })} />);
+    expect(within(screen.getByRole("list", { name: "HR workflows" })).queryAllByRole("link")).toHaveLength(0);
+    expect(screen.getAllByText("Administrators only").length).toBeGreaterThan(0);
+  });
+});
+
+describe("DisciplineOverview", () => {
+  it("describes the product's own steps, never the review mockup's legal stages, and links the real routes", () => {
+    render(<DisciplineOverview cases={[]} details={details()} />);
+    expect(screen.getByRole("heading", { level: 1, name: "Conduct & Discipline" })).toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("HR Services");
+    expect(document.body.textContent).not.toMatch(/written warning|termination|hearing|grievance|less serious|serious misconduct/i);
+    expect(screen.getByRole("link", { name: /Create a new disciplinary case/ })).toHaveAttribute(
+      "href",
+      `/workspaces/${COMPANY_ID}/cases/new`,
+    );
+    const availability = screen.getByRole("region", { name: "Workflow availability" });
+    expect(within(availability).getByText("Restricted")).toBeInTheDocument();
+    expect(within(availability).getByText("Not available")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Guided steps need a confirmed jurisdiction first." })).toBeInTheDocument();
+    expect(screen.getByText(/No cases yet/)).toBeInTheDocument();
   });
 });
 
@@ -209,34 +293,76 @@ describe("WorkspaceChooser", () => {
 });
 
 describe("AppShell", () => {
-  it("signs out with a POST form and hides the switcher for a single workspace", () => {
+  it("signs out with a POST form and starts with the skip link", () => {
     const { container } = render(
-      <AppShell switcher={{ currentId: COMPANY_ID, items: [{ companyId: COMPANY_ID, name: "Alpha" }] }}>
+      <AppShell>
         <p>content</p>
       </AppShell>,
     );
     const form = container.querySelector("form")!;
     expect(form).toHaveAttribute("action", "/auth/logout");
     expect(form).toHaveAttribute("method", "post");
-    expect(screen.queryByRole("button", { name: "Switch company" })).toBeNull();
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main");
+  });
+});
+
+describe("CompanyFrame", () => {
+  const frame = (props: Partial<Parameters<typeof CompanyFrame>[0]> = {}) =>
+    render(
+      <CompanyFrame
+        admin
+        companies={[{ companyId: COMPANY_ID, name: "Alpha" }]}
+        companyId={COMPANY_ID}
+        companyName="Alpha"
+        current="dashboard"
+        role="Administrator"
+        {...props}
+      >
+        <p>content</p>
+      </CompanyFrame>,
+    );
+
+  it("shows the only company by name (no menu), signs out with a POST form and skips to the content", () => {
+    const { container } = frame();
+    expect(screen.queryByRole("button", { name: /Switch company/ })).toBeNull();
+    expect(within(screen.getByRole("banner")).getByText("Alpha")).toBeInTheDocument();
+    const form = container.querySelector("form")!;
+    expect(form).toHaveAttribute("action", "/auth/logout");
+    expect(form).toHaveAttribute("method", "post");
+    expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main");
+    expect(screen.getByRole("main")).toHaveTextContent("content");
+  });
+
+  it("navigates the company's real routes and marks the current one; what doesn't exist yet is not a link", () => {
+    frame({ current: "services" });
+    const nav = screen.getByRole("navigation", { name: "Company" });
+    expect(within(nav).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Dashboard", `/workspaces/${COMPANY_ID}`],
+      ["Company Blueprint", `/workspaces/${COMPANY_ID}/settings`],
+      ["HR Services", `/workspaces/${COMPANY_ID}/hr-services`],
+      ["Cases", `/workspaces/${COMPANY_ID}/cases`],
+    ]);
+    expect(within(nav).getByRole("link", { current: "page" })).toHaveTextContent("HR Services");
+    expect(within(nav).getByText("Team & Access").closest("a")).toBeNull();
+    expect(within(nav).getByText("Coming soon")).toBeInTheDocument();
+  });
+
+  it("doesn't link a member to the cases", () => {
+    frame({ admin: false, role: "Member" });
+    const nav = screen.getByRole("navigation", { name: "Company" });
+    expect(within(nav).queryByRole("link", { name: "Cases" })).toBeNull();
+    expect(within(nav).getByText("Administrators only")).toBeInTheDocument();
   });
 
   it("switches only among the listed companies and closes with Escape", () => {
-    render(
-      <AppShell
-        switcher={{
-          currentId: COMPANY_ID,
-          items: [
-            { companyId: COMPANY_ID, name: "Alpha" },
-            { companyId: COMPANY_B, name: "Beta" },
-          ],
-        }}
-      >
-        <p>content</p>
-      </AppShell>,
-    );
-    const toggle = screen.getByRole("button", { name: "Switch company" });
+    frame({
+      companies: [
+        { companyId: COMPANY_ID, name: "Alpha" },
+        { companyId: COMPANY_B, name: "Beta" },
+      ],
+    });
+    const toggle = screen.getByRole("button", { name: /Switch company/ });
+    expect(toggle).toHaveTextContent("Alpha");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
     const nav = screen.getByRole("navigation", { name: "Your companies" });
@@ -245,6 +371,25 @@ describe("AppShell", () => {
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("navigation", { name: "Your companies" })).toBeNull();
     expect(toggle).toHaveFocus();
+  });
+
+  it("opens the navigation as a panel on small screens; Escape closes it and returns focus", async () => {
+    frame();
+    const menu = screen.getByRole("button", { name: "Menu" });
+    expect(menu).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(menu);
+    expect(menu).toHaveAttribute("aria-expanded", "true");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close the menu" })).toHaveFocus());
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(menu).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(menu).toHaveFocus());
+  });
+
+  it("leaves the side to the case workspace in case mode (never two sidebars)", () => {
+    frame({ mode: "case" });
+    expect(screen.queryByRole("navigation", { name: "Company" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Menu" })).toBeNull();
+    expect(screen.getByRole("main")).toHaveTextContent("content");
   });
 });
 

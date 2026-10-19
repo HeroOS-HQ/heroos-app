@@ -2,19 +2,22 @@
 
 import { type KeyboardEvent, type MouseEvent, useCallback, useEffect, useRef, useState } from "react";
 
+import { DemoNotice } from "@/components/site/demo-notice";
 import {
-  ArrowLeftIcon,
   CaseIcon,
   ChecklistIcon,
   ChevronRightIcon,
   CloseIcon,
+  DocumentIcon,
+  HomeIcon,
   MenuIcon,
   PlusIcon,
+  SearchIcon,
 } from "@/components/site/icons";
 import { Notice } from "@/components/ui/notice";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { ASSISTANT_HIDDEN, type AssistantLoad } from "@/lib/assistant/model";
-import { caseStatusTone, formatDay } from "@/lib/workflows/copy";
+import { caseStatusTone, formatDay, formatDayTime } from "@/lib/workflows/copy";
 import type { CaseSummary, WorkflowView } from "@/lib/workflows/model";
 
 import { AnswersForm } from "./answers-form";
@@ -27,13 +30,15 @@ import { HannahAvatar, HannahChat } from "./hannah-chat";
 import { ProgressionPanel } from "./progression-panel";
 
 /**
- * CASE_READY: the Case workspace (JJ design review, screen 10). Left: the
- * Company's Disciplinary Cases. Centre: the case header, then the
- * conversation with Hannah (the AI demo, when the API says this administrator
- * can use it) or the guided case workflow, one tab each. Right: the case at a
- * glance (status, stage, the next official step, recorded facts) above the
- * full case details. On smaller screens the case list and the details open as
- * panels from the header, so the conversation keeps the full width.
+ * CASE_READY: the Case workspace (JJ design review, screen 10), full width
+ * under the company header, in place of the company navigation. Left: the
+ * Company's Disciplinary Cases (searchable) with the way back to the
+ * dashboard. Centre: a compact case header, then the conversation with Hannah
+ * (the AI demo, when the API says this administrator can use it) or the
+ * guided case workflow, one tab each. Right: the case at a glance (status,
+ * stage, the next official step, recorded facts) above the full case details.
+ * On smaller screens the case list and the details open as panels from the
+ * case header, so the conversation keeps the full width.
  *
  * The guided case workflow is the official record and is unchanged: the
  * guided conversation, the next steps (pathway, stages and what can be done
@@ -89,6 +94,7 @@ export function CaseWorkspace({
   const [hannah, setHannah] = useState<AssistantLoad>(initialView.canEdit ? assistant : ASSISTANT_HIDDEN);
   const [chosen, setChosen] = useState<Tab | null>(null);
   const [drawer, setDrawer] = useState<Drawer>(null);
+  const [search, setSearch] = useState("");
   const workflowRef = useRef<HTMLDivElement>(null);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
 
@@ -183,11 +189,15 @@ export function CaseWorkspace({
       )
     : cases;
 
+  const query = search.trim().toLowerCase();
+  const listed = query === "" ? sidebar : sidebar.filter((item) => item.title.toLowerCase().includes(query));
+  const base = `/workspaces/${encodeURIComponent(companyId)}`;
+
   return (
     <div
-      className={`mx-auto w-full max-w-[1240px] lg:grid lg:grid-cols-[15rem_minmax(0,1fr)] xl:grid-cols-[15rem_minmax(0,1fr)_21rem] ${
+      className={`w-full lg:grid lg:grid-cols-[16rem_minmax(0,1fr)] xl:grid-cols-[17.75rem_minmax(0,1fr)_24.875rem] ${
         // The conversation fills the screen (its messages scroll, the composer stays put); the workflow is a page.
-        tab === "hannah" ? "lg:h-[calc(100dvh-72px)] lg:grid-rows-[minmax(0,1fr)]" : ""
+        tab === "hannah" ? "lg:h-[calc(100dvh-74px)] lg:grid-rows-[minmax(0,1fr)]" : ""
       }`}
       onClickCapture={followLink}
     >
@@ -203,7 +213,7 @@ export function CaseWorkspace({
         aria-label="Disciplinary cases"
         className={`${
           drawer === "cases" ? "fixed inset-y-0 left-0 z-50 flex w-[min(20rem,88vw)] shadow-2xl" : "hidden"
-        } flex-col overflow-y-auto border-r border-hero-border bg-white lg:sticky lg:inset-auto lg:top-[72px] lg:z-auto lg:flex lg:h-[calc(100dvh-72px)] lg:w-auto lg:self-start lg:bg-white/60 lg:shadow-none`}
+        } flex-col border-r border-hero-border bg-white lg:sticky lg:inset-auto lg:top-[74px] lg:z-auto lg:flex lg:h-[calc(100dvh-74px)] lg:w-auto lg:self-start lg:shadow-none`}
         id="case-list"
       >
         <div className="flex items-center justify-between px-4 pt-3 lg:hidden">
@@ -212,67 +222,97 @@ export function CaseWorkspace({
             <CloseIcon className="size-5" />
           </button>
         </div>
-        <div className="flex flex-col gap-4 px-4 py-5">
+        <div className="flex flex-col gap-3 px-4 pb-3 pt-4">
           {view.canEdit ? (
             <a
-              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-hero-blue px-4 text-base font-bold text-white shadow-[0_8px_20px_-12px_rgb(61_107_196/0.9)] transition-colors duration-150 hover:bg-hero-blue-ink"
+              className="inline-flex min-h-12 items-center justify-center gap-2 rounded-xl bg-hero-yellow px-4 text-base font-bold text-hero-navy shadow-[0_8px_20px_-12px_rgb(255_212_1/0.95)] transition-colors duration-150 hover:bg-[#f6cb00]"
               href={`${casesHref}/new`}
             >
               <PlusIcon className="size-5" />
               New case
             </a>
           ) : null}
-          <div className="flex items-center justify-between gap-2">
-            <a className="text-sm font-extrabold text-hero-navy hover:underline" href={casesHref}>
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <a className="inline-flex min-h-8 items-center text-sm font-extrabold text-hero-navy hover:underline" href={casesHref}>
               Disciplinary cases
             </a>
             <span className="text-xs font-semibold text-hero-muted">{sidebar.length}</span>
           </div>
-          <nav aria-label="Cases">
-            <ul className="flex flex-col gap-2">
-              {sidebar.map((item) => {
-                const current = item.id === caseId;
-                return (
-                  <li key={item.id}>
-                    <a
-                      aria-current={current ? "page" : undefined}
-                      className={`flex items-start gap-2 rounded-2xl border px-3.5 py-3 transition-colors duration-150 ${
-                        current
-                          ? "border-[#bcd2f5] bg-hero-blue-tint shadow-[inset_3px_0_0_var(--hero-blue)]"
-                          : "border-hero-border bg-white hover:border-[#cfe0f8] hover:bg-hero-blue-tint/40"
-                      }`}
-                      href={`${casesHref}/${encodeURIComponent(item.id)}`}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="line-clamp-2 break-words text-[0.9375rem] font-bold leading-snug text-hero-navy">
-                          {item.title}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-hero-muted">
-                          Updated <time dateTime={item.updatedAt}>{formatDay(item.updatedAt)}</time>
-                        </span>
-                        <span className="mt-2 block">
-                          <StatusBadge tone={caseStatusTone(item.status.code)}>{item.status.label}</StatusBadge>
-                        </span>
+          <div className="relative">
+            <label className="sr-only" htmlFor="case-search">
+              Search cases
+            </label>
+            <SearchIcon className="pointer-events-none absolute left-3 top-1/2 size-4.5 -translate-y-1/2 text-hero-muted" />
+            <input
+              autoComplete="off"
+              className="block min-h-11 w-full rounded-xl border border-hero-control bg-white py-2 pl-10 pr-3 text-[0.9375rem] text-hero-navy placeholder:text-hero-muted focus:border-hero-blue"
+              id="case-search"
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search cases…"
+              type="search"
+              value={search}
+            />
+          </div>
+        </div>
+        <nav aria-label="Cases" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3">
+          {listed.length === 0 ? (
+            <p className="px-1 py-3 text-sm text-hero-muted">No cases match “{search.trim()}”.</p>
+          ) : null}
+          <ul className="flex flex-col gap-2">
+            {listed.map((item) => {
+              const current = item.id === caseId;
+              return (
+                <li key={item.id}>
+                  <a
+                    aria-current={current ? "page" : undefined}
+                    className={`flex items-start gap-2 rounded-xl border px-3.5 py-3 transition-colors duration-150 ${
+                      current
+                        ? "border-[#bcd2f5] bg-hero-blue-tint shadow-[inset_3px_0_0_var(--hero-blue)]"
+                        : "border-hero-border bg-white hover:border-[#cfe0f8] hover:bg-hero-blue-tint/40"
+                    }`}
+                    href={`${casesHref}/${encodeURIComponent(item.id)}`}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="line-clamp-2 break-words text-[0.9375rem] font-bold leading-snug text-hero-navy">
+                        {item.title}
                       </span>
-                      <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-hero-blue-ink" />
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
+                      <span className="mt-0.5 block text-xs text-hero-muted">
+                        Updated <time dateTime={item.updatedAt}>{formatDayTime(item.updatedAt)}</time>
+                      </span>
+                      <span className="mt-2 flex">
+                        <StatusBadge tone={caseStatusTone(item.status.code)} wrap>
+                          {item.status.label}
+                        </StatusBadge>
+                      </span>
+                    </span>
+                    <ChevronRightIcon className="mt-0.5 size-4 shrink-0 text-hero-blue-ink" />
+                  </a>
+                </li>
+              );
+            })}
+          </ul>
+        </nav>
+        <div className="flex flex-col gap-0.5 border-t border-hero-border px-4 pb-4 pt-2">
           <a
-            className="inline-flex min-h-11 items-center gap-1.5 rounded-lg px-1 text-sm font-bold text-hero-blue-ink hover:underline"
-            href={`/workspaces/${encodeURIComponent(companyId)}`}
+            className="inline-flex min-h-11 items-center gap-3 rounded-lg px-1 text-[0.9375rem] font-semibold text-hero-navy hover:text-hero-blue-ink hover:underline"
+            href={base}
           >
-            <ArrowLeftIcon className="size-4" />
-            Workspace home
+            <HomeIcon className="size-5" />
+            Dashboard
           </a>
+          <a
+            className="inline-flex min-h-11 items-center gap-3 rounded-lg px-1 text-[0.9375rem] font-semibold text-hero-navy hover:text-hero-blue-ink hover:underline"
+            href={casesHref}
+          >
+            <DocumentIcon className="size-5" />
+            All cases
+          </a>
+          <DemoNotice className="mt-1 hidden text-xs lg:block" />
         </div>
       </aside>
 
       <div className={`flex min-w-0 flex-col bg-white ${tab === "hannah" ? "lg:min-h-0" : ""}`}>
-        <header className="shrink-0 border-b border-hero-border px-4 pt-4 sm:px-6 lg:px-8 lg:pt-6">
+        <header className="shrink-0 border-b border-hero-border px-4 pb-3 pt-3 sm:px-6 lg:px-7 lg:pt-4">
           <div className="mb-3 flex items-center justify-between gap-2 xl:hidden">
             <button
               aria-controls="case-list"
@@ -295,68 +335,76 @@ export function CaseWorkspace({
               <ChevronRightIcon className="size-4" />
             </button>
           </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <h1 className="min-w-0 break-words text-[1.5rem] font-extrabold leading-tight tracking-[-0.02em] text-hero-navy sm:text-[1.875rem]">
-              {view.case.title}
-            </h1>
-            <StatusBadge tone={caseStatusTone(view.status.code)}>{view.status.label}</StatusBadge>
+          <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+            <div className="min-w-0 flex-1 basis-[20rem]">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                <h1 className="min-w-0 break-words text-[1.5rem] font-extrabold leading-tight tracking-[-0.02em] text-hero-navy sm:text-[1.75rem]">
+                  {view.case.title}
+                </h1>
+                {/* Wide screens show the status in the case details beside the conversation. */}
+                <span className="flex xl:hidden">
+                  <StatusBadge tone={caseStatusTone(view.status.code)} wrap>
+                    {view.status.label}
+                  </StatusBadge>
+                </span>
+              </div>
+            </div>
+            {tabs ? (
+              <div
+                aria-label="Case views"
+                className="grid w-full shrink-0 grid-cols-2 gap-1 rounded-2xl border border-hero-border bg-hero-bg p-1 sm:flex sm:w-auto lg:mt-0.5"
+                role="tablist"
+              >
+                {(["hannah", "workflow"] as const).map((key) => {
+                  const active = tab === key;
+                  return (
+                    <button
+                      aria-controls={`case-panel-${key}`}
+                      aria-label={key === "hannah" ? "Chat with Hannah (AI demo)" : "Guided case workflow"}
+                      aria-selected={active}
+                      className={`inline-flex min-h-11 min-w-0 items-center justify-center gap-1.5 rounded-xl px-2 text-[0.8125rem] font-bold transition-colors duration-150 sm:shrink-0 sm:gap-2 sm:px-3 sm:text-sm ${
+                        active
+                          ? "bg-white text-hero-navy shadow-[0_1px_3px_rgb(14_30_61/0.14)] ring-1 ring-[#bcd2f5]"
+                          : "text-hero-muted hover:bg-white/70 hover:text-hero-navy"
+                      }`}
+                      id={`case-tab-${key}`}
+                      key={key}
+                      onClick={() => show(key)}
+                      onKeyDown={onTabKey}
+                      role="tab"
+                      tabIndex={active ? 0 : -1}
+                      type="button"
+                    >
+                      {/* Shorter words where the header is narrow, so the title keeps its room; the names stay the same (aria-label). */}
+                      {key === "hannah" ? (
+                        <>
+                          <span className="hidden sm:inline-flex">
+                            <HannahAvatar size="sm" />
+                          </span>
+                          <span className="min-[1700px]:hidden">Hannah</span>
+                          <span className="hidden min-[1700px]:inline">Chat with Hannah</span>
+                          <span className="rounded-full bg-hero-yellow-tint px-2 py-0.5 text-xs font-bold text-hero-navy">
+                            AI demo
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <ChecklistIcon className={`hidden size-5 sm:block ${active ? "text-hero-blue" : ""}`} />
+                          <span className="min-[1700px]:hidden">Guided workflow</span>
+                          <span className="hidden min-[1700px]:inline">Guided case workflow</span>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
           </div>
-          <p className="mt-1.5 text-sm text-hero-muted">
-            {view.workflow.title} · Created <time dateTime={view.case.createdAt}>{formatDay(view.case.createdAt)}</time>{" "}
-            · {answered} of {total} intake questions answered
+          <p className="mt-1 text-[0.9375rem] text-hero-muted">
+            {view.workflow.title} · Created <time dateTime={view.case.createdAt}>{formatDay(view.case.createdAt)}</time> ·{" "}
+            {answered} of {total} intake questions answered
             {stage ? ` · ${stage.title}` : ""}
           </p>
-          {view.sensitiveScreening === "synthetic_demo" ? (
-            <p className="mt-1 text-sm font-semibold text-hero-navy">
-              Demo environment: use made-up examples only, never real employee information.
-            </p>
-          ) : null}
-          {tabs ? (
-            <div aria-label="Case views" className="-mb-px mt-4 flex gap-1 overflow-x-auto" role="tablist">
-              {(["hannah", "workflow"] as const).map((key) => {
-                const active = tab === key;
-                return (
-                  <button
-                    aria-controls={`case-panel-${key}`}
-                    aria-label={key === "hannah" ? "Chat with Hannah (AI demo)" : "Guided case workflow"}
-                    aria-selected={active}
-                    className={`inline-flex min-h-12 shrink-0 items-center gap-2 border-b-[3px] px-2.5 text-sm font-bold sm:px-3 sm:text-[0.9375rem] transition-colors duration-150 ${
-                      active
-                        ? "border-hero-blue text-hero-navy"
-                        : "border-transparent text-hero-muted hover:border-hero-border hover:text-hero-navy"
-                    }`}
-                    id={`case-tab-${key}`}
-                    key={key}
-                    onClick={() => show(key)}
-                    onKeyDown={onTabKey}
-                    role="tab"
-                    tabIndex={active ? 0 : -1}
-                    type="button"
-                  >
-                    {/* Shorter words on phones, so both tabs fit; the names stay the same (aria-label). */}
-                    {key === "hannah" ? (
-                      <>
-                        <HannahAvatar size="sm" />
-                        <span className="sm:hidden">Hannah</span>
-                        <span className="hidden sm:inline">Chat with Hannah</span>
-                        <span className="rounded-full bg-hero-yellow-tint px-2 py-0.5 text-xs font-bold text-hero-navy">
-                          AI demo
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <ChecklistIcon className="size-5" />
-                        <span className="sm:hidden">Guided workflow</span>
-                        <span className="hidden sm:inline">Guided case workflow</span>
-                      </>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="pb-4" />
-          )}
         </header>
 
         {tabs ? (
@@ -384,12 +432,17 @@ export function CaseWorkspace({
           id="case-panel-workflow"
           ref={workflowRef}
         >
-          <div className="px-4 py-6 sm:px-6 lg:px-8">
+          <div className="px-4 py-6 sm:px-6 lg:px-7">
             <div className="flex flex-col gap-2 border-b border-hero-border pb-5">
               <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-hero-blue-ink">
                 <CaseIcon className="size-4" />
                 {view.workflow.title} · guided workflow, no AI
               </p>
+              {view.sensitiveScreening === "synthetic_demo" ? (
+                <p className="text-sm font-semibold text-hero-navy">
+                  Demo environment: use made-up examples only, never real employee information.
+                </p>
+              ) : null}
               <p className="text-sm leading-relaxed text-hero-navy/85">
                 The official case record: HeroOS&apos;s fixed questions, your saved answers, the next steps, decisions
                 and documents.
@@ -529,8 +582,8 @@ export function CaseWorkspace({
       <aside
         aria-label="Case details"
         className={`${
-          drawer === "details" ? "fixed inset-y-0 right-0 z-50 block w-[min(24rem,92vw)] shadow-2xl" : "hidden"
-        } overflow-y-auto border-l border-hero-border bg-hero-bg xl:sticky xl:inset-auto xl:top-[72px] xl:z-auto xl:block xl:h-[calc(100dvh-72px)] xl:w-auto xl:self-start xl:bg-white/60 xl:shadow-none`}
+          drawer === "details" ? "fixed inset-y-0 right-0 z-50 block w-[min(24.875rem,92vw)] shadow-2xl" : "hidden"
+        } overflow-y-auto overscroll-contain border-l border-hero-border bg-[#f7f8fb] xl:sticky xl:inset-auto xl:top-[74px] xl:z-auto xl:block xl:h-[calc(100dvh-74px)] xl:w-auto xl:self-start xl:shadow-none`}
         id="case-details"
       >
         <div className="flex items-center justify-between px-4 pt-3 xl:hidden">
@@ -539,11 +592,14 @@ export function CaseWorkspace({
             <CloseIcon className="size-5" />
           </button>
         </div>
-        <div className="flex flex-col gap-4 px-4 py-5 xl:px-5">
+        <div className="flex flex-col gap-3 px-3 py-3 xl:px-3.5 xl:py-3.5">
           <CaseSummaryPanel onOpenWorkflow={openWorkflow} view={view} />
-          <div className="rounded-2xl border border-hero-border bg-white p-4 shadow-hero-card">
+          <section aria-labelledby="full-details-heading" className="rounded-2xl border border-hero-border bg-white p-4 shadow-hero-card">
+            <h2 className="mb-4 text-base font-extrabold tracking-[-0.01em] text-hero-navy" id="full-details-heading">
+              Full case details
+            </h2>
             <CaseContextPanel view={view} />
-          </div>
+          </section>
         </div>
       </aside>
     </div>

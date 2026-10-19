@@ -4,7 +4,6 @@ import { BrandMark } from "@/components/site/brand-mark";
 import { DemoNotice } from "@/components/site/demo-notice";
 
 import { BackForwardCacheGuard } from "./back-forward-cache-guard";
-import { CompanySwitcher, type SwitcherItem } from "./company-switcher";
 
 /** POST-only sign-out (the route refuses cross-site requests). */
 export function SignOutButton({ className }: { className?: string }) {
@@ -26,19 +25,20 @@ type ShellProps = {
   context?: string;
   /** Show sign-out (signed-in pages). */
   signedIn?: boolean;
-  /** Company switcher: shown only when the user has more than one workspace. */
-  switcher?: { currentId: string; items: SwitcherItem[] };
   /** Where the logo leads. */
   homeHref?: string;
+  /** full: header and footer span the window, like a Company's pages (e.g. while one loads). */
+  layout?: "contained" | "full";
 };
 
 /**
- * The signed-in app frame: skip link, header (logo, context, switcher,
- * sign-out), main content and a quiet footer with the environment notice.
- * Deliberately simpler than the marketing header: no section navigation.
+ * The frame of the signed-in pages outside one Company's workspace (choosing a
+ * workspace, onboarding, sign-in states): skip link, header (logo, context,
+ * sign-out), main content and a quiet footer with the environment notice. A
+ * Company's own pages use `CompanyFrame` (full width, with its navigation).
  */
-export function AppShell({ children, context, signedIn = true, switcher, homeHref = "/workspaces" }: ShellProps) {
-  const showSwitcher = signedIn && switcher !== undefined && switcher.items.length > 1;
+export function AppShell({ children, context, signedIn = true, homeHref = "/workspaces", layout = "contained" }: ShellProps) {
+  const width = layout === "full" ? "w-full lg:px-6" : "mx-auto w-full max-w-[1240px]";
   return (
     <>
       {signedIn ? <BackForwardCacheGuard /> : null}
@@ -49,15 +49,14 @@ export function AppShell({ children, context, signedIn = true, switcher, homeHre
         Skip to content
       </a>
       <header className="sticky top-0 z-40 border-b border-hero-border bg-white/95 backdrop-blur-md">
-        <div className="mx-auto flex min-h-16 w-full max-w-[1240px] items-center justify-between gap-3 px-4 py-2 sm:min-h-[72px] sm:px-8">
+        <div className={`${width} flex min-h-16 items-center justify-between gap-3 px-4 py-2 sm:min-h-[72px] sm:px-8`}>
           <div className="flex min-w-0 items-center gap-3 sm:gap-4">
             <a
               aria-label="HeroOS home"
               className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg"
               href={homeHref}
             >
-              {/* With the switcher, phones show the symbol only so the header never overlaps. */}
-              <BrandMark compact={showSwitcher} />
+              <BrandMark />
             </a>
             {context ? (
               <>
@@ -68,7 +67,6 @@ export function AppShell({ children, context, signedIn = true, switcher, homeHre
           </div>
           {signedIn ? (
             <div className="flex shrink-0 items-center gap-1 sm:gap-2">
-              {showSwitcher ? <CompanySwitcher currentId={switcher.currentId} items={switcher.items} /> : null}
               <SignOutButton />
             </div>
           ) : null}
@@ -79,7 +77,7 @@ export function AppShell({ children, context, signedIn = true, switcher, homeHre
         {children}
       </main>
       <footer className="border-t border-hero-border bg-white">
-        <div className="mx-auto flex w-full max-w-[1240px] flex-col gap-1 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+        <div className={`${width} flex flex-col gap-1 px-4 py-6 sm:flex-row sm:items-center sm:justify-between sm:px-8`}>
           <DemoNotice />
           <p className="text-sm text-hero-muted">© HeroOS</p>
         </div>
