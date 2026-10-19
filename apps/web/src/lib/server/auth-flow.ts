@@ -17,7 +17,8 @@ import { seal, unseal } from "./sealed";
  *   are discarded, so a session ends when its access token expires.
  * - Redirect targets are fixed (never taken from the request): no open redirect.
  *   The only variation is the sign-in *intent*, sealed in the login cookie:
- *   `signup` (first-time founders, M1-10D) lands on `/onboarding`, `login` on `/`.
+ *   `signup` (first-time founders, M1-10D) lands on `/onboarding?start=signup`,
+ *   `login` on `/`.
  * - Failures redirect to `/?auth=<fixed code>`; provider error text is never echoed.
  */
 
@@ -42,7 +43,9 @@ export const EMAIL_NOT_VERIFIED_REASON = "email_not_verified";
 
 /** Why the user is signing in. Each intent has one fixed landing path. */
 export type LoginIntent = "login" | "signup";
-const LANDING: Record<LoginIntent, string> = { login: "/", signup: "/onboarding" };
+// `start=signup` only lets onboarding send an account that already has a
+// workspace to it (someone who chose "Get started", then signed in instead).
+const LANDING: Record<LoginIntent, string> = { login: "/", signup: "/onboarding?start=signup" };
 
 type LoginTransaction = { state: string; verifier: string; exp: number; intent: LoginIntent };
 export type Session = { accessToken: string; exp: number };

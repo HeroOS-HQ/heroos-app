@@ -199,6 +199,18 @@ Steps:
    Simpler still, without the sign-up screen: "Disable Sign Ups" on the Database
    connection and create each tester in the Auth0 dashboard (ST-01 is then not
    testable).
+   **Open registration** (any verified person may create one workspace; from
+   2026-10-19, for the JJ demonstration): remove the invitation-only Pre User
+   Registration Action from the flow (Actions → Triggers →
+   pre-user-registration → remove → Apply; keep the Action in the Library for
+   rollback). Keep the verified-e-mail Post Login Action, and keep social
+   connections off unless they are separately approved. The invitation
+   allow-list was the stated mitigation for deferred Attack Protection, so
+   enable what the plan offers (Bot Detection, Brute-force, Breached Password
+   Detection, Suspicious IP Throttling) and record which are on. HeroOS needs no
+   change: no HeroOS code checks invitations, registration always creates a new
+   Company with its caller as the only `company_admin`, and one self-service
+   Company per person still applies. Rollback: put the Action back in the flow.
 2. **Render:** `HEROOS_SELF_REGISTRATION_ENABLED=true`, then redeploy.
 3. **Smoke tests:** matrix ST-01 to ST-08 with two fresh synthetic identities.
 4. **Stop switch:** setting the flag to `false` stops new registrations at once. Existing workspaces stay. Disabling sign-up at Auth0 stops new accounts.

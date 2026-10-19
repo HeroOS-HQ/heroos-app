@@ -242,6 +242,71 @@ def test_new_founder_gets_a_company_workspace_as_its_administrator(
             assert (client.get(path, headers=founder).status_code) == 403
 
 
+def test_open_registration_keeps_uninvited_founders_apart_and_returns_their_own_workspace(
+    client: TestClient, admin_engine: Engine, tenants: Tenants, auth: Any
+) -> None:
+    # Open sign-up: two people HeroOS has never seen, no invitation, the same
+    # Company name and the same email claim (neither is proof of ownership).
+    one, two = auth("open-founder-one"), auth("open-founder-two")
+    first = client.post(URL, headers=one, json={"company_name": "Same Name LLC"})
+    second = client.post(URL, headers=two, json={"company_name": "Same Name LLC"})
+
+    assert (first.status_code, second.status_code) == (201, 201)
+    mine, theirs = uuid.UUID(first.json()["company_id"]), uuid.UUID(second.json()["company_id"])
+    assert len({mine, theirs, tenants.a.company, tenants.b.company}) == 4
+    for headers, own, other in ((one, mine, theirs), (two, theirs, mine)):
+        # Each administers exactly the Company they created...
+        assert [
+            (c["company_id"], c["role"])
+            for c in client.get("/me/companies", headers=headers).json()
+        ] == [(str(own), "company_admin")]
+        # ...and cannot read or change the other one, or any existing Company.
+        for company in (other, tenants.a.company, tenants.b.company):
+            for path in (f"/companies/{company}", f"/companies/{company}/membership"):
+                response = client.get(path, headers=headers)
+                assert (response.status_code, response.json()) == FORBIDDEN
+            response = client.patch(
+                f"/companies/{company}/blueprint", headers=headers, json={"legal_name": "Mine"}
+            )
+            assert (response.status_code, response.json()) == FORBIDDEN
+
+    # A returning founder (a later sign-in, a refresh, a callback retry) gets
+    # the same workspace back: no second Company, no second Membership.
+    before = table_counts(admin_engine)
+    again = client.post(URL, headers=one, json={"company_name": "Another Name LLC"})
+    assert (again.status_code, again.json()) == (200, {**first.json(), "outcome": "existing"})
+    assert table_counts(admin_engine) == before
+    assert [
+        (str(user), role)
+        for user, role in rows(
+            admin_engine,
+            "SELECT user_id, role FROM memberships WHERE company_id = :c",
+            c=mine,
+        )
+    ] == [
+        (
+            str(
+                scalar(
+                    admin_engine,
+                    "SELECT user_id FROM user_identities WHERE subject = :s",
+                    s="open-founder-one",
+                )
+            ),
+            "company_admin",
+        )
+    ]
+
+    # Operator-provisioned members of the existing Companies are unaffected.
+    for subject, company in (
+        ("alice-subject", tenants.a.company),
+        ("bob-subject", tenants.b.company),
+    ):
+        assert [
+            (c["company_id"], c["role"])
+            for c in client.get("/me/companies", headers=auth(subject)).json()
+        ] == [(str(company), "member")]
+
+
 def test_registration_answers_are_stored_atomically_and_stay_unconfirmed(
     client: TestClient, admin_engine: Engine, tenants: Tenants, auth: Any
 ) -> None:
