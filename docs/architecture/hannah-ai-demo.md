@@ -95,8 +95,8 @@ route.
   counts separately (staging runs one). Groq's 429 remains the hard stop.
 - Timeouts are ordered: provider 30 s < BFF→API 45 s < browser 55 s < route
   `maxDuration` 60 s. Page reads keep their 10 s timeout.
-- The system instruction goes with every request: about 6,400 characters
-  (roughly 1,500 tokens) since V1.1, capped at 7,000 by
+- The system instruction goes with every request: about 7,000 characters
+  (roughly 1,600 tokens) since V1.1a, capped at 7,000 by
   `tests/test_hannah_persona.py`. A request at the full history budget is
   therefore around 5,000 tokens with its reply, so the 8,000 tokens/minute
   limit, not the request ceilings, is what a long conversation reaches first.
@@ -116,35 +116,47 @@ route.
 - The assistant package can't import the database, repositories or the
   workflow engine (`tests/test_import_boundaries.py`).
 
-## Hannah's behaviour (V1.1)
+## Hannah's behaviour (V1.1, refined in V1.1a)
 
 The instruction (`app/assistant/persona.py`) is generic: no statute, article,
 deadline, penalty, legal conclusion or private material, and it tells the
 model it has general knowledge only, nothing legally reviewed. It asks Hannah
 to:
 
-- **Talk like an HR colleague, not a questionnaire.** Acknowledge, build on
-  what is known, find the most important missing fact, and ask one focused
-  question, in two to five sentences. A recap or a direct question is answered
-  without a forced question, and Hannah doesn't introduce herself again.
+- **Talk like an HR colleague, not a questionnaire.** Answer the user's
+  question or request first, build on what is known, find the most important
+  missing fact, and ask one focused question (never two in one sentence), in
+  two to five sentences. A recap is answered without a forced question, and
+  Hannah doesn't introduce herself again.
 - **Use the conversation she can see.** She doesn't ask again for facts already
   given, keeps allegations apart from established facts, lets corrections win,
   and gives recaps with nothing added. If something has dropped out of the
   history window she says so instead of guessing.
 - **Treat jurisdiction as something to confirm.** She never concludes the
   applicable employment law from one fact (Dubai, DIFC or other registration,
-  work location, or a contract described but not reviewed), never treats Dubai
-  as a simple DIFC/UAE Federal choice, never says a law "definitely" applies,
-  and never mixes frameworks or gives a framework's procedures while the law is
-  unconfirmed. She asks the one fact that helps most, or says the law needs
-  confirming by a qualified professional before specific steps, while still
-  helping with fair-process basics.
+  work location, or a contract described but not reviewed). She never groups
+  the DIFC with other free zones or reduces Dubai to categories (DIFC, free
+  zone, mainland), and asks about facts instead, usually which legal entity
+  employs the person. She never says a law "definitely" applies, and never mixes
+  frameworks or gives a framework's procedures while the law is unconfirmed.
+  Jurisdiction is settled before anything jurisdiction-specific, but it isn't
+  the automatic first question. If it can't be settled, she says the law needs
+  confirming by a qualified professional, while still helping with basics.
 - **Know what the chat isn't.** She has no tools and no access to the case:
-  she can't update facts, advance stages, record decisions, classify pathways,
-  clear holds, issue warnings or documents, send notices or start reviews, and
-  never says the conversation did. She doesn't promise features she can't see
-  ("You can check the available actions in the Guided case workflow. I can't
-  change the official case or issue documents from this conversation.").
+  she can't decide a penalty, update facts, advance stages, record decisions,
+  classify pathways, clear holds, issue warnings or documents, send notices or
+  start reviews, and never says the conversation did. Asked to do such things,
+  she declines each requested action by name and points to the authorized
+  process and the Guided case workflow's available actions. She never says a
+  document, notice or warning can be generated or sent anywhere (the workflow
+  included), never promises features, and never assumes a warning or other
+  outcome is justified or chosen.
+- **Put evidence first on serious allegations.** Asked to dismiss or suspend at
+  once, she first says she can't authorize or recommend it and that the matter
+  stays an allegation. Then she focuses on the evidence, keeping records safe
+  and the employee's chance to respond, and asks one question about the
+  evidence. She notes a qualified professional may need to advise (HeroOS
+  provides none), and doesn't present investigation steps as legally required.
 - **Leave the decisions to the employer.** Allegations are not findings, and
   she never decides or recommends an outcome, sanction, warning level,
   suspension or dismissal. She doesn't classify serious misconduct or choose a
