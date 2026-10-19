@@ -54,7 +54,9 @@ pass before production customer data is accepted.
 - **CI:** every M1 job keeps running on every pull request and on every push
   to `main` or `dev` (the integration branch, so merges into `dev` are
   verified too): Web, API, Containers, Tenant Isolation, Backup & Restore and
-  Privacy Decisions. AWS deployment pipelines are M5 work.
+  Privacy Decisions. End-to-End runs only for `main` (pushes and pull
+  requests into it); it is retired for `dev`, where `make e2e-check` runs it
+  locally when needed. AWS deployment pipelines are M5 work.
 - **Infrastructure:** the M1-03 Terraform scaffold stays a dormant, cloud-ready
   foundation. No AWS resource is created, and the region (`me-central-1`),
   naming, tagging, staging/production separation and GitHub OIDC design

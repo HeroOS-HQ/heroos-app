@@ -192,6 +192,9 @@ jobs:
 
   e2e:
     name: End-to-End
+    # Retired for the dev integration branch (pushes to dev and pull requests
+    # into it); still runs for main. Locally: make e2e-check.
+    if: ${{ github.ref != 'refs/heads/dev' && github.base_ref != 'dev' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
