@@ -32,6 +32,13 @@ import {
   type TemplateForm,
 } from "@/lib/documents/model";
 import type { PreviewPayload } from "@/lib/documents/requests";
+import {
+  type AssistantReply,
+  type AssistantRequest,
+  type AssistantStatus,
+  fromApiAssistantReply,
+  fromApiAssistantStatus,
+} from "@/lib/assistant/model";
 import type { CorrectionPayload, DecisionPayload } from "@/lib/workflows/requests";
 
 import type { AuthConfig } from "./config";
@@ -714,4 +721,84 @@ export async function previewDocument(
   });
   if (result.ok && result.data.template.key !== templateKey) return { ok: false, failure: "unavailable" };
   return result;
+}
+
+// --- the Hannah AI demo ---------------------------------------------------------------
+
+// Hannah's reply waits on the model provider (the API gives it 30 s). It must
+// end before the browser stops waiting (HANNAH_BROWSER_TIMEOUT_MS, 55 s) and
+// within the route's maxDuration (60 s); page reads keep their short timeout.
+export const ASSISTANT_TIMEOUT_MS = 45_000;
+
+export type AssistantFailure = ApiFailure | "rate_limited" | "timeout" | "not_configured";
+export type AssistantResult =
+  | { ok: true; data: AssistantReply }
+  | { ok: false; failure: AssistantFailure; retryAfter?: number };
+
+function assistantPath(companyId: string, caseId: string): string | null {
+  return UUID.test(companyId) && UUID.test(caseId) ? `/companies/${companyId}/cases/${caseId}/assistant` : null;
+}
+
+/** `GET /companies/{id}/cases/{caseId}/assistant`: whether this administrator can talk to Hannah here. */
+export async function getAssistantStatus(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<AssistantStatus>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = assistantPath(companyId, caseId);
+  if (path === null) return { ok: false, failure: "not_found" };
+  return apiCall(config, accessToken, fetcher, path, fromApiAssistantStatus);
+}
+
+/**
+ * `POST /companies/{id}/cases/{caseId}/assistant/messages`: one message to
+ * Hannah, her reply. Nothing is stored and the Case doesn't change, so a retry
+ * is safe. The provider's limit (429), a missing key (503 "Not configured")
+ * and a timeout (504, or no answer in time) each get their own code.
+ */
+export async function sendAssistantMessage(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  payload: AssistantRequest,
+  fetcher: Fetch = fetch,
+): Promise<AssistantResult> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = assistantPath(companyId, caseId);
+  if (path === null) return { ok: false, failure: "not_found" };
+  try {
+    const response = await fetcher(`${config.apiBaseUrl}${path}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(ASSISTANT_TIMEOUT_MS),
+    });
+    if (response.status === 429) {
+      const seconds = Number(response.headers.get("retry-after"));
+      const retryAfter = Number.isInteger(seconds) && seconds > 0 ? Math.min(seconds, 3600) : undefined;
+      return { ok: false, failure: "rate_limited", ...(retryAfter ? { retryAfter } : {}) };
+    }
+    if (response.status === 504) return { ok: false, failure: "timeout" };
+    if (response.status === 503) {
+      let detail: unknown = null;
+      try {
+        detail = ((await response.json()) as { detail?: unknown }).detail;
+      } catch {
+        // A waking or failing host: not the API's own answer.
+      }
+      return { ok: false, failure: detail === "Not configured" ? "not_configured" : "unavailable" };
+    }
+    if (!response.ok) return { ok: false, failure: failureFor(response.status) };
+    const data = fromApiAssistantReply(await response.json());
+    return data === null ? { ok: false, failure: "unavailable" } : { ok: true, data };
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    return { ok: false, failure: name === "TimeoutError" || name === "AbortError" ? "timeout" : "unavailable" };
+  }
 }

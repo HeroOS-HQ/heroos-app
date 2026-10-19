@@ -27,6 +27,11 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 # "synthetic_demo": the environment holds synthetic demo data only.
 SensitiveScreening = Literal["disabled", "synthetic_demo"]
 
+# The Hannah AI demo's model id: an identifier, never a URL (the provider's
+# endpoint is fixed in app.assistant.groq).
+HANNAH_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+DEFAULT_HANNAH_MODEL = "openai/gpt-oss-120b"
+
 # The pinned SHA-256 of the rule bundle (or template bundle) file (lowercase hex).
 RULE_BUNDLE_PIN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -171,6 +176,33 @@ class Settings(DatabaseSettings):
     # (docs/architecture/document-templates.md).
     heroos_template_bundle_path: Path | None = None
     heroos_template_bundle_sha256: str | None = None
+
+    # Hannah AI demo (conversational, GroqCloud). Off unless explicitly enabled,
+    # and then only for the verified identity subjects listed here (exact
+    # `sub` values from the identity provider, comma-separated): an empty or
+    # missing list lets no one in. Production refuses it. The chat never
+    # changes a Case and receives no tools (docs/architecture/hannah-ai-demo.md).
+    heroos_hannah_demo_enabled: bool = False
+    heroos_hannah_tester_subjects: str | None = None
+    heroos_hannah_model: str = DEFAULT_HANNAH_MODEL
+    # The GroqCloud API key (server-side only). Unset: the demo answers 503.
+    groq_api_key: SecretStr | None = None
+
+    @model_validator(mode="after")
+    def _validate_hannah_demo(self) -> Self:
+        if self.heroos_env == "production" and self.heroos_hannah_demo_enabled:
+            raise ValueError(
+                "HEROOS_HANNAH_DEMO_ENABLED must be false when HEROOS_ENV=production "
+                "(a demonstration, not an approved service)"
+            )
+        if not HANNAH_MODEL_ID.fullmatch(self.heroos_hannah_model):
+            raise ValueError("HEROOS_HANNAH_MODEL must be a model identifier")
+        return self
+
+    @property
+    def hannah_tester_subjects(self) -> frozenset[str]:
+        raw = self.heroos_hannah_tester_subjects or ""
+        return frozenset(item.strip() for item in raw.split(",") if item.strip())
 
     @model_validator(mode="after")
     def _validate_rule_bundle(self) -> Self:

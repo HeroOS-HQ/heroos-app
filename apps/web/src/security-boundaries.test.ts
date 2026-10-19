@@ -34,6 +34,7 @@ describe("browser/server boundary", () => {
       "components/cases/decisions-panel.tsx",
       "components/cases/document-form.tsx",
       "components/cases/documents-panel.tsx",
+      "components/cases/hannah-chat.tsx",
       "components/cases/new-case-form.tsx",
       "components/cases/progression-panel.tsx",
       "components/onboarding/onboarding-wizard.tsx",
@@ -77,10 +78,12 @@ describe("browser/server boundary", () => {
       "app/bff/companies/[companyId]/cases/[caseId]/history/route.ts": "handleHistoryPage",
       "app/bff/companies/[companyId]/cases/[caseId]/documents/route.ts": "handleDocumentsList",
       "app/bff/companies/[companyId]/cases/[caseId]/documents/[templateKey]/route.ts": "handleDocumentForm",
+      "app/bff/companies/[companyId]/cases/[caseId]/assistant/route.ts": "handleAssistantStatus",
     };
     const routes = files.filter(({ path }) => path.startsWith("app/bff/") && !(path in reads));
     expect(routes.map(({ path }) => path).sort()).toEqual([
       "app/bff/companies/[companyId]/blueprint/route.ts",
+      "app/bff/companies/[companyId]/cases/[caseId]/assistant/messages/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/decisions/[recordId]/corrections/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/decisions/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/documents/[templateKey]/preview/route.ts",
@@ -92,7 +95,7 @@ describe("browser/server boundary", () => {
     ]);
     for (const { path, text } of routes) {
       expect(text, path).toMatch(
-        /handle(Registration|BlueprintUpdate|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview)\(request/,
+        /handle(Registration|BlueprintUpdate|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview|AssistantMessage)\(request/,
       );
       expect(text, path).not.toMatch(/export async function GET/);
     }
@@ -107,13 +110,16 @@ describe("browser/server boundary", () => {
     expect(history).toMatch(/^[\s\S]*?isSameOriginRequest\(request, config\)[\s\S]*?sessionFromRequest\(request, config/);
     const guardRead = bff.slice(bff.indexOf("function guardRead"));
     expect(guardRead).toMatch(/^[\s\S]*?isSameOriginRequest\(request, config\)[\s\S]*?sessionFromRequest\(request, config/);
-    for (const handler of ["handleDocumentsList", "handleDocumentForm"]) {
+    for (const handler of ["handleDocumentsList", "handleDocumentForm", "handleAssistantStatus"]) {
       const body = bff.slice(bff.indexOf(`export async function ${handler}`));
       expect(body, handler).toMatch(/^[^}]*?guardRead\(request, config, deps\)/);
     }
     // The preview (a POST, so personal details never travel in a URL) goes through the shared guard.
     const preview = bff.slice(bff.indexOf("export async function handleDocumentPreview"));
     expect(preview).toMatch(/^[\s\S]*?await guard\(request, config, deps, MAX_PREVIEW_BYTES\)/);
+    // So does a Hannah message (the Hannah AI demo).
+    const hannah = bff.slice(bff.indexOf("export async function handleAssistantMessage"));
+    expect(hannah).toMatch(/^[\s\S]*?await guard\(request, config, deps, MAX_ASSISTANT_BYTES\)/);
   });
 
   it("nothing renders an HTML string or runs code from text", () => {

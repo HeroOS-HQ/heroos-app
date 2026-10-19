@@ -11,6 +11,9 @@
 - The only other POST is the M2-04C document preview: administrator-only, in
   a transaction that can't write (like every document route), and it never
   reads employer decision records.
+- The Hannah AI demo's message POST writes nothing either: administrator-only,
+  a read-only transaction, the tester-list check, and the assistant package
+  can't reach the database or the workflow engine.
 - Founder self-registration is the only route an authenticated identity that
   HeroOS has not provisioned can reach; every other API route resolves an
   active HeroOS User first.
@@ -22,6 +25,7 @@ from pathlib import Path
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 
+from app.api.assistant import require_hannah_tester
 from app.api.onboarding import require_self_registration
 from app.auth.dependencies import get_current_user, get_verified_identity, require_company_admin
 from app.core.config import Settings
@@ -78,6 +82,12 @@ DOCUMENT_ROUTES = {
     ("GET", "/companies/{company_id}/cases/{case_id}/documents"),
     ("GET", "/companies/{company_id}/cases/{case_id}/documents/{template_key}"),
     DOCUMENT_PREVIEW,
+}
+# The Hannah AI demo: a status read and a message POST that changes nothing.
+ASSISTANT_MESSAGE = ("POST", "/companies/{company_id}/cases/{case_id}/assistant/messages")
+ASSISTANT_ROUTES = {
+    ("GET", "/companies/{company_id}/cases/{case_id}/assistant"),
+    ASSISTANT_MESSAGE,
 }
 
 
@@ -146,7 +156,8 @@ def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() ->
         (method, route.path): route
         for route in _app_routes()
         for method in route.methods or set()
-        if method not in ("GET", "HEAD") and (method, route.path) != DOCUMENT_PREVIEW
+        if method not in ("GET", "HEAD")
+        and (method, route.path) not in (DOCUMENT_PREVIEW, ASSISTANT_MESSAGE)
     }
     assert set(mutating) == MUTATING_ROUTES
 
@@ -182,6 +193,34 @@ def test_document_routes_are_admin_only_and_cannot_write() -> None:
         # The administrator scope, in a transaction that refuses every write.
         assert get_company_admin_read_scope in calls, key
         assert get_company_admin_scope in calls, key
+
+
+def test_assistant_routes_are_admin_only_testers_only_and_cannot_write() -> None:
+    routes = {
+        (method, route.path): route for route in _app_routes() for method in route.methods or set()
+    }
+    found = {key for key in routes if "/assistant" in key[1]}
+    assert found == ASSISTANT_ROUTES
+    for key in ASSISTANT_ROUTES:
+        calls = _dependency_calls(routes[key].dependant)
+        assert require_company_admin in calls, key
+        assert get_company_admin_read_scope in calls, key
+        assert get_company_admin_scope in calls, key
+    assert require_hannah_tester in _dependency_calls(routes[ASSISTANT_MESSAGE].dependant)
+
+
+def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
+    """The model's text can't become a workflow action: no path from the assistant package."""
+    for path in (APP / "assistant").rglob("*.py"):
+        assert not any(
+            name.startswith(("app.repositories", "app.db", "app.workflows", "sqlalchemy"))
+            for name in _imports(path)
+        ), path
+    imported = _imports(APP / "api" / "assistant.py")
+    assert not any(
+        name.startswith(("app.workflows", "app.api.workflows", "app.api.decisions", "app.db"))
+        for name in imported
+    )
 
 
 def test_documents_never_read_employer_decision_records() -> None:
@@ -237,6 +276,8 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/cases/{case_id}/documents",
         "/companies/{company_id}/cases/{case_id}/documents/{template_key}",
         "/companies/{company_id}/cases/{case_id}/documents/{template_key}/preview",
+        "/companies/{company_id}/cases/{case_id}/assistant",
+        "/companies/{company_id}/cases/{case_id}/assistant/messages",
     }
 
 
