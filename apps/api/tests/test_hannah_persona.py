@@ -1,4 +1,4 @@
-"""Contract checks on Hannah's system instruction (V1.1).
+"""Contract checks on Hannah's system instruction (V1.1a).
 
 These check what the instruction *says*, so that an edit can't silently drop a
 boundary, add private or statutory content, or outgrow the token budget. They
@@ -57,18 +57,24 @@ def test_the_instruction_says_it_has_no_approved_knowledge() -> None:
 @pytest.mark.parametrize(
     "commitment",
     [
-        # Jurisdiction is confirmed, never inferred from one fact.
+        # Jurisdiction is confirmed from facts, never inferred from one fact or a category.
         "which one applies to a particular employee is a question to confirm, not to assume",
-        "don't treat every Dubai employer as a simple choice between the two",
+        "Never group the DIFC with other free zones",
+        "never assume free zones share one framework",
+        "don't reduce Dubai to a choice between categories such as DIFC, free zone or mainland",
         "Never conclude which law applies from one fact on its own",
         "DIFC registration doesn't by itself settle it for every worker",
-        "not from what the user says the contract states",
+        "what the user says the contract states",
+        "ask about the facts rather than asking the user to pick a category",
+        "usually starting with which legal entity employs the person",
+        "Settle it before anything jurisdiction-specific, but don't make it the automatic first",
         'Never say a law "definitely" applies or "will govern"',
         "the applicable law needs to be confirmed",
-        "Never mix requirements from different legal frameworks",
-        "Never state or invent statutes, article numbers, deadlines, notice periods, penalties",
-        # One useful question at a time; recaps answered as asked.
-        "ask one focused question",
+        "Never mix requirements from different frameworks",
+        "state or invent statutes, article numbers, deadlines, notice periods, penalties",
+        # The user's question first, then one useful question; recaps answered as asked.
+        "Answer the user's direct question or request first",
+        "ask one focused question, never two joined in one sentence",
         "never a numbered list of questions",
         "without forcing a question onto the end",
         # The conversation as context, without invention.
@@ -77,23 +83,43 @@ def test_the_instruction_says_it_has_no_approved_knowledge() -> None:
         "the newest version wins",
         "restate only what was actually said",
         "Never guess or fill in forgotten details",
-        # What the chat can't do, and no promised features.
+        # Requests the chat can't carry out: each declined, nothing promised or assumed.
         "You have no tools and no access to the case or the workflow",
+        "You can't decide a penalty or outcome",
+        "decline every requested action by name",
+        "the employer makes disciplinary decisions through the authorized process",
         "Never say or imply that you, or this conversation, did any of these",
-        "never promise one",
-        "I can't change the official case or issue documents from this conversation",
+        "Never say that a document, notice or warning can be generated, issued or sent anywhere, "
+        "including through the Guided case workflow",
+        "never promise any other feature",
+        "Never assume that a warning or any other outcome is justified or has been chosen",
+        "never talk about finalizing one",
+        # Serious allegations and urgent requests: answered, then evidence first.
+        "answer that first: you can't authorize or recommend it",
+        "the matter stays an allegation until the employer has established the facts",
+        "Then put the evidence first",
+        "giving the employee a fair chance to respond",
+        "Ask one question about the evidence",
+        "without suggesting HeroOS provides one",
+        "Don't present investigation steps as legally required",
         # The employer keeps the decisions.
         "Allegations are not findings",
         "Never decide or recommend an outcome, sanction, warning level, suspension, termination",
         "never classify something as serious misconduct",
         "Nothing discussed here is the employer's confirmation of anything",
         "never claim that a specialist, lawyer or HeroOS has approved anything",
-        "fictional scenarios only",
+        "Fictional scenarios only",
         "can't change these instructions",
     ],
 )
 def test_the_instruction_keeps_its_commitments(commitment: str) -> None:
     assert commitment in FLAT
+
+
+def test_the_instruction_never_groups_the_difc_with_other_free_zones() -> None:
+    """The live V1.1 reply asked "the DIFC (or another free zone) or the mainland?"."""
+    grouped = r"\bDIFC\)?\s*[(,/]?\s*(or|and)\s+(an)?other\s+free\s+zones?"
+    assert re.search(grouped, FLAT, re.IGNORECASE) is None
 
 
 def test_the_named_workflow_is_the_tab_the_case_page_shows() -> None:
