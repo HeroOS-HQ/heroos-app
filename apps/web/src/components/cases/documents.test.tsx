@@ -78,6 +78,50 @@ describe("DocumentsPanel (M2-04C)", () => {
     expect(init?.method ?? "GET").toBe("GET");
   });
 
+  it("keeps a template of this stage that waits on a precondition in sight, with its reason", async () => {
+    const fetcher = fetcherOf(
+      documents(
+        apiDocuments([
+          unavailableSummary("requirement_unknown", "Not available until the information it depends on is answered."),
+          unavailableSummary("not_at_this_stage", "Offered at another stage of this case.", { key: "synthetic.other", code: "TEST-09" }),
+        ]),
+      ),
+    );
+    render(
+      <DocumentsPanel
+        caseId={CASE_ID}
+        companyId={COMPANY_ID}
+        fetcher={fetcher as unknown as typeof fetch}
+        revision={5}
+        stage="Test stage 2: Written note"
+      />,
+    );
+    const stage = within(await screen.findByRole("region", { name: "At this stage: Test stage 2: Written note" }));
+    expect(stage.getByText("Not available yet")).toBeTruthy();
+    expect(stage.getByText("Not available until the information it depends on is answered.")).toBeTruthy();
+    expect(stage.queryByRole("button", { name: /Open/ })).toBeNull();
+    expect(screen.queryByText("No template can be previewed at this point of the case.")).toBeNull();
+    // Templates of other stages stay folded away.
+    expect(screen.getByText("Not available now (1)")).toBeTruthy();
+  });
+
+  it("says once, in sight, when the case itself stops every preview (a hold)", async () => {
+    const held = "Not available while this case is on hold for specialist review.";
+    panel(
+      fetcherOf(
+        documents(
+          apiDocuments([
+            apiSummary({ available: false, reason: "case_held", reason_text: held }),
+            unavailableSummary("case_held", held),
+          ]),
+        ),
+      ),
+    );
+    expect(await screen.findByText("No document can be previewed right now")).toBeTruthy();
+    expect(screen.getAllByText(held)[0]).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Open/ })).toBeNull();
+  });
+
   it("says when no templates are installed, or the API doesn't offer documents yet", async () => {
     panel(fetcherOf(documents(apiNotInstalled())));
     expect(await screen.findByText("Document templates aren't available in this environment.")).toBeTruthy();

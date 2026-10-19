@@ -370,6 +370,6 @@ export async function run(ctx) {
     AND (tablename LIKE '%document%' OR tablename LIKE '%penalt%' OR tablename LIKE '%warning%' OR tablename LIKE '%sanction%')`);
   const notAvailable = (await view(caseId)).json?.not_available ?? [];
   check("DEC-17", "nothing generates a document or a penalty: no such table exists and both stay listed as not available",
-    generated[0][0] === "0" && notAvailable.includes("Documents") && notAvailable.includes("Penalty and outcome decisions"),
+    generated[0][0] === "0" && notAvailable.includes("Issuing documents") && notAvailable.includes("Penalty and outcome decisions"),
     `${generated[0][0]} ${JSON.stringify(notAvailable)}`);
 }

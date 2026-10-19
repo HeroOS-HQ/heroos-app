@@ -303,7 +303,7 @@ export function apiView({
       next_stage_open: statusValue.code === "intake_recorded",
     },
     sensitive_screening: screening,
-    not_available: ["Classification of the incident", "Options and decisions", "Documents", "Expert review"],
+    not_available: ["Classification of the incident", "Options and decisions", "Issuing documents", "Expert review"],
     conversation: conversation ?? [
       { kind: "information", id: "welcome", title: "Welcome to your Disciplinary case", body: "This is a guided workflow, not an AI assistant." },
       {
@@ -488,7 +488,7 @@ export function apiProgression(overrides: Record<string, unknown> = {}): Record<
     actions: [],
     checklist: null,
     escalations: [],
-    not_available: ["Penalty and outcome decisions", "Documents", "Expert review"],
+    not_available: ["Penalty and outcome decisions", "Issuing documents", "Expert review"],
     history: [],
     attempt: null,
     ...overrides,

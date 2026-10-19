@@ -41,8 +41,8 @@ export async function run(ctx) {
   await page.goto(`${webOrigin}${companyPath}`);
   await page.waitForText("Open Disciplinary cases");
   const areas = await page.eval(`[...document.querySelectorAll('section[aria-labelledby="workflows-heading"] li')].map((li) => li.innerText.replace(/\\s+/g, " "))`);
-  check("CASE-1", "the workspace home opens Disciplinary (intake only); Probation and Recruitment stay coming soon",
-    areas.length === 3 && areas[0].includes("Intake only") && areas.slice(1).every((t) => t.includes("Coming soon")), JSON.stringify(areas));
+  check("CASE-1", "the workspace home opens Disciplinary (in development); Probation and Recruitment stay coming soon",
+    areas.length === 3 && areas[0].includes("In development") && areas.slice(1).every((t) => t.includes("Coming soon")), JSON.stringify(areas));
 
   await page.click(`a[href="${companyPath}/cases"]`);
   await page.waitForText("No Disciplinary cases yet");

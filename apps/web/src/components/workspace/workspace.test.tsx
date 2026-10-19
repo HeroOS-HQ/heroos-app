@@ -103,7 +103,7 @@ describe("WorkspaceHome", () => {
     const links = within(workflows).getAllByRole("link");
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", `/workspaces/${details().company.id}/cases`);
-    expect(links[0]).toHaveTextContent("Intake only");
+    expect(links[0]).toHaveTextContent("In development");
     expect(within(workflows).getAllByText("Coming soon")).toHaveLength(2);
     expect(within(workflows).queryAllByRole("button")).toHaveLength(0);
   });

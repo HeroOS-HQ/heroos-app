@@ -28,6 +28,10 @@ type Load =
 
 type Open = { state: "loading"; key: string } | { state: "open"; form: TemplateForm } | { state: "failed"; key: string; status: number };
 
+const AT_THIS_STAGE = new Set<string>(["requirement_unknown", "requirement_not_met"]);
+// Reasons about the Case itself: the API checks them first, so they apply to every template.
+const CASE_LEVEL = new Set<string>(["rules_not_installed", "case_held", "case_not_ready"]);
+
 const request = (url: string, fetcher: typeof fetch) =>
   fetcher(url, { headers: { Accept: "application/json" }, cache: "no-store", credentials: "same-origin", redirect: "error" });
 
@@ -35,12 +39,15 @@ export function DocumentsPanel({
   companyId,
   caseId,
   revision,
+  stage = null,
   fetcher,
 }: {
   companyId: string;
   caseId: string;
   /** The Case's revision: availability is read again whenever it changes. */
   revision: number;
+  /** The title of the stage in progress, if any (from the Case view). */
+  stage?: string | null;
   fetcher?: typeof fetch;
 }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
@@ -128,8 +135,12 @@ export function DocumentsPanel({
     );
   }
 
+  const caseReason = list.templates.find((template) => template.reason !== null && CASE_LEVEL.has(template.reason)) ?? null;
   const available = list.templates.filter((template) => template.available);
-  const unavailable = list.templates.filter((template) => !template.available);
+  // Waiting on a precondition: these belong to the stage in progress (the API
+  // checks the stage before the precondition), so the reason stays in sight.
+  const waiting = list.templates.filter((template) => template.reason !== null && AT_THIS_STAGE.has(template.reason));
+  const unavailable = list.templates.filter((template) => !template.available && !waiting.includes(template));
   const openKey = open === null ? null : open.state === "open" ? open.form.template.key : open.key;
 
   return (
@@ -144,11 +155,17 @@ export function DocumentsPanel({
         <p className="text-sm font-semibold text-hero-navy">Template wording here is provisional: not approved for use.</p>
       ) : null}
 
+      {caseReason ? (
+        <Notice title="No document can be previewed right now" tone="caution">
+          {caseReason.reasonText}
+        </Notice>
+      ) : null}
+
       <section aria-labelledby="documents-available-heading">
         <h3 className="text-base font-extrabold tracking-[-0.01em] text-hero-navy" id="documents-available-heading">
-          Available at this stage
+          {stage ? `At this stage: ${stage}` : "At this stage"}
         </h3>
-        {available.length === 0 ? (
+        {available.length === 0 && waiting.length === 0 ? (
           <p className="mt-2 text-[0.9375rem] text-hero-muted">No template can be previewed at this point of the case.</p>
         ) : (
           <ul className="mt-3 flex flex-col gap-3">
@@ -185,6 +202,16 @@ export function DocumentsPanel({
                     <DocumentForm caseId={caseId} companyId={companyId} fetcher={fetcher} form={open.form} key={open.form.template.key} onClose={() => setOpen(null)} />
                   </div>
                 ) : null}
+              </li>
+            ))}
+            {waiting.map((template) => (
+              <li className="rounded-2xl border border-dashed border-hero-border bg-white p-4" data-template={template.key} key={template.key}>
+                <p className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-bold uppercase tracking-[0.08em] text-hero-muted">{template.code}</span>
+                  <StatusBadge tone="caution">Not available yet</StatusBadge>
+                </p>
+                <p className="mt-1 break-words font-bold text-hero-navy/80">{template.title}</p>
+                <p className="mt-1 text-sm leading-relaxed text-hero-muted">{template.reasonText}</p>
               </li>
             ))}
           </ul>

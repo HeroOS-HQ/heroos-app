@@ -16,7 +16,10 @@
 # Results (no secrets, synthetic data only): e2e/.output/<UTC timestamp>/.
 # Options (environment): E2E_SKIP_BUILD=1 reuses an existing web build;
 # E2E_SUITES=a,b runs only those suites; E2E_KEEP_RUN_DIR=1 keeps the temporary
-# directory (it contains this run's throwaway secrets).
+# directory (it contains this run's throwaway secrets). E2E_DEMO=1 (with
+# E2E_SUITES=journey: `make demo-synthetic`) runs in a visible browser and keeps
+# the fictional environment up for a live demo until Ctrl-C or
+# E2E_DEMO_MINUTES (default 60); E2E_DEMO_HEADLESS=1 keeps the browser hidden.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -166,4 +169,8 @@ log "Running the end-to-end suites"
   E2E_ISSUER_PORT="${ISSUER_PORT}" E2E_ISSUER2_PORT="${ISSUER2_PORT}" E2E_API2_PORT="${API2_PORT}" E2E_API_PORT="${API_PORT}" \
   E2E_WEB_INTERNAL_PORT="${WEB_INTERNAL_PORT}" E2E_WEB_PORT="${WEB_PORT}" E2E_CHROME_PORT="${CHROME_PORT}" \
   ${E2E_CHROME:+E2E_CHROME="${E2E_CHROME}"} ${E2E_SUITES:+E2E_SUITES="${E2E_SUITES}"} \
+  ${E2E_DEMO:+E2E_DEMO="${E2E_DEMO}"} ${E2E_DEMO_MINUTES:+E2E_DEMO_MINUTES="${E2E_DEMO_MINUTES}"} \
+  ${E2E_DEMO_HEADLESS:+E2E_DEMO_HEADLESS="${E2E_DEMO_HEADLESS}"} \
+  ${DISPLAY:+DISPLAY="${DISPLAY}"} ${WAYLAND_DISPLAY:+WAYLAND_DISPLAY="${WAYLAND_DISPLAY}"} \
+  ${XAUTHORITY:+XAUTHORITY="${XAUTHORITY}"} ${XDG_RUNTIME_DIR:+XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}"} \
   node e2e/run.mjs
