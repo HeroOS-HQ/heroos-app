@@ -14,7 +14,7 @@ export const MAX_TURN_CHARS = 4000;
 export const MAX_HISTORY_TURNS = 12;
 export const MAX_HISTORY_CHARS = 8000;
 
-export type AssistantUnavailable = "disabled" | "not_a_tester" | "not_configured";
+export type AssistantUnavailable = "disabled" | "not_configured";
 export type AssistantStatus = {
   available: boolean;
   reason: AssistantUnavailable | null;
@@ -28,7 +28,7 @@ export type AssistantReply = {
 };
 export type AssistantRequest = { message: string; history: ChatTurn[] };
 
-const REASONS = new Set<string>(["disabled", "not_a_tester", "not_configured"]);
+const REASONS = new Set<string>(["disabled", "not_configured"]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

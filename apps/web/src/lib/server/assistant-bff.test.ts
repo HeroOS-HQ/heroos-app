@@ -64,14 +64,14 @@ function api(response: Response | Error) {
 
 describe("handleAssistantStatus", () => {
   it("asks the API whether this administrator can use the demo", async () => {
-    const deps = api(json({ available: false, reason: "not_a_tester", notice: NOTICE }));
+    const deps = api(json({ available: false, reason: "not_configured", notice: NOTICE }));
     const request = new Request(`${WEB_ORIGIN}${base}`, {
       headers: { "sec-fetch-site": "same-origin", cookie: cookie() },
     });
     const response = await handleAssistantStatus(request, CONFIG, COMPANY_ID, CASE_ID, deps);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
-      status: { available: false, reason: "not_a_tester", notice: NOTICE },
+      status: { available: false, reason: "not_configured", notice: NOTICE },
     });
     const [url, init] = deps.fetchMock.mock.calls[0] as [string, RequestInit];
     expect(url).toBe(`${API_BASE_URL}/companies/${COMPANY_ID}/cases/${CASE_ID}/assistant`);

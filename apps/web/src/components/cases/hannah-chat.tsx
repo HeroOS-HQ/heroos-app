@@ -20,7 +20,8 @@ import {
  * nothing here is saved, nothing changes the Case, and the panels around it
  * keep showing only what the API recorded. The turns live in this
  * component's state and are gone on reload. Shown only when the API says this
- * administrator can use it (the demo switch and the tester list).
+ * administrator can use it (the demo is on in this environment; any Company
+ * administrator in their own Company's Cases).
  */
 
 // The BFF waits up to 45 s for the API (lib/server/heroos-api.ts), within the
@@ -48,8 +49,8 @@ const FAILURE_TEXT: Record<Failure, { title: string; body: string }> = {
     body: "The demo's model provider isn't configured yet. The guided case workflow works as usual.",
   },
   refused: {
-    title: "Hannah AI isn't available for your account",
-    body: "Reload the page to see the case as it is now.",
+    title: "Hannah AI isn't available to you here",
+    body: "Only company administrators can use Hannah in their own company's cases. Reload the page to see the case as it is now.",
   },
   session_expired: {
     title: "Your session has ended",
@@ -266,17 +267,8 @@ export function HannahChat({
       </p>
 
       {!status.available ? (
-        <Notice
-          className="mt-4"
-          title={
-            status.reason === "not_configured"
-              ? FAILURE_TEXT.not_configured.title
-              : "Hannah AI isn't enabled for your account"
-          }
-        >
-          {status.reason === "not_configured"
-            ? FAILURE_TEXT.not_configured.body
-            : "This demo is open to approved testers only in this environment. The guided case workflow works as usual."}
+        <Notice className="mt-4" title={FAILURE_TEXT.not_configured.title}>
+          {FAILURE_TEXT.not_configured.body}
         </Notice>
       ) : (
         <>

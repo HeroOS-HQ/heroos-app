@@ -2,12 +2,10 @@
 
 Same dependency chain as the document routes: a verified credential, an active
 Membership, the ``company_admin`` role (checked again inside the transaction),
-and a transaction that refuses every write. On top of that:
-
-- the demo must be enabled (``HEROOS_HANNAH_DEMO_ENABLED``), and
-- the caller's verified identity subject must be on the tester list
-  (``HEROOS_HANNAH_TESTER_SUBJECTS``). An empty list admits no one, so a new
-  self-registered founder (an administrator of their own Company) can't use it.
+and a transaction that refuses every write. On top of that the demo must be
+enabled for the environment (``HEROOS_HANNAH_DEMO_ENABLED``; production
+refuses it). Then any administrator of the Case's own Company can use it, with
+no individual approval: tenant isolation and the Case check decide where.
 
 Routes:
 
@@ -20,15 +18,18 @@ Routes:
   case history, not ``case_facts`` and not a workflow action; the model gets no
   tools.
 
-Nothing logs a message, history, reply, prompt, key or identity subject: logs
-carry the outcome only.
+Usage limits (``app.assistant.limits``, in this process's memory): messages
+per account and per 5 minutes, and for the whole service per minute and per
+day, below the provider's shared free-tier quota.
 
-Responses: 401 / 403 (also for a caller not on the tester list) / 404 (demo
-disabled, or a Case that isn't one of this Company's) exactly as the Company
-routes; 422 field locations only; 429 ``Too many requests`` (the tester's
-limit or the provider's, with ``Retry-After``); 503 ``Not configured`` (no
-provider key); 504 ``Timed out``; 502 ``Unavailable`` (any other provider
-failure).
+Nothing logs a message, history, reply, prompt, key or account: logs carry the
+outcome only.
+
+Responses: 401 / 403 / 404 (demo disabled, or a Case that isn't one of this
+Company's) exactly as the Company routes; 422 field locations only; 429 ``Too
+many requests`` (an account or service limit, or the provider's, with
+``Retry-After``); 503 ``Not configured`` (no provider key); 504 ``Timed out``;
+502 ``Unavailable`` (any other provider failure).
 """
 
 import logging
@@ -40,11 +41,10 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, StringConstraints, field_validator
 
-from app.assistant.limits import SlidingWindowLimiter
+from app.assistant.limits import UsageLimits
 from app.assistant.persona import HANNAH_SYSTEM_INSTRUCTION
 from app.assistant.provider import AssistantError, ChatProvider, ChatTurn
-from app.auth.dependencies import get_verified_identity
-from app.auth.models import VerifiedIdentity
+from app.auth.dependencies import CompanyAdminContext
 from app.repositories import workflows
 from app.tenancy.dependencies import CompanyAdminReadOnlyDb
 
@@ -64,7 +64,7 @@ NOTICE: Final = (
     "do not authorize disciplinary decisions."
 )
 
-Reason = Literal["disabled", "not_a_tester", "not_configured"]
+Reason = Literal["disabled", "not_configured"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,9 +72,8 @@ class HannahDemo:
     """The demo's configuration, fixed at startup."""
 
     enabled: bool
-    testers: frozenset[str]
     provider: ChatProvider | None
-    limiter: SlidingWindowLimiter
+    limits: UsageLimits
 
 
 def hannah_demo(request: Request) -> HannahDemo:
@@ -83,24 +82,20 @@ def hannah_demo(request: Request) -> HannahDemo:
 
 
 Demo = Annotated[HannahDemo, Depends(hannah_demo)]
-Identity = Annotated[VerifiedIdentity, Depends(get_verified_identity)]
 
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
-def require_hannah_tester(identity: Identity, demo: Demo) -> VerifiedIdentity:
-    """The demo is on and this verified identity subject is on the tester list."""
+def require_hannah_demo(demo: Demo) -> HannahDemo:
+    """The demo is enabled in this environment (404 otherwise: it doesn't exist here)."""
     if not demo.enabled:
         raise _not_found()
-    if identity.subject not in demo.testers:
-        logger.info("Hannah demo refused: identity is not on the tester list")
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
-    return identity
+    return demo
 
 
-Tester = Annotated[VerifiedIdentity, Depends(require_hannah_tester)]
+EnabledDemo = Annotated[HannahDemo, Depends(require_hannah_demo)]
 
 # --- request and response models ------------------------------------------------------
 
@@ -174,7 +169,6 @@ def _require_case(scope: CompanyAdminReadOnlyDb, case_id: UUID) -> None:
 def get_assistant_status(
     case_id: UUID,
     scope: CompanyAdminReadOnlyDb,
-    identity: Identity,
     demo: Demo,
 ) -> AssistantStatusOut:
     """Whether this administrator can talk to Hannah in this Case."""
@@ -182,8 +176,6 @@ def get_assistant_status(
     reason: Reason | None
     if not demo.enabled:
         reason = "disabled"
-    elif identity.subject not in demo.testers:
-        reason = "not_a_tester"
     elif demo.provider is None:
         reason = "not_configured"
     else:
@@ -196,8 +188,8 @@ def send_assistant_message(
     case_id: UUID,
     body: MessageIn,
     scope: CompanyAdminReadOnlyDb,
-    tester: Tester,
-    demo: Demo,
+    context: CompanyAdminContext,
+    demo: EnabledDemo,
 ) -> AssistantReplyOut:
     """One message to Hannah; her reply. Nothing is stored and the Case doesn't change."""
     _require_case(scope, case_id)
@@ -209,13 +201,13 @@ def send_assistant_message(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Not configured"
         )
-    wait = demo.limiter.acquire(tester.subject)
-    if wait is not None:
-        logger.info("Hannah demo reply refused (outcome=tester_limit)")
+    exceeded = demo.limits.acquire(str(context.user_id))
+    if exceeded is not None:
+        logger.info("Hannah demo reply refused (outcome=%s_limit)", exceeded.scope)
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many requests",
-            headers={"Retry-After": str(wait)},
+            headers={"Retry-After": str(exceeded.retry_after)},
         )
     turns = recent_turns(body.history, body.message)
     try:

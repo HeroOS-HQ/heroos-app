@@ -114,19 +114,36 @@ def test_the_demo_is_off_by_default_with_the_default_model() -> None:
     assert config.heroos_hannah_demo_enabled is False
     assert config.heroos_hannah_model == "openai/gpt-oss-120b"
     demo = load_hannah_demo(config)
-    assert (demo.enabled, demo.testers, demo.provider) == (False, frozenset(), None)
+    assert (demo.enabled, demo.provider) == (False, None)
 
 
-def test_the_tester_list_is_exact_subjects() -> None:
-    config = settings(
-        heroos_hannah_demo_enabled=True,
-        heroos_hannah_tester_subjects=" auth0|abc , google-oauth2|123,, ",
-        groq_api_key=KEY,
-    )
-    demo = load_hannah_demo(config)
-    assert demo.testers == frozenset({"auth0|abc", "google-oauth2|123"})
+def test_enabled_needs_only_the_switch_and_a_key() -> None:
+    demo = load_hannah_demo(settings(heroos_hannah_demo_enabled=True, groq_api_key=KEY))
+    assert demo.enabled is True
     assert demo.provider is not None and demo.provider.model == DEFAULT_HANNAH_MODEL
-    assert load_hannah_demo(settings(heroos_hannah_demo_enabled=True)).testers == frozenset()
+    assert load_hannah_demo(settings(heroos_hannah_demo_enabled=True)).provider is None
+
+
+def test_usage_limits_are_configurable_and_bounded() -> None:
+    config = settings(
+        heroos_hannah_account_limit=5,
+        heroos_hannah_global_limit_per_minute=7,
+        heroos_hannah_global_limit_per_day=100,
+    )
+    limits = load_hannah_demo(config).limits
+    assert all(limits.acquire("account") is None for _ in range(5))
+    exceeded = limits.acquire("account")
+    assert exceeded is not None and exceeded.scope == "account"
+    assert limits.acquire("another") is None and limits.acquire("third") is None
+    exceeded = limits.acquire("fourth")
+    assert exceeded is not None and exceeded.scope == "global"
+    for field in (
+        "heroos_hannah_account_limit",
+        "heroos_hannah_global_limit_per_minute",
+        "heroos_hannah_global_limit_per_day",
+    ):
+        with pytest.raises(ValidationError):
+            settings(**{field: 0})
 
 
 def test_production_refuses_the_demo_and_models_are_identifiers() -> None:

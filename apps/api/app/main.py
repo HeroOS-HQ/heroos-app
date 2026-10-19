@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from app.api import assistant, companies, documents, onboarding, workflows
 from app.api.assistant import HannahDemo
 from app.assistant.groq import GroqChatProvider
-from app.assistant.limits import SlidingWindowLimiter
+from app.assistant.limits import UsageLimits
 from app.auth.dependencies import get_authentication_provider
 from app.core.config import Settings, settings
 from app.core.http_security import install_http_security
@@ -88,12 +88,11 @@ def load_templates(config: Settings, rules: RuleBundle | None) -> TemplateBundle
 
 
 def load_hannah_demo(config: Settings) -> HannahDemo:
-    """The Hannah AI demo's switch, tester list and provider (docs/architecture/hannah-ai-demo.md).
+    """The Hannah AI demo's switch, provider and usage limits (docs/architecture/hannah-ai-demo.md).
 
-    Off unless enabled; enabled with no testers admits no one. The log says
-    whether it is on and how many testers are listed, never who.
+    Off unless enabled; then for every Company administrator in their own
+    Company's Cases. The log names the provider, model and limits, never the key.
     """
-    testers = config.hannah_tester_subjects if config.heroos_hannah_demo_enabled else frozenset()
     key = config.groq_api_key
     provider = (
         GroqChatProvider(key, config.heroos_hannah_model)
@@ -102,16 +101,22 @@ def load_hannah_demo(config: Settings) -> HannahDemo:
     )
     if config.heroos_hannah_demo_enabled:
         logger.info(
-            "Hannah AI demo enabled (testers=%d, provider=%s, model=%s)",
-            len(testers),
+            "Hannah AI demo enabled (provider=%s, model=%s, account_limit=%d/5min, "
+            "global_limit=%d/min %d/day)",
             "groq" if provider is not None else "none",
             config.heroos_hannah_model,
+            config.heroos_hannah_account_limit,
+            config.heroos_hannah_global_limit_per_minute,
+            config.heroos_hannah_global_limit_per_day,
         )
     return HannahDemo(
         enabled=config.heroos_hannah_demo_enabled,
-        testers=testers,
         provider=provider,
-        limiter=SlidingWindowLimiter(),
+        limits=UsageLimits(
+            account_limit=config.heroos_hannah_account_limit,
+            global_per_minute=config.heroos_hannah_global_limit_per_minute,
+            global_per_day=config.heroos_hannah_global_limit_per_day,
+        ),
     )
 
 
@@ -143,7 +148,7 @@ def create_app(config: Settings) -> FastAPI:
     application.state.rule_bundle = load_rule_bundle(config)
     # Document templates (previews only): verified against those rules at startup.
     application.state.template_bundle = load_templates(config, application.state.rule_bundle)
-    # The Hannah AI demo: off unless enabled, and then for listed testers only.
+    # The Hannah AI demo: off unless enabled, then for every Company administrator.
     application.state.hannah_demo = load_hannah_demo(config)
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)

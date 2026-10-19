@@ -90,10 +90,28 @@ describe("HannahChat (Hannah AI demo)", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("tells a non-tester administrator it isn't enabled for them, with no composer", async () => {
-    chat(fetcherOf(available("not_a_tester")));
-    expect(await screen.findByText("Hannah AI isn't enabled for your account")).toBeInTheDocument();
+  it("says when the environment has no model provider, with no composer", async () => {
+    chat(fetcherOf(available("not_configured")));
+    expect(await screen.findByText("Hannah AI isn't set up in this environment")).toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Message Hannah" })).toBeNull();
+  });
+
+  it("hides itself for an unknown reason from a newer or older API", async () => {
+    const fetcher = fetcherOf(available("not_a_tester"));
+    const { container } = chat(fetcher);
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it("explains a refusal (e.g. the role changed) without offering a retry", async () => {
+    chat(fetcherOf(available(), reply(403, { error: "refused" })));
+    await screen.findByRole("textbox", { name: "Message Hannah" });
+    type("Hello");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Only company administrators can use Hannah");
+    expect(within(alert).queryByRole("button")).toBeNull();
   });
 
   it("sends a message to the BFF, shows it pending, then Hannah's reply as an AI message", async () => {
