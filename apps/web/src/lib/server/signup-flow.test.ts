@@ -74,7 +74,9 @@ describe("hosted sign-up entry", () => {
   });
 
   it("lands a new founder on onboarding and a returning user on the homepage", async () => {
-    expect((await signIn(OIDC_CONFIG, "signup")).finished.headers.get("location")).toBe(`${WEB_ORIGIN}/onboarding`);
+    expect((await signIn(OIDC_CONFIG, "signup")).finished.headers.get("location")).toBe(
+      `${WEB_ORIGIN}/onboarding?start=signup`,
+    );
     expect((await signIn(OIDC_CONFIG, "login")).finished.headers.get("location")).toBe(`${WEB_ORIGIN}/`);
     expect((await signIn(OIDC_CONFIG)).finished.headers.get("location")).toBe(`${WEB_ORIGIN}/`);
   });

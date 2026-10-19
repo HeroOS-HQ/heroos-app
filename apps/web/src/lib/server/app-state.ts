@@ -67,6 +67,16 @@ export function discoveryState(result: ApiResult<Workspace[]>): DiscoveryState {
   }
 }
 
+/**
+ * Where onboarding sends someone straight after hosted sign-up: an account that
+ * turns out to have a workspace already (an existing user who chose "Get
+ * started", then signed in) goes to it. Every other state stays on onboarding,
+ * where only the registration API decides eligibility.
+ */
+export function afterSignupRedirect(state: DiscoveryState): "/workspaces" | null {
+  return state.kind === "single" || state.kind === "workspace_selection" ? "/workspaces" : null;
+}
+
 export async function loadDiscovery(): Promise<DiscoveryState> {
   const gate = await sessionGate();
   if (gate.kind !== "ok") return gate;

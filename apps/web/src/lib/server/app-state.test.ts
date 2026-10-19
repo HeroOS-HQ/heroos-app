@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { COMPANY_ID } from "@/test/fixtures";
 
-import { discoveryState, workspaceState } from "./app-state";
+import { afterSignupRedirect, discoveryState, workspaceState } from "./app-state";
 import type { Workspace, WorkspaceDetails } from "./heroos-api";
 
 const A: Workspace = { companyId: COMPANY_ID, name: "Alpha", membershipId: "m", role: "company_admin" };
@@ -31,6 +31,21 @@ describe("discoveryState", () => {
     ["invalid", "api_unavailable"],
   ] as const)("maps %s to %s", (failure, kind) => {
     expect(discoveryState({ ok: false, failure })).toEqual({ kind });
+  });
+});
+
+describe("afterSignupRedirect", () => {
+  it("sends an account that already has a workspace to it instead of onboarding", () => {
+    expect(afterSignupRedirect({ kind: "single", workspace: A })).toBe("/workspaces");
+    expect(afterSignupRedirect({ kind: "workspace_selection", workspaces: [A, B] })).toBe("/workspaces");
+  });
+
+  it.each([
+    "unprovisioned_or_blocked",
+    "no_active_workspace",
+    "api_unavailable",
+  ] as const)("keeps %s on onboarding (the registration API decides)", (kind) => {
+    expect(afterSignupRedirect({ kind })).toBeNull();
   });
 });
 

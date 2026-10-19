@@ -17,7 +17,7 @@ the database or the identity provider.
 | Route | What it does | Signed out |
 | --- | --- | --- |
 | `/` | Marketing homepage (M1-11 owns its redesign). "Get started" → `/auth/signup`, "Sign in" → `/auth/login`. A signed-in visitor is sent to `/workspaces` | Homepage |
-| `/auth/signup` | Same Authorization Code + PKCE flow as `/auth/login`, plus `screen_hint=signup` (OIDC only); after the callback the user lands on `/onboarding` | — |
+| `/auth/signup` | Same Authorization Code + PKCE flow as `/auth/login`, plus `screen_hint=signup` (OIDC only); after the callback the user lands on `/onboarding?start=signup` (an account that already has a workspace is sent to `/workspaces`) | — |
 | `/auth/login`, `/auth/callback`, `POST /auth/logout` | Unchanged (Authentication §10.2), except that the login transaction now records where to land | — |
 | `/workspaces` | Workspace discovery: one workspace → redirect to it; several → chooser; otherwise a state page (§3) | "Please sign in" |
 | `/onboarding` | The three-step setup (§4) | "Create your account to get started" |
@@ -36,12 +36,18 @@ before any API call and shows the same "no access" page as another Company's id.
 `/auth/signup` reuses the login flow with a fixed `screen_hint=signup`, which
 Auth0's Universal Login reads to open on its sign-up form. Other OpenID
 Providers ignore unknown authorization parameters (RFC 6749 §3.1), and the
-Cognito path never sends it. The landing path (`/onboarding` or `/`) is sealed
-in the single-use login cookie, so it cannot be chosen by a URL parameter.
+Cognito path never sends it. The landing path (`/onboarding?start=signup` or
+`/`) is sealed in the single-use login cookie, so it cannot be chosen by a URL
+parameter. `start=signup` only lets onboarding send an account that turns out
+to have a workspace already (someone who chose "Get started" and then signed in
+on the hosted page) to `/workspaces`; it grants nothing, and `/workspaces` never
+redirects back to onboarding, so there is no loop. Every other state stays on
+onboarding, where the registration API decides.
 
 Whether anyone can actually create an account is the provider's setting.
-Public sign-up is disabled in the demo tenant, so today the hosted page only
-signs in existing accounts. Email verification is the provider's policy:
+Staging allowed invited addresses only (an Auth0 Pre User Registration
+allow-list) until open registration ([staging activation §E](../operations/staging-activation.md#e-founder-sign-up-activation-separate-approval-not-part-of-cd)).
+Email verification is the provider's policy:
 HeroOS does not verify email addresses, and the web app makes no claim that an
 address is verified.
 
