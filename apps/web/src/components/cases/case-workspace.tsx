@@ -13,6 +13,7 @@ import { CaseContextPanel } from "./case-context-panel";
 import { Conversation } from "./conversation";
 import { DecisionsPanel } from "./decisions-panel";
 import { DocumentsPanel } from "./documents-panel";
+import { HannahChat } from "./hannah-chat";
 import { ProgressionPanel } from "./progression-panel";
 
 /**
@@ -24,6 +25,10 @@ import { ProgressionPanel } from "./progression-panel";
  * "Documents" (M2-04C: template previews, never saved or issued). Right (below the conversation on
  * smaller screens): progress, hold, jurisdiction, cautions, facts, missing and
  * uncertain answers, and the case and progression history.
+ *
+ * Under the guided conversation, for administrators the API lets in, the
+ * Hannah AI demo: a separate, clearly marked chat that is never saved and
+ * never changes the Case (the panels keep showing only recorded data).
  *
  * The view comes from the API and is replaced by the API's answer after each
  * save; nothing here computes workflow state.
@@ -42,6 +47,7 @@ export function CaseWorkspace({
   initialView,
   fetcher,
   documentsFetcher,
+  assistantFetcher,
 }: {
   companyId: string;
   cases: CaseSummary[];
@@ -49,6 +55,8 @@ export function CaseWorkspace({
   fetcher?: typeof fetch;
   /** The Documents section's own reads and previews (tests); the page's fetch by default. */
   documentsFetcher?: typeof fetch;
+  /** The Hannah AI demo's own requests (tests); the page's fetch by default. */
+  assistantFetcher?: typeof fetch;
 }) {
   const [view, setView] = useState(initialView);
   const [selected, setSelected] = useState(() => firstOpenStep(initialView));
@@ -181,6 +189,7 @@ export function CaseWorkspace({
             Conversation
           </h2>
           <Conversation messages={view.conversation} />
+          {view.canEdit ? <HannahChat caseId={caseId} companyId={companyId} fetcher={assistantFetcher} /> : null}
         </section>
 
         <section

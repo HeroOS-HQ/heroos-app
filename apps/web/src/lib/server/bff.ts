@@ -1,5 +1,6 @@
 import "server-only";
 
+import { parseAssistantRequest } from "@/lib/assistant/model";
 import { TEMPLATE_KEY } from "@/lib/documents/model";
 import { parsePreviewRequest } from "@/lib/documents/requests";
 import { type FieldName, parseBlueprintPatch, parseRegistrationRequest } from "@/lib/onboarding/model";
@@ -20,6 +21,7 @@ import {
   type ApiFailure,
   correctDecision,
   createWorkflowCase,
+  getAssistantStatus,
   getCaseDocuments,
   getCaseHistory,
   getDocumentForm,
@@ -29,6 +31,7 @@ import {
   requestTransition,
   saveStepAnswers,
   selectPathway,
+  sendAssistantMessage,
   updateBlueprint,
   UUID,
 } from "./heroos-api";
@@ -66,10 +69,15 @@ export type BffError =
   | "registration_unavailable"
   | "not_found"
   | "conflict"
-  | "unavailable";
+  | "unavailable"
+  | "rate_limited"
+  | "timeout"
+  | "not_configured";
 
 export const MAX_BODY_BYTES = 16 * 1024;
 export const MAX_PREVIEW_BYTES = 32 * 1024;
+// A Hannah message with its bounded recent history (lib/assistant/model.ts).
+export const MAX_ASSISTANT_BYTES = 48 * 1024;
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -452,4 +460,68 @@ export async function handleDocumentPreview(
   const result = await previewDocument(guarded.accessToken, config, companyId, caseId, templateKey, parsed.value, deps.fetch);
   if (!result.ok) return workflowFailure(result.failure, result.documentFields);
   return json(200, { preview: result.data });
+}
+
+// --- the Hannah AI demo ---------------------------------------------------------------
+
+/**
+ * GET /bff/companies/{id}/cases/{caseId}/assistant →
+ * `GET /companies/{id}/cases/{caseId}/assistant`: whether the signed-in
+ * administrator can talk to Hannah in this Case (the API decides: the demo
+ * switch and the tester list of verified identities).
+ */
+export async function handleAssistantStatus(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = guardRead(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const result = await getAssistantStatus(guarded.accessToken, config, companyId, caseId, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, { status: result.data });
+}
+
+/**
+ * POST /bff/companies/{id}/cases/{caseId}/assistant/messages →
+ * `POST /companies/{id}/cases/{caseId}/assistant/messages`.
+ *
+ * 200 `{reply}`. Nothing is stored or logged here and the Case doesn't
+ * change, so the browser may retry. 429 `rate_limited` (with `Retry-After`),
+ * 504 `timeout`, 503 `not_configured` or `unavailable`; never the provider's
+ * own error text.
+ */
+export async function handleAssistantMessage(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps, MAX_ASSISTANT_BYTES);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const parsed = parseAssistantRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await sendAssistantMessage(guarded.accessToken, config, companyId, caseId, parsed.value, deps.fetch);
+  if (result.ok) return json(200, { reply: result.data });
+  switch (result.failure) {
+    case "rate_limited": {
+      const response = error(429, "rate_limited");
+      response.headers.set("Retry-After", String(result.retryAfter ?? 60));
+      return response;
+    }
+    case "timeout":
+      return error(504, "timeout");
+    case "not_configured":
+      return error(503, "not_configured");
+    default:
+      return workflowFailure(result.failure, []);
+  }
 }

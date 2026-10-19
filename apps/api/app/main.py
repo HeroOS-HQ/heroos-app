@@ -4,7 +4,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import companies, documents, onboarding, workflows
+from app.api import assistant, companies, documents, onboarding, workflows
+from app.api.assistant import HannahDemo
+from app.assistant.groq import GroqChatProvider
+from app.assistant.limits import SlidingWindowLimiter
 from app.auth.dependencies import get_authentication_provider
 from app.core.config import Settings, settings
 from app.core.http_security import install_http_security
@@ -84,6 +87,34 @@ def load_templates(config: Settings, rules: RuleBundle | None) -> TemplateBundle
     return bundle
 
 
+def load_hannah_demo(config: Settings) -> HannahDemo:
+    """The Hannah AI demo's switch, tester list and provider (docs/architecture/hannah-ai-demo.md).
+
+    Off unless enabled; enabled with no testers admits no one. The log says
+    whether it is on and how many testers are listed, never who.
+    """
+    testers = config.hannah_tester_subjects if config.heroos_hannah_demo_enabled else frozenset()
+    key = config.groq_api_key
+    provider = (
+        GroqChatProvider(key, config.heroos_hannah_model)
+        if key is not None and key.get_secret_value().strip()
+        else None
+    )
+    if config.heroos_hannah_demo_enabled:
+        logger.info(
+            "Hannah AI demo enabled (testers=%d, provider=%s, model=%s)",
+            len(testers),
+            "groq" if provider is not None else "none",
+            config.heroos_hannah_model,
+        )
+    return HannahDemo(
+        enabled=config.heroos_hannah_demo_enabled,
+        testers=testers,
+        provider=provider,
+        limiter=SlidingWindowLimiter(),
+    )
+
+
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
@@ -112,11 +143,14 @@ def create_app(config: Settings) -> FastAPI:
     application.state.rule_bundle = load_rule_bundle(config)
     # Document templates (previews only): verified against those rules at startup.
     application.state.template_bundle = load_templates(config, application.state.rule_bundle)
+    # The Hannah AI demo: off unless enabled, and then for listed testers only.
+    application.state.hannah_demo = load_hannah_demo(config)
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)
     application.include_router(onboarding.router)
     application.include_router(workflows.router)
     application.include_router(documents.router)
+    application.include_router(assistant.router)
     return application
 
 
