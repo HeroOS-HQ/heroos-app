@@ -67,6 +67,15 @@ export function syntheticRules(repoRoot) {
   };
 }
 
+/** The synthetic template bundle's path and pin (M2-04C; tests only, bound to the synthetic rules). */
+export function syntheticTemplates(repoRoot) {
+  const path = join(repoRoot, "apps/api/tests/fixtures/template_bundles/synthetic-disciplinary.json");
+  return {
+    HEROOS_TEMPLATE_BUNDLE_PATH: path,
+    HEROOS_TEMPLATE_BUNDLE_SHA256: createHash("sha256").update(readFileSync(path)).digest("hex"),
+  };
+}
+
 /**
  * An API process. `apiDir` defaults to this checkout's apps/api; the migration
  * suite points it at an exported older revision (git archive) to run the API
@@ -78,7 +87,7 @@ export function createApi({ repoRoot, runDir, port, tls, issuer, audience, clien
   const api = {
     url: `https://localhost:${port}`,
     logFiles: [],
-    async start({ selfRegistration = true, rules = true, extraEnv = {} } = {}) {
+    async start({ selfRegistration = true, rules = true, templates = rules, extraEnv = {} } = {}) {
       generation += 1;
       const logFile = join(runDir, `${label}-${generation}.log`);
       api.logFiles.push(logFile);
@@ -109,6 +118,9 @@ export function createApi({ repoRoot, runDir, port, tls, issuer, audience, clien
             // deployment installs the private bundle: a path and its pinned SHA-256.
             // Older API generations (migration suite) ignore both.
             ...(rules ? syntheticRules(repoRoot) : {}),
+            // The fictional synthetic templates (M2-04C), bound to those rules and
+            // installed the same way. Older API generations ignore them too.
+            ...(rules && templates ? syntheticTemplates(repoRoot) : {}),
             DATABASE_URL: databaseUrl,
             // Trust only this run's CA for the OIDC discovery and JWKS fetches.
             SSL_CERT_FILE: tls.ca,

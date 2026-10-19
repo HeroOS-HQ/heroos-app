@@ -8,6 +8,9 @@
   transitions, M2-04 decision records and corrections). No request can
   grant access to an existing Company, provision anyone into one, assign a
   role, suspend, revoke or confirm a jurisdiction, and nothing deletes.
+- The only other POST is the M2-04C document preview: administrator-only, in
+  a transaction that can't write (like every document route), and it never
+  reads employer decision records.
 - Founder self-registration is the only route an authenticated identity that
   HeroOS has not provisioned can reach; every other API route resolves an
   active HeroOS User first.
@@ -23,7 +26,7 @@ from app.api.onboarding import require_self_registration
 from app.auth.dependencies import get_current_user, get_verified_identity, require_company_admin
 from app.core.config import Settings
 from app.main import create_app
-from app.tenancy.dependencies import get_company_admin_scope
+from app.tenancy.dependencies import get_company_admin_read_scope, get_company_admin_scope
 
 API_ROOT = Path(__file__).resolve().parents[1]
 APP = API_ROOT / "app"
@@ -65,6 +68,17 @@ ADMIN_READS = {
     ("GET", "/companies/{company_id}/cases/{case_id}/history"),
 }
 MUTATING_ROUTES = {*ADMIN_ROUTES, FOUNDER_REGISTRATION}
+# M2-04C: document templates and previews. POST only so personal details never
+# travel in a URL; nothing is written (a read-only transaction).
+DOCUMENT_PREVIEW = (
+    "POST",
+    "/companies/{company_id}/cases/{case_id}/documents/{template_key}/preview",
+)
+DOCUMENT_ROUTES = {
+    ("GET", "/companies/{company_id}/cases/{case_id}/documents"),
+    ("GET", "/companies/{company_id}/cases/{case_id}/documents/{template_key}"),
+    DOCUMENT_PREVIEW,
+}
 
 
 def _imports(path: Path) -> set[str]:
@@ -132,7 +146,7 @@ def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() ->
         (method, route.path): route
         for route in _app_routes()
         for method in route.methods or set()
-        if method not in ("GET", "HEAD")
+        if method not in ("GET", "HEAD") and (method, route.path) != DOCUMENT_PREVIEW
     }
     assert set(mutating) == MUTATING_ROUTES
 
@@ -154,6 +168,41 @@ def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() ->
     # A verified credential and the activation switch; never a client claim.
     assert get_verified_identity in registration
     assert require_self_registration in registration
+
+
+def test_document_routes_are_admin_only_and_cannot_write() -> None:
+    routes = {
+        (method, route.path): route for route in _app_routes() for method in route.methods or set()
+    }
+    found = {key for key in routes if "/documents" in key[1]}
+    assert found == DOCUMENT_ROUTES
+    for key in DOCUMENT_ROUTES:
+        calls = _dependency_calls(routes[key].dependant)
+        assert require_company_admin in calls, key
+        # The administrator scope, in a transaction that refuses every write.
+        assert get_company_admin_read_scope in calls, key
+        assert get_company_admin_scope in calls, key
+
+
+def test_documents_never_read_employer_decision_records() -> None:
+    """M2-04C: a record can't make a template available or fill one in."""
+    modules = [*(APP / "documents").rglob("*.py"), APP / "api" / "documents.py"]
+    forbidden = (
+        "app.workflows.decisions",
+        "app.workflows.timeline",
+        "app.api.decisions",
+        "app.db.models.workflow.WorkflowDecisionRecord",
+        "app.db.models.WorkflowDecisionRecord",
+    )
+    for path in modules:
+        imported = _imports(path)
+        assert not any(name.startswith(forbidden) for name in imported), path
+        assert "decision_record" not in path.read_text(encoding="utf-8"), path
+    # The engine itself reads no database at all.
+    for path in (APP / "documents").rglob("*.py"):
+        assert not any(
+            name.startswith(("app.repositories", "app.db", "sqlalchemy")) for name in _imports(path)
+        ), path
 
 
 def test_only_founder_registration_accepts_an_unprovisioned_identity() -> None:
@@ -185,6 +234,9 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/cases/{case_id}/decisions",
         "/companies/{company_id}/cases/{case_id}/decisions/{record_id}/corrections",
         "/companies/{company_id}/cases/{case_id}/history",
+        "/companies/{company_id}/cases/{case_id}/documents",
+        "/companies/{company_id}/cases/{case_id}/documents/{template_key}",
+        "/companies/{company_id}/cases/{case_id}/documents/{template_key}/preview",
     }
 
 

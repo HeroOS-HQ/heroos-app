@@ -32,6 +32,8 @@ describe("browser/server boundary", () => {
       "components/cases/case-workspace.tsx",
       "components/cases/decision-form.tsx",
       "components/cases/decisions-panel.tsx",
+      "components/cases/document-form.tsx",
+      "components/cases/documents-panel.tsx",
       "components/cases/new-case-form.tsx",
       "components/cases/progression-panel.tsx",
       "components/onboarding/onboarding-wizard.tsx",
@@ -69,13 +71,19 @@ describe("browser/server boundary", () => {
     const bff = files.find(({ path }) => path === "lib/server/bff.ts")!.text;
     expect(bff).toMatch(/isSameOriginRequest\(request, config\)/);
     expect(bff).toMatch(/sessionFromRequest\(request, config/);
-    // The one read (M2-04: an older page of the case history) is GET-only.
-    const reads = ["app/bff/companies/[companyId]/cases/[caseId]/history/route.ts"];
-    const routes = files.filter(({ path }) => path.startsWith("app/bff/") && !reads.includes(path));
+    // The reads (M2-04: an older page of the case history; M2-04C: a Case's
+    // templates and one template's form) are GET-only.
+    const reads = {
+      "app/bff/companies/[companyId]/cases/[caseId]/history/route.ts": "handleHistoryPage",
+      "app/bff/companies/[companyId]/cases/[caseId]/documents/route.ts": "handleDocumentsList",
+      "app/bff/companies/[companyId]/cases/[caseId]/documents/[templateKey]/route.ts": "handleDocumentForm",
+    };
+    const routes = files.filter(({ path }) => path.startsWith("app/bff/") && !(path in reads));
     expect(routes.map(({ path }) => path).sort()).toEqual([
       "app/bff/companies/[companyId]/blueprint/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/decisions/[recordId]/corrections/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/decisions/route.ts",
+      "app/bff/companies/[companyId]/cases/[caseId]/documents/[templateKey]/preview/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/progression/pathway/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/progression/transitions/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/steps/[stepKey]/answers/route.ts",
@@ -84,19 +92,46 @@ describe("browser/server boundary", () => {
     ]);
     for (const { path, text } of routes) {
       expect(text, path).toMatch(
-        /handle(Registration|BlueprintUpdate|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection)\(request/,
+        /handle(Registration|BlueprintUpdate|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview)\(request/,
       );
       expect(text, path).not.toMatch(/export async function GET/);
     }
-    for (const path of reads) {
+    for (const [path, handler] of Object.entries(reads)) {
       const text = files.find((file) => file.path === path)!.text;
       expect(text, path).toMatch(/export async function GET/);
       expect(text, path).not.toMatch(/export async function (POST|PUT|PATCH|DELETE)/);
-      expect(text, path).toMatch(/handleHistoryPage\(request/);
+      expect(text, path).toMatch(new RegExp(`${handler}\\(request`));
     }
-    // The read checks the origin and the session itself (it has no body to guard).
+    // The reads check the origin and the session themselves (they have no body to guard).
     const history = bff.slice(bff.indexOf("export async function handleHistoryPage"));
     expect(history).toMatch(/^[\s\S]*?isSameOriginRequest\(request, config\)[\s\S]*?sessionFromRequest\(request, config/);
+    const guardRead = bff.slice(bff.indexOf("function guardRead"));
+    expect(guardRead).toMatch(/^[\s\S]*?isSameOriginRequest\(request, config\)[\s\S]*?sessionFromRequest\(request, config/);
+    for (const handler of ["handleDocumentsList", "handleDocumentForm"]) {
+      const body = bff.slice(bff.indexOf(`export async function ${handler}`));
+      expect(body, handler).toMatch(/^[^}]*?guardRead\(request, config, deps\)/);
+    }
+    // The preview (a POST, so personal details never travel in a URL) goes through the shared guard.
+    const preview = bff.slice(bff.indexOf("export async function handleDocumentPreview"));
+    expect(preview).toMatch(/^[\s\S]*?await guard\(request, config, deps, MAX_PREVIEW_BYTES\)/);
+  });
+
+  it("nothing renders an HTML string or runs code from text", () => {
+    // Previews are structured text blocks rendered as text nodes (M2-04C).
+    for (const { path, text } of files) {
+      expect(text, path).not.toMatch(/dangerouslySetInnerHTML|\.innerHTML|outerHTML|insertAdjacentHTML|document\.write|\beval\(|new Function\(/);
+    }
+  });
+
+  it("document previews are never downloaded, sent, stored or issued (M2-04C)", () => {
+    const documentFiles = files.filter(({ path }) => /components\/cases\/document|lib\/documents\//.test(path));
+    expect(documentFiles.length).toBeGreaterThanOrEqual(6);
+    for (const { path, text } of documentFiles) {
+      expect(text, path).not.toMatch(/createObjectURL|new Blob|\bdownload=|mailto:|window\.print|navigator\.clipboard|sendBeacon/);
+    }
+    // Typed details aren't remembered by the browser's autofill either.
+    const form = files.find(({ path }) => path === "components/cases/document-form.tsx")!.text;
+    expect(form).toMatch(/<form[\s\S]*?autoComplete="off"/);
   });
 
   it("no web source carries or reads workflow rule content (M2-03)", () => {
@@ -104,6 +139,14 @@ describe("browser/server boundary", () => {
     // renders what the API answers for one Case.
     for (const { path, text } of files) {
       expect(text, path).not.toMatch(/heroos\.rule-bundle|rule_bundles|\b(start|complete|select)_rules\b|HEROOS_RULE_BUNDLE/);
+    }
+  });
+
+  it("no web source carries or reads document template content (M2-04C)", () => {
+    // Templates live in a private bundle the API loads server-side; the web app
+    // only renders one template's form or preview, fetched at run time.
+    for (const { path, text } of files) {
+      expect(text, path).not.toMatch(/heroos\.template-bundle|template_bundles|HEROOS_TEMPLATE_BUNDLE|source_sha256/);
     }
   });
 });

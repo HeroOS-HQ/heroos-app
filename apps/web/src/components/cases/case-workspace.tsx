@@ -12,14 +12,16 @@ import { AnswersForm } from "./answers-form";
 import { CaseContextPanel } from "./case-context-panel";
 import { Conversation } from "./conversation";
 import { DecisionsPanel } from "./decisions-panel";
+import { DocumentsPanel } from "./documents-panel";
 import { ProgressionPanel } from "./progression-panel";
 
 /**
  * CASE_READY: the guided Case workspace. Left: the Company's Disciplinary
  * Cases. Centre: the conversation, the next steps (workflow progression:
  * pathway, stages and what can be done now), for administrators the
- * question groups (one step at a time), and "Decisions & history" (M2-04:
- * employer records, their corrections and the unified case history). Right (below the conversation on
+ * question groups (one step at a time), "Decisions & history" (M2-04:
+ * employer records, their corrections and the unified case history) and
+ * "Documents" (M2-04C: template previews, never saved or issued). Right (below the conversation on
  * smaller screens): progress, hold, jurisdiction, cautions, facts, missing and
  * uncertain answers, and the case and progression history.
  *
@@ -39,11 +41,14 @@ export function CaseWorkspace({
   cases,
   initialView,
   fetcher,
+  documentsFetcher,
 }: {
   companyId: string;
   cases: CaseSummary[];
   initialView: WorkflowView;
   fetcher?: typeof fetch;
+  /** The Documents section's own reads and previews (tests); the page's fetch by default. */
+  documentsFetcher?: typeof fetch;
 }) {
   const [view, setView] = useState(initialView);
   const [selected, setSelected] = useState(() => firstOpenStep(initialView));
@@ -144,6 +149,11 @@ export function CaseWorkspace({
             {view.decisions ? (
               <a className="ml-2 font-bold text-hero-blue-ink underline" href="#decisions-history">
                 Decisions &amp; history
+              </a>
+            ) : null}
+            {view.canEdit ? (
+              <a className="ml-2 font-bold text-hero-blue-ink underline" href="#documents">
+                Documents
               </a>
             ) : null}
           </p>
@@ -254,6 +264,16 @@ export function CaseWorkspace({
         >
           <DecisionsPanel caseId={caseId} companyId={companyId} fetcher={fetcher} onUpdated={setView} view={view} />
         </section>
+
+        {view.canEdit ? (
+          <section
+            aria-labelledby="documents-heading"
+            className="mt-8 scroll-mt-24 rounded-3xl border border-hero-border bg-hero-surface/40 p-5 sm:p-7"
+            id="documents"
+          >
+            <DocumentsPanel caseId={caseId} companyId={companyId} fetcher={documentsFetcher} revision={view.workflow.revision} />
+          </section>
+        ) : null}
       </div>
 
       <aside

@@ -20,6 +20,18 @@ import {
   type WorkflowView,
 } from "@/lib/workflows/model";
 import { ENTRY_ID, parseTimelinePage, type TimelinePage } from "@/lib/workflows/decisions";
+import {
+  CHOICE_KEY,
+  type DocumentsList,
+  FIELD_KEY,
+  fromApiDocumentsList,
+  fromApiPreview,
+  fromApiTemplateForm,
+  type Preview,
+  TEMPLATE_KEY,
+  type TemplateForm,
+} from "@/lib/documents/model";
+import type { PreviewPayload } from "@/lib/documents/requests";
 import type { CorrectionPayload, DecisionPayload } from "@/lib/workflows/requests";
 
 import type { AuthConfig } from "./config";
@@ -63,9 +75,17 @@ export type ApiResult<T> =
   | { ok: true; data: T }
   /**
    * `answerKeys`: the workflow questions a 422 named; `decisionFields`: the
-   * decision-record fields it named (names only, never values).
+   * decision-record fields it named; `documentFields`: the template fields
+   * and choices it named (names only, never values).
    */
-  | { ok: false; failure: ApiFailure; fields?: FieldName[]; answerKeys?: string[]; decisionFields?: string[] };
+  | {
+      ok: false;
+      failure: ApiFailure;
+      fields?: FieldName[];
+      answerKeys?: string[];
+      decisionFields?: string[];
+      documentFields?: string[];
+    };
 
 type Fetch = typeof fetch;
 const READ_TIMEOUT_MS = 10_000;
@@ -123,6 +143,19 @@ export function decisionFieldsFromApiDetail(detail: unknown): string[] {
   return [...new Set(fields)];
 }
 
+/** Template fields and choices a preview 422 named (`loc: ["body", "values" | "choices", key]`), M2-04C. */
+export function documentFieldsFromApiDetail(detail: unknown): string[] {
+  if (!Array.isArray(detail)) return [];
+  const fields = detail.flatMap((error) => {
+    const loc = typeof error === "object" && error !== null ? (error as { loc?: unknown }).loc : null;
+    if (!Array.isArray(loc) || loc[0] !== "body" || typeof loc[2] !== "string") return [];
+    if (loc[1] === "values" && FIELD_KEY.test(loc[2])) return [loc[2]];
+    if (loc[1] === "choices" && CHOICE_KEY.test(loc[2])) return [loc[2]];
+    return [];
+  });
+  return [...new Set(fields)];
+}
+
 async function apiCall<T>(
   config: AuthConfig,
   accessToken: string,
@@ -156,12 +189,14 @@ async function apiCall<T>(
       }
       const answerKeys = answerKeysFromApiDetail(detail);
       const decisionFields = decisionFieldsFromApiDetail(detail);
+      const documentFields = documentFieldsFromApiDetail(detail);
       return {
         ok: false,
         failure,
         fields: fieldsFromApiDetail(detail),
         ...(answerKeys.length > 0 ? { answerKeys } : {}),
         ...(decisionFields.length > 0 ? { decisionFields } : {}),
+        ...(documentFields.length > 0 ? { documentFields } : {}),
       };
     }
     const data = parse(await response.json());
@@ -608,4 +643,69 @@ export async function getCaseHistory(
   if (before !== null && (before.length > 200 || !ENTRY_ID.test(before))) return { ok: false, failure: "invalid" };
   const query = before === null ? "" : `?before=${encodeURIComponent(before)}`;
   return apiCall(config, accessToken, fetcher, `/companies/${companyId}/cases/${caseId}/history${query}`, parseTimelinePage);
+}
+
+// --- document templates and previews (M2-04C) -----------------------------------------
+
+function documentsPath(companyId: string, caseId: string, templateKey?: string): string | null {
+  if (!UUID.test(companyId) || !UUID.test(caseId)) return null;
+  if (templateKey === undefined) return `/companies/${companyId}/cases/${caseId}/documents`;
+  return TEMPLATE_KEY.test(templateKey) ? `/companies/${companyId}/cases/${caseId}/documents/${templateKey}` : null;
+}
+
+/** `GET /companies/{id}/cases/{caseId}/documents`: every template and whether the Case can preview it now. */
+export async function getCaseDocuments(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<DocumentsList>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = documentsPath(companyId, caseId);
+  if (path === null) return { ok: false, failure: "not_found" };
+  return apiCall(config, accessToken, fetcher, path, fromApiDocumentsList);
+}
+
+/** `GET /companies/{id}/cases/{caseId}/documents/{template}`: an available template's form (409 if not available). */
+export async function getDocumentForm(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  templateKey: string,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<TemplateForm>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = documentsPath(companyId, caseId, templateKey);
+  if (path === null) return { ok: false, failure: "not_found" };
+  const result = await apiCall(config, accessToken, fetcher, path, fromApiTemplateForm);
+  if (result.ok && result.data.template.key !== templateKey) return { ok: false, failure: "unavailable" };
+  return result;
+}
+
+/**
+ * `POST /companies/{id}/cases/{caseId}/documents/{template}/preview`: the
+ * template filled with the employer's values (never stored). POST so personal
+ * details never travel in a URL. 409 if the template isn't available now or
+ * its version changed; 422 names the fields only.
+ */
+export async function previewDocument(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  templateKey: string,
+  payload: PreviewPayload,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<Preview>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = documentsPath(companyId, caseId, templateKey);
+  if (path === null) return { ok: false, failure: "not_found" };
+  const result = await apiCall(config, accessToken, fetcher, `${path}/preview`, fromApiPreview, {
+    method: "POST",
+    body: payload,
+  });
+  if (result.ok && result.data.template.key !== templateKey) return { ok: false, failure: "unavailable" };
+  return result;
 }

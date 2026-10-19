@@ -63,3 +63,18 @@ backups/
 # *.private-bundle.json.
 *.private-bundle.json
 private-rule-bundles/
+
+# Private document templates (M2-04C): template bundles, the mapping files and
+# review packs of the offline converter, and the source Word documents. None of
+# them may ever be committed (the repository is public); this is a second guard
+# (docs/architecture/document-templates.md). Name private template bundles
+# *.private-templates.json and mappings *.private-mapping.json.
+*.private-templates.json
+*.private-mapping.json
+private-template-bundles/
+template-review-packs/
+*.docx
+*.docm
+*.dotx
+*.dotm
+*.doc
