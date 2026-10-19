@@ -22,20 +22,25 @@ Every condition must hold, checked by the API:
 
 1. A verified credential, an active HeroOS User and Membership, the
    `company_admin` role (checked again in the transaction), and a Case of that
-   Company (404 otherwise, identical for another Company's Case).
+   Company (404 otherwise, identical for another Company's Case). Tenant
+   isolation (application filter and PostgreSQL RLS) applies as for every
+   Company route.
 2. `HEROOS_HANNAH_DEMO_ENABLED=true` (default `false`; production refuses it).
-3. The caller's verified identity subject (the token's `sub`, exactly) is in
-   `HEROOS_HANNAH_TESTER_SUBJECTS` (comma-separated). An empty or missing list
-   admits no one, so a self-registered founder (an administrator of their own
-   new Company) can't reach the model.
+
+There is no individual approval: with the switch on, every registered
+Company's administrators (including self-registered founders) can use Hannah
+in their own Company's Cases. Members can't (403), like every Disciplinary
+route.
 
 ## Configuration (API)
 
 | Variable | Default | Notes |
 |---|---|---|
 | `HEROOS_HANNAH_DEMO_ENABLED` | `false` | The switch. |
-| `HEROOS_HANNAH_TESTER_SUBJECTS` | empty | Exact `sub` values, e.g. `auth0\|…`, `google-oauth2\|…`. |
 | `HEROOS_HANNAH_MODEL` | `openai/gpt-oss-120b` | A model identifier (never a URL). |
+| `HEROOS_HANNAH_ACCOUNT_LIMIT` | `20` | Messages per account (HeroOS User) per 5 minutes. |
+| `HEROOS_HANNAH_GLOBAL_LIMIT_PER_MINUTE` | `20` | Messages per minute, whole service. |
+| `HEROOS_HANNAH_GLOBAL_LIMIT_PER_DAY` | `900` | Messages per day, whole service. |
 | `GROQ_API_KEY` | unset | Secret. Unset: the demo answers 503 "Not configured". |
 
 ## Limits
@@ -45,8 +50,15 @@ Every condition must hold, checked by the API:
   unknown fields are refused (422, field locations only).
 - Provider request: temperature 0.3, `max_completion_tokens` 1024,
   `reasoning_effort: low`, reasoning not returned, 30 s timeout, no tools.
-- 20 messages per tester per 5 minutes (in the API process), before the
-  provider's own limits (HTTP 429 → "Too many requests" with `Retry-After`).
+- Usage ceilings, checked before the provider is called: per account per 5
+  minutes, and for the whole service per minute and per day (defaults 20,
+  20 and 900, below GroqCloud's shared free-tier limits for this model:
+  30 requests/minute, 1,000/day, 8,000 tokens/minute). A request counts only
+  when every ceiling allows it. Then the provider's own limits apply. Either
+  way: HTTP 429 "Too many requests" with `Retry-After`.
+- The ceilings live in the API process's memory. They are **not** a durable or
+  distributed quota: a restart or redeploy resets them, and each API instance
+  counts separately (staging runs one). Groq's 429 remains the hard stop.
 - Timeouts are ordered: provider 30 s < BFF→API 45 s < browser 55 s < route
   `maxDuration` 60 s. Page reads keep their 10 s timeout.
 
@@ -57,9 +69,10 @@ Every condition must hold, checked by the API:
   content; no private knowledge pack is installed or sent to any provider.
 - Nothing about the Case (title, subject, facts, answers) is sent: only what
   the user typed in the chat and the recent chat turns.
-- Nothing logs a message, history, reply, prompt, key or identity subject; the
+- Nothing logs a message, history, reply, prompt, key or account; the
   API logs the outcome (`ok`, `rate_limited`, `timeout`, `unavailable`,
-  `tester_limit`) and the number of turns. Responses are `no-store`.
+  `account_limit`, `global_limit`) and the number of turns. Responses are
+  `no-store`.
 - The conversation lives in the page's React state and is gone on reload.
 - The assistant package can't import the database, repositories or the
   workflow engine (`tests/test_import_boundaries.py`).

@@ -4,11 +4,11 @@ Same harness as test_workflow_api.py (``create_app`` with staging settings,
 Cognito tokens verified by the production provider, in-memory SQLite from the
 real models). The chat provider is a local fake: CI never calls GroqCloud.
 
-Covers: the demo switch and the tester list (verified subjects only; an
-empty list admits no one), administrators only, other Companies and Cases,
-a missing provider key, provider failures (429, timeout, anything else),
-validation without echoing, the history budget, the tester limit, and that a
-message changes nothing and is never logged.
+Covers: the demo switch; any Company's administrator in their own Cases (no
+individual approval); members, other Companies and Cases; a missing provider
+key; provider failures (429, timeout, anything else); validation without
+echoing; the history budget; the per-account and service-wide limits; and
+that a message changes nothing and is never logged.
 """
 
 import logging
@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.assistant import (
@@ -28,7 +28,7 @@ from app.api.assistant import (
     TurnIn,
     recent_turns,
 )
-from app.assistant.limits import SlidingWindowLimiter
+from app.assistant.limits import UsageLimits
 from app.assistant.persona import HANNAH_SYSTEM_INSTRUCTION
 from app.assistant.provider import AssistantError, ChatTurn, FailureKind
 from app.auth.dependencies import get_authentication_provider
@@ -36,6 +36,7 @@ from app.auth.providers.cognito import CognitoAccessTokenProvider
 from app.db.models import (
     Case,
     CaseFact,
+    Membership,
     WorkflowDecisionRecord,
     WorkflowEvaluation,
     WorkflowInstance,
@@ -98,16 +99,14 @@ def hannah_client(
     provider: CognitoAccessTokenProvider,
     *,
     enabled: bool = True,
-    testers: frozenset[str] = frozenset({"alice-subject", "bob-subject"}),
     chat: FakeProvider | None = None,
-    limiter: SlidingWindowLimiter | None = None,
+    limits: UsageLimits | None = None,
 ) -> TestClient:
     app = create_app(staging_settings())
     app.state.hannah_demo = HannahDemo(
         enabled=enabled,
-        testers=testers,
         provider=chat,
-        limiter=limiter or SlidingWindowLimiter(),
+        limits=limits or UsageLimits(account_limit=20, global_per_minute=20, global_per_day=900),
     )
 
     def _db() -> Generator[Session, None, None]:
@@ -164,7 +163,7 @@ def counts(sessions: sessionmaker[Session]) -> dict[str, Any]:  # noqa: F811
 # --- access ---------------------------------------------------------------------------
 
 
-def test_an_authorized_tester_gets_hannahs_reply_and_the_case_is_unchanged(
+def test_a_company_administrator_gets_hannahs_reply_and_the_case_is_unchanged(
     client: TestClient,  # noqa: F811
     chat: FakeProvider,
     sessions: sessionmaker[Session],  # noqa: F811
@@ -222,26 +221,7 @@ def test_the_demo_is_off_unless_enabled(
     assert chat.calls == []
 
 
-@pytest.mark.parametrize("testers", [frozenset(), frozenset({"bob-subject", "ALICE-SUBJECT"})])
-def test_only_listed_verified_subjects_can_talk_to_hannah(
-    sessions: sessionmaker[Session],  # noqa: F811
-    cognito_provider: CognitoAccessTokenProvider,
-    chat: FakeProvider,
-    seed: SeedData,
-    admin_alice: dict[str, str],  # noqa: F811
-    testers: frozenset[str],
-) -> None:
-    """An empty list admits no one; matching is exact (a company admin isn't enough)."""
-    client = hannah_client(sessions, cognito_provider, testers=testers, chat=chat)
-    case_id = create(client, admin_alice, seed.company_a).json()["id"]
-    status_ = client.get(url(seed.company_a, case_id, status=True), headers=admin_alice)
-    assert status_.json()["reason"] == "not_a_tester"
-    response = send(client, admin_alice, seed.company_a, case_id)
-    assert (response.status_code, response.json()) == FORBIDDEN
-    assert chat.calls == []
-
-
-def test_members_and_other_companies_are_refused(
+def test_every_companys_administrator_can_chat_in_their_own_cases_only(
     client: TestClient,  # noqa: F811
     chat: FakeProvider,
     sessions: sessionmaker[Session],  # noqa: F811
@@ -249,22 +229,57 @@ def test_members_and_other_companies_are_refused(
     admin_alice: dict[str, str],  # noqa: F811
     bob: dict[str, str],  # noqa: F811
 ) -> None:
-    case_id = create(client, admin_alice, seed.company_a).json()["id"]
-    # bob (a tester) is a member of Company B only.
-    for headers, company in ((bob, seed.company_a), (bob, seed.company_b)):
-        response = send(client, headers, company, case_id)
-        assert response.status_code in (403, 404)
-    assert (send(client, bob, seed.company_a, case_id).json()) == FORBIDDEN[1]
-    # A member of Company B (not an administrator) is refused there too.
-    assert (send(client, bob, seed.company_b, case_id).json()) == FORBIDDEN[1]
-    # As Company B's administrator, Company A's Case doesn't exist.
+    """No allowlist: Company B's administrator needs no approval; tenants stay apart."""
     make_admin(sessions, seed.company_b, seed.bob)
-    response = send(client, bob, seed.company_b, case_id)
-    assert (response.status_code, response.json()) == NOT_FOUND
-    response = client.get(url(seed.company_b, case_id, status=True), headers=bob)
-    assert (response.status_code, response.json()) == NOT_FOUND
-    response = send(client, bob, seed.company_b, str(uuid.uuid4()))
-    assert (response.status_code, response.json()) == NOT_FOUND
+    case_a = create(client, admin_alice, seed.company_a).json()["id"]
+    case_b = create(client, bob, seed.company_b).json()["id"]
+
+    for headers, company, case_id in (
+        (admin_alice, seed.company_a, case_a),
+        (bob, seed.company_b, case_b),
+    ):
+        status_ = client.get(url(company, case_id, status=True), headers=headers)
+        assert status_.json() == {"available": True, "reason": None, "notice": NOTICE}
+        assert send(client, headers, company, case_id).status_code == 200
+    assert len(chat.calls) == 2
+
+    # Another Company's route is forbidden; another Company's Case doesn't exist.
+    assert (send(client, admin_alice, seed.company_b, case_b).json()) == FORBIDDEN[1]
+    for headers, company, case_id in (
+        (admin_alice, seed.company_a, case_b),
+        (bob, seed.company_b, case_a),
+        (bob, seed.company_b, str(uuid.uuid4())),
+    ):
+        response = send(client, headers, company, case_id)
+        assert (response.status_code, response.json()) == NOT_FOUND
+        response = client.get(url(company, case_id, status=True), headers=headers)
+        assert (response.status_code, response.json()) == NOT_FOUND
+    assert len(chat.calls) == 2
+
+
+def test_members_are_refused(
+    client: TestClient,  # noqa: F811
+    chat: FakeProvider,
+    sessions: sessionmaker[Session],  # noqa: F811
+    seed: SeedData,
+    alice: dict[str, str],  # noqa: F811
+    bob: dict[str, str],  # noqa: F811
+) -> None:
+    """A member (not an administrator) gets the generic 403, status included."""
+    make_admin(sessions, seed.company_b, seed.bob)
+    case_b = create(client, bob, seed.company_b).json()["id"]
+    with sessions() as db:
+        db.execute(
+            update(Membership)
+            .where(Membership.company_id == seed.company_b, Membership.user_id == seed.bob)
+            .values(role="member")
+        )
+        db.commit()
+    assert (send(client, bob, seed.company_b, case_b).json()) == FORBIDDEN[1]
+    response = client.get(url(seed.company_b, case_b, status=True), headers=bob)
+    assert (response.status_code, response.json()) == FORBIDDEN
+    # alice is a member of Company A only.
+    assert send(client, alice, seed.company_a, str(uuid.uuid4())).status_code == 403
     assert chat.calls == []
 
 
@@ -324,22 +339,62 @@ def test_provider_failures_map_to_fixed_answers(
     assert counts(sessions) == before
 
 
-def test_the_tester_limit_stops_a_runaway_tab_before_the_provider(
+def test_the_account_limit_stops_a_runaway_tab_before_the_provider(
     sessions: sessionmaker[Session],  # noqa: F811
     cognito_provider: CognitoAccessTokenProvider,
     chat: FakeProvider,
     seed: SeedData,
     admin_alice: dict[str, str],  # noqa: F811
+    bob: dict[str, str],  # noqa: F811
 ) -> None:
-    limiter = SlidingWindowLimiter(limit=2, window_seconds=300, clock=lambda: 1000.0)
-    client = hannah_client(sessions, cognito_provider, chat=chat, limiter=limiter)
-    case_id = create(client, admin_alice, seed.company_a).json()["id"]
-    assert send(client, admin_alice, seed.company_a, case_id).status_code == 200
-    assert send(client, admin_alice, seed.company_a, case_id).status_code == 200
-    response = send(client, admin_alice, seed.company_a, case_id)
+    limits = UsageLimits(
+        account_limit=2, global_per_minute=50, global_per_day=50, clock=lambda: 1000.0
+    )
+    client = hannah_client(sessions, cognito_provider, chat=chat, limits=limits)
+    make_admin(sessions, seed.company_b, seed.bob)
+    case_a = create(client, admin_alice, seed.company_a).json()["id"]
+    case_b = create(client, bob, seed.company_b).json()["id"]
+    assert send(client, admin_alice, seed.company_a, case_a).status_code == 200
+    assert send(client, admin_alice, seed.company_a, case_a).status_code == 200
+    response = send(client, admin_alice, seed.company_a, case_a)
     assert (response.status_code, response.json()) == (429, {"detail": "Too many requests"})
     assert int(response.headers["retry-after"]) > 0
-    assert len(chat.calls) == 2
+    # Another account still has its own allowance.
+    assert send(client, bob, seed.company_b, case_b).status_code == 200
+    assert len(chat.calls) == 3
+
+
+def test_the_service_wide_ceiling_protects_the_shared_quota(
+    sessions: sessionmaker[Session],  # noqa: F811
+    cognito_provider: CognitoAccessTokenProvider,
+    chat: FakeProvider,
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+    bob: dict[str, str],  # noqa: F811
+) -> None:
+    now = [1000.0]
+    limits = UsageLimits(
+        account_limit=10, global_per_minute=2, global_per_day=3, clock=lambda: now[0]
+    )
+    client = hannah_client(sessions, cognito_provider, chat=chat, limits=limits)
+    make_admin(sessions, seed.company_b, seed.bob)
+    case_a = create(client, admin_alice, seed.company_a).json()["id"]
+    case_b = create(client, bob, seed.company_b).json()["id"]
+    assert send(client, admin_alice, seed.company_a, case_a).status_code == 200
+    assert send(client, bob, seed.company_b, case_b).status_code == 200
+    # Per minute: a third account-allowed request from anyone waits.
+    response = send(client, admin_alice, seed.company_a, case_a)
+    assert response.status_code == 429
+    assert 0 < int(response.headers["retry-after"]) <= 61
+    now[0] += 61
+    assert send(client, bob, seed.company_b, case_b).status_code == 200
+    # Per day: the third request used the day's allowance.
+    now[0] += 61
+    response = send(client, admin_alice, seed.company_a, case_a)
+    assert response.status_code == 429
+    assert int(response.headers["retry-after"]) > 3600
+    # A refused request isn't counted against the account.
+    assert len(chat.calls) == 3
 
 
 # --- input ----------------------------------------------------------------------------
@@ -401,5 +456,11 @@ def test_messages_and_replies_never_reach_the_logs(
     assert response.status_code == 200
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert "Hannah demo reply" in logged
-    for private in (SECRET_FACT, REPLY, "alice-subject", HANNAH_SYSTEM_INSTRUCTION[:60]):
+    for private in (
+        SECRET_FACT,
+        REPLY,
+        "alice-subject",
+        str(seed.alice),
+        HANNAH_SYSTEM_INSTRUCTION[:60],
+    ):
         assert private not in logged

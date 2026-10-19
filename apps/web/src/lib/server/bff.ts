@@ -468,7 +468,7 @@ export async function handleDocumentPreview(
  * GET /bff/companies/{id}/cases/{caseId}/assistant →
  * `GET /companies/{id}/cases/{caseId}/assistant`: whether the signed-in
  * administrator can talk to Hannah in this Case (the API decides: the demo
- * switch and the tester list of verified identities).
+ * switch, the administrator role and the Case's Company).
  */
 export async function handleAssistantStatus(
   request: Request,

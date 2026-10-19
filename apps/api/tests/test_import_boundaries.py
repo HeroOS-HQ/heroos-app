@@ -12,7 +12,7 @@
   a transaction that can't write (like every document route), and it never
   reads employer decision records.
 - The Hannah AI demo's message POST writes nothing either: administrator-only,
-  a read-only transaction, the tester-list check, and the assistant package
+  a read-only transaction, the demo switch, and the assistant package
   can't reach the database or the workflow engine.
 - Founder self-registration is the only route an authenticated identity that
   HeroOS has not provisioned can reach; every other API route resolves an
@@ -25,7 +25,7 @@ from pathlib import Path
 from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 
-from app.api.assistant import require_hannah_tester
+from app.api.assistant import require_hannah_demo
 from app.api.onboarding import require_self_registration
 from app.auth.dependencies import get_current_user, get_verified_identity, require_company_admin
 from app.core.config import Settings
@@ -195,7 +195,7 @@ def test_document_routes_are_admin_only_and_cannot_write() -> None:
         assert get_company_admin_scope in calls, key
 
 
-def test_assistant_routes_are_admin_only_testers_only_and_cannot_write() -> None:
+def test_assistant_routes_are_admin_only_switched_and_cannot_write() -> None:
     routes = {
         (method, route.path): route for route in _app_routes() for method in route.methods or set()
     }
@@ -206,7 +206,7 @@ def test_assistant_routes_are_admin_only_testers_only_and_cannot_write() -> None
         assert require_company_admin in calls, key
         assert get_company_admin_read_scope in calls, key
         assert get_company_admin_scope in calls, key
-    assert require_hannah_tester in _dependency_calls(routes[ASSISTANT_MESSAGE].dependant)
+    assert require_hannah_demo in _dependency_calls(routes[ASSISTANT_MESSAGE].dependant)
 
 
 def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:

@@ -1,9 +1,9 @@
 import re
 from pathlib import Path
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, model_validator
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
@@ -177,14 +177,18 @@ class Settings(DatabaseSettings):
     heroos_template_bundle_path: Path | None = None
     heroos_template_bundle_sha256: str | None = None
 
-    # Hannah AI demo (conversational, GroqCloud). Off unless explicitly enabled,
-    # and then only for the verified identity subjects listed here (exact
-    # `sub` values from the identity provider, comma-separated): an empty or
-    # missing list lets no one in. Production refuses it. The chat never
-    # changes a Case and receives no tools (docs/architecture/hannah-ai-demo.md).
+    # Hannah AI demo (conversational, GroqCloud). Off unless explicitly enabled;
+    # then any Company administrator can use it in their own Company's Cases.
+    # Production refuses it. The chat never changes a Case and receives no
+    # tools (docs/architecture/hannah-ai-demo.md).
     heroos_hannah_demo_enabled: bool = False
-    heroos_hannah_tester_subjects: str | None = None
     heroos_hannah_model: str = DEFAULT_HANNAH_MODEL
+    # Usage ceilings in this API process's memory (not durable or distributed):
+    # messages per account per 5 minutes, and for the whole service per minute
+    # and per day, below the provider's shared free-tier quota.
+    heroos_hannah_account_limit: Annotated[int, Field(ge=1, le=1000)] = 20
+    heroos_hannah_global_limit_per_minute: Annotated[int, Field(ge=1, le=10_000)] = 20
+    heroos_hannah_global_limit_per_day: Annotated[int, Field(ge=1, le=1_000_000)] = 900
     # The GroqCloud API key (server-side only). Unset: the demo answers 503.
     groq_api_key: SecretStr | None = None
 
@@ -198,11 +202,6 @@ class Settings(DatabaseSettings):
         if not HANNAH_MODEL_ID.fullmatch(self.heroos_hannah_model):
             raise ValueError("HEROOS_HANNAH_MODEL must be a model identifier")
         return self
-
-    @property
-    def hannah_tester_subjects(self) -> frozenset[str]:
-        raw = self.heroos_hannah_tester_subjects or ""
-        return frozenset(item.strip() for item in raw.split(",") if item.strip())
 
     @model_validator(mode="after")
     def _validate_rule_bundle(self) -> Self:
