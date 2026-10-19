@@ -61,7 +61,7 @@ content is data, exactly like the rule bundle (M2-03):
 - **Production** refuses a synthetic bundle and any bundle whose wording is
   still `provisional`.
 - **Stable keys, display codes as data.** A template is identified by a key
-  such as `disc.ls.formal_warning`; its display code (`LS02`) is a label in
+  such as `disc.example.letter`; its display code (`EX-01`) is a label in
   the bundle, so renumbering a template is a content edit, not a code change.
 
 ### Schema
