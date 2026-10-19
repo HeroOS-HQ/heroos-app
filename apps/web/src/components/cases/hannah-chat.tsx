@@ -368,7 +368,8 @@ export function HannahChat({
       <ol
         aria-label="Conversation with Hannah (AI demo)"
         aria-live="polite"
-        className="flex flex-col gap-6 px-4 py-6 sm:px-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:px-8"
+        // relative: the screen-reader-only labels inside stay within the scrolling list (else they stretch the page).
+        className="relative flex flex-col gap-6 px-4 py-6 sm:px-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:px-8"
         role="log"
       >
         <li className="flex items-start gap-3 sm:gap-4">
