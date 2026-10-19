@@ -165,3 +165,27 @@ export function ChevronDownIcon({ className }: IconProps) {
     </Icon>
   );
 }
+
+export function ChevronRightIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="m9 6 6 6-6 6" />
+    </Icon>
+  );
+}
+
+export function PlusIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M12 5v14M5 12h14" />
+    </Icon>
+  );
+}
+
+export function SendIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M4.5 12 3 4.5l18 7.5-18 7.5L4.5 12Zm0 0H12" />
+    </Icon>
+  );
+}

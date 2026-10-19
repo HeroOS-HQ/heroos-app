@@ -28,6 +28,25 @@ export type AssistantReply = {
 };
 export type AssistantRequest = { message: string; history: ChatTurn[] };
 
+/**
+ * What the case page knows about the demo for this administrator and Case:
+ * `hidden` (switched off here, not for this person, or an API without the
+ * demo: the page shows the guided workflow alone), `unreachable` (the status
+ * couldn't be read: say so and offer a re-check, never a pretend chat) or the
+ * API's `ready` status.
+ */
+export type AssistantLoad =
+  | { state: "hidden" }
+  | { state: "unreachable" }
+  | { state: "ready"; status: AssistantStatus };
+
+export const ASSISTANT_HIDDEN: AssistantLoad = { state: "hidden" };
+
+/** The status as the page uses it: a switched-off demo stays out of sight. */
+export function assistantLoadOf(status: AssistantStatus): AssistantLoad {
+  return status.reason === "disabled" ? ASSISTANT_HIDDEN : { state: "ready", status };
+}
+
 const REASONS = new Set<string>(["disabled", "not_configured"]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>

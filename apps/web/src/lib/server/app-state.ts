@@ -1,11 +1,13 @@
 import "server-only";
 
 import { readAuthConfig, type AuthConfig } from "./config";
+import { ASSISTANT_HIDDEN, type AssistantLoad, type AssistantStatus, assistantLoadOf } from "@/lib/assistant/model";
 import type { CaseSummary as WorkflowCaseSummary, WorkflowView } from "@/lib/workflows/model";
 
 import {
   type ApiResult,
   discoverWorkspaces,
+  getAssistantStatus,
   getCaseWorkflow,
   getWorkspaceDetails,
   listWorkflowCases,
@@ -140,6 +142,8 @@ export type CaseState =
       workspaces: Workspace[];
       cases: WorkflowCaseSummary[];
       view: WorkflowView;
+      /** The Hannah AI demo for this administrator and Case (read with the Case, so the first paint is right). */
+      assistant: AssistantLoad;
     };
 
 /** The API's answer for this Company; never a client-side grant of anything. */
@@ -183,6 +187,7 @@ export function caseState(
   workspaces: ApiResult<Workspace[]>,
   cases: ApiResult<WorkflowCaseSummary[]> | null,
   view: ApiResult<WorkflowView> | null,
+  assistant: AssistantLoad = ASSISTANT_HIDDEN,
 ): CaseState {
   const list = casesState(details, workspaces, cases);
   if (list.kind !== "cases_ready") return list;
@@ -193,7 +198,18 @@ export function caseState(
     if (view.failure === "forbidden") return { kind: "admin_only", details: base.details, workspaces: base.workspaces };
     return failureState(view.failure);
   }
-  return { kind: "case_ready", ...base, view: view.data };
+  return { kind: "case_ready", ...base, view: view.data, assistant };
+}
+
+/**
+ * The Hannah AI demo's status as the case page shows it. A refusal, an
+ * unknown Case or an API without the demo keeps it out of sight; a waking or
+ * failing API (or an answer this page can't read) is `unreachable`, which the
+ * page says plainly. Never a reason to fail the Case page itself.
+ */
+export function assistantLoad(result: ApiResult<AssistantStatus>): AssistantLoad {
+  if (result.ok) return assistantLoadOf(result.data);
+  return result.failure === "unavailable" ? { state: "unreachable" } : ASSISTANT_HIDDEN;
 }
 
 /** The Company's Cases of one workflow (the URL id is only a resource identifier). */
@@ -218,9 +234,10 @@ export async function loadCase(companyId: string, workflowKey: string, caseId: s
     discoverWorkspaces(gate.accessToken, gate.config),
   ]);
   if (!(details.ok && isCompanyAdmin(details.data))) return caseState(details, workspaces, null, null);
-  const [cases, view] = await Promise.all([
+  const [cases, view, assistant] = await Promise.all([
     listWorkflowCases(gate.accessToken, gate.config, companyId, workflowKey),
     getCaseWorkflow(gate.accessToken, gate.config, companyId, caseId),
+    getAssistantStatus(gate.accessToken, gate.config, companyId, caseId),
   ]);
-  return caseState(details, workspaces, cases, view);
+  return caseState(details, workspaces, cases, view, assistantLoad(assistant));
 }

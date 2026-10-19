@@ -14,7 +14,41 @@ browser (React state only)
   → GroqCloud chat completions (fixed URL, server-side key, no tools, one request, no retry)
 ```
 
-`GET …/assistant` tells the page whether the composer is shown.
+`GET …/assistant` tells the page whether the composer is shown. The case page
+reads it on the server together with the Case (`loadCase`), so the first paint
+is already right; "Check again" re-reads it through the BFF.
+
+## In the case workspace
+
+The case page follows the JJ design-review direction for the master case
+conversation (screen 10; user-selected, JJ review pending):
+
+- **Left:** "New case" and the Company's Disciplinary Cases (titles, statuses,
+  last update), the current one highlighted.
+- **Centre:** the case header, then two tabs: **Chat with Hannah** (AI demo)
+  and **Guided case workflow** (the official record: the guided conversation,
+  next steps, question groups, decisions & history, documents, unchanged). On
+  large screens the chat fills the screen, its messages scroll on their own and
+  the composer stays at the bottom; on phones the composer is pinned to the
+  bottom of the screen.
+- **Right:** "Case status" (the official status, the stage in progress, the
+  next step the guided workflow offers), "Case info" (recorded facts) and links
+  into the guided workflow, above the full case details. Everything there is the
+  API's data; nothing comes from the chat. On smaller screens the case list and
+  the case details open as panels from the case header.
+
+Which view leads, by the status:
+
+| Status | Tabs | Opens on |
+| --- | --- | --- |
+| available | both | Chat with Hannah |
+| `not_configured` (no key) | both; Hannah's tab says it isn't set up | Guided case workflow |
+| couldn't be read (a waking or failing API, or an answer the page can't read) | both; Hannah's tab says so, with "Check again" | Guided case workflow |
+| `disabled`, refused (403), unknown Case or an API without the demo (404), a member | none | Guided case workflow |
+
+The chat never shows a pretend answer: every failure is said in words with a
+retry where one can help. Its turns live in the page's memory only (kept while
+switching tabs, gone on reload).
 
 ## Access
 

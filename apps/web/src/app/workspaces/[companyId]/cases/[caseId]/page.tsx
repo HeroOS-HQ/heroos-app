@@ -32,7 +32,13 @@ async function CaseContent({ params }: Pick<PageProps<"/workspaces/[companyId]/c
   return (
     <CompanyShell details={state.details} workspaces={state.workspaces}>
       {/* Keyed by Case: opening another Case never carries form state over. */}
-      <CaseWorkspace cases={state.cases} companyId={state.details.company.id} initialView={state.view} key={state.view.case.id} />
+      <CaseWorkspace
+        assistant={state.assistant}
+        cases={state.cases}
+        companyId={state.details.company.id}
+        initialView={state.view}
+        key={state.view.case.id}
+      />
     </CompanyShell>
   );
 }
