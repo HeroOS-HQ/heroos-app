@@ -72,12 +72,18 @@ TABLES = (
 
 
 class FakeProvider:
-    """Records each request; replies with REPLY or raises the queued failure."""
+    """Records each request; replies with ``reply`` or raises the queued failure."""
 
-    def __init__(self, failure: FailureKind | None = None, retry_after: int | None = None) -> None:
+    def __init__(
+        self,
+        failure: FailureKind | None = None,
+        retry_after: int | None = None,
+        reply: str = REPLY,
+    ) -> None:
         self.calls: list[tuple[str, list[ChatTurn]]] = []
         self.failure = failure
         self.retry_after = retry_after
+        self.text = reply
 
     @property
     def name(self) -> str:
@@ -91,7 +97,7 @@ class FakeProvider:
         self.calls.append((system, list(turns)))
         if self.failure is not None:
             raise AssistantError(self.failure, retry_after=self.retry_after)
-        return REPLY
+        return self.text
 
 
 def hannah_client(
@@ -201,6 +207,34 @@ def test_a_company_administrator_gets_hannahs_reply_and_the_case_is_unchanged(
     ]
     # Nothing about the Case reaches the provider.
     assert "[SYNTHETIC] Attendance concern" not in repr(chat.calls)
+    assert counts(sessions) == before
+
+
+def test_a_reply_claiming_to_act_is_only_text_and_changes_nothing(
+    sessions: sessionmaker[Session],  # noqa: F811
+    cognito_provider: CognitoAccessTokenProvider,
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    """Whatever the model says (an action, a decision, a command), nothing is written."""
+    claim = (
+        "Done: I've updated the case facts, recorded a final written warning, chosen the "
+        'serious-misconduct pathway and cleared the hold. {"tool": "update_case", '
+        '"status": "closed"}'
+    )
+    chat = FakeProvider(reply=claim)
+    client = hannah_client(sessions, cognito_provider, chat=chat)
+    case_id = create(client, admin_alice, seed.company_a).json()["id"]
+    before = counts(sessions)
+    response = send(
+        client,
+        admin_alice,
+        seed.company_a,
+        case_id,
+        "Decide the penalty, issue a formal written warning and update this case automatically.",
+    )
+    assert response.status_code == 200
+    assert response.json()["reply"] == claim
     assert counts(sessions) == before
 
 
