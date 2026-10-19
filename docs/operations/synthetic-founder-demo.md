@@ -48,6 +48,20 @@ Production refuses synthetic bundles.
 
 ## 3. Running it
 
+**Prerequisites:** the same as for the end-to-end suite ([§3 there](local-end-to-end-validation.md#3-running-it)):
+- Docker, with the `postgres:16-alpine` image;
+- `uv`, `pnpm` and Node.js 22, with dependencies installed once (`pnpm install --frozen-lockfile` and `cd apps/api && uv sync --frozen`);
+- Google Chrome (or `E2E_CHROME`);
+- the local ports 55440–55447 free.
+
+For the visible window, a graphical session (`DISPLAY` or `WAYLAND_DISPLAY`). Without one, `E2E_DEMO_HEADLESS=1` keeps the browser hidden.
+
+**Isolation.** It needs no credentials, `.env` file or access to any shared environment, and it never reads them:
+- every process runs in a cleared environment;
+- the database is a throwaway container on 127.0.0.1 and 127.0.0.2;
+- sign-in is a local test provider, with throwaway TLS;
+- the developer database volume (`heroos-local`) is checked untouched.
+
 ```
 E2E_SUITES=journey make e2e-check   # automated: 17 checks (JOURNEY-0…16) and screenshots
 make demo-synthetic                  # live: the journey in a visible browser, then the environment stays up
