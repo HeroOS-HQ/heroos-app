@@ -36,6 +36,13 @@ function chooseLicensing(label: "DIFC" | "Other" | "I'm not sure") {
   fireEvent.click(screen.getByRole("radio", { name: new RegExp(`^${label}`) }));
 }
 
+/** What the browser does when the page starts to leave; true = it would ask "Leave site?". */
+function browserWouldPrompt() {
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
 beforeEach(() => {
   // jsdom has no layout or scrolling.
   vi.spyOn(window, "scrollTo").mockImplementation(() => {});
@@ -192,6 +199,46 @@ describe("OnboardingWizard: review and create (step 3)", () => {
     await waitFor(() => expect(fetcher).toHaveBeenCalled());
     const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(JSON.parse(String(init.body)).blueprint.licensing).toEqual({ location: "not_sure" });
+  });
+
+  it("asks before leaving with unsaved details, and still does after a failed attempt", async () => {
+    setup([reply(503, { error: "unavailable" })]);
+    expect(browserWouldPrompt()).toBe(false);
+    toReview("DIFC");
+    expect(browserWouldPrompt()).toBe(true);
+    click("Create my workspace");
+    await screen.findByRole("alert");
+    expect(browserWouldPrompt()).toBe(true);
+  });
+
+  it("leaves for the ready page without the unsaved-details prompt (it could cancel the way there)", async () => {
+    // The browser fires beforeunload as soon as the page starts to leave, before
+    // React re-renders: a "Leave site?" answered with Cancel left the page
+    // locked on "Opening your workspace…" with the workspace already created.
+    const prompted: boolean[] = [];
+    const navigate = vi.fn(() => prompted.push(browserWouldPrompt()));
+    setup(undefined, { navigate });
+    toReview("DIFC");
+    click("Create my workspace");
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith(`/workspaces/${COMPANY_ID}/ready?outcome=created`));
+    expect(prompted).toEqual([false]);
+    expect(browserWouldPrompt()).toBe(false);
+  });
+
+  it("if the page doesn't leave, links to the workspace instead of staying locked", async () => {
+    const { fetcher, navigate } = setup([reply(200, { outcome: "existing", companyId: COMPANY_ID })]);
+    toReview("DIFC");
+    click("Create my workspace");
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("link", { name: "open it here" })).toHaveAttribute(
+      "href",
+      `/workspaces/${COMPANY_ID}/ready?outcome=existing`,
+    );
+    // Still one registration: the way on is the link, never a second request.
+    expect(screen.getByRole("button", { name: /Opening your workspace/ })).toBeDisabled();
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
   it("goes to the ready page with outcome=existing when the account already registered", async () => {

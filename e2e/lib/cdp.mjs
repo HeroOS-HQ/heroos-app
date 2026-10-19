@@ -105,6 +105,7 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
   const console = [];
   const network = [];
   const responses = [];
+  const dialogs = [];
   let currentUrl = "about:blank";
   let interceptor = null;
   const listener = (message) => {
@@ -129,6 +130,12 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
     if (method === "Fetch.requestPaused" && interceptor) {
       interceptor(params).catch(() => {});
     }
+    // An open dialog blocks the page: record it, then answer as a person would
+    // to go on ("Leave" for a leave-site prompt, dismiss anything else).
+    if (method === "Page.javascriptDialogOpening") {
+      dialogs.push({ url: currentUrl, type: params.type, message: params.message });
+      call("Page.handleJavaScriptDialog", { accept: params.type === "beforeunload" }).catch(() => {});
+    }
   };
   listeners.add(listener);
   await call("Page.enable");
@@ -140,6 +147,7 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
     console,
     network,
     responses,
+    dialogs,
     get url() {
       return currentUrl;
     },
@@ -159,8 +167,9 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
     async emulateMedia(features) {
       await call("Emulation.setEmulatedMedia", { features });
     },
-    async eval(expression) {
-      const result = await call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+    /** `userGesture`: run as if the person did it (the page then counts as interacted with). */
+    async eval(expression, { userGesture = false } = {}) {
+      const result = await call("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, userGesture });
       if (result.exceptionDetails) {
         throw new Error(`eval failed: ${result.exceptionDetails.exception?.description ?? result.exceptionDetails.text}`);
       }
@@ -232,14 +241,18 @@ async function createPage({ send, listeners, sessionId, targetId, browserContext
         return true;
       })()`);
     },
-    async clickText(selector, text) {
+    /**
+     * `asUser`: a user-initiated click, as after a person typed into the page.
+     * Only then does the browser show a leave-site (beforeunload) prompt.
+     */
+    async clickText(selector, text, { asUser = false } = {}) {
       await page.eval(`(() => {
         const el = [...document.querySelectorAll(${JSON.stringify(selector)})]
           .find((e) => e.offsetParent !== null && e.textContent.trim().startsWith(${JSON.stringify(text)}));
         if (!el) throw new Error("no visible element with text " + ${JSON.stringify(text)});
         el.click();
         return true;
-      })()`);
+      })()`, { userGesture: asUser });
     },
     /** Real keyboard input (Tab, Enter, Escape, ...) through the browser. */
     async press(key) {

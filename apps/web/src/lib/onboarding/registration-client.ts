@@ -65,7 +65,9 @@ export function interpretRegistrationResponse(status: number, body: unknown): Re
   return failure("generic");
 }
 
-export const REGISTRATION_TIMEOUT_MS = 45_000;
+// Longer than the web server's own wait for a waking API (45 s), so the browser
+// hears the server's answer instead of giving up first.
+export const REGISTRATION_TIMEOUT_MS = 55_000;
 
 /** POST the validated payload to the BFF. Never throws. */
 export async function submitRegistration(

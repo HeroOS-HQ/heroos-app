@@ -102,8 +102,15 @@ export async function run(ctx) {
   await shot(page, "r1-review-1440");
   await page.viewport(390, 844);
   const beforeCreate = await counts(ctx);
-  await page.clickText("button", "Create my workspace");
+  // Click as the founder: after real typing the browser shows a "Leave site?"
+  // prompt if the page still guards its draft when it leaves; answered with
+  // Cancel, that prompt left the page locked on "Opening your workspace…".
+  const dialogsBefore = page.dialogs.length;
+  await page.clickText("button", "Create my workspace", { asUser: true });
   await page.waitForText("Your workspace is ready");
+  const prompts = page.dialogs.slice(dialogsBefore);
+  check("UI-5a", "\"Create my workspace\" opens the workspace with no \"Leave site?\" prompt", prompts.length === 0,
+    JSON.stringify(prompts));
   const readyUrl = new URL(page.url);
   const [facts] = await identityFacts(ctx, founderSubject);
   const companyId = readyUrl.pathname.split("/")[2];

@@ -92,6 +92,11 @@ const READ_TIMEOUT_MS = 10_000;
 // Writes wait longer (a cold API can be slow to start). A timeout leaves the
 // outcome unknown; registration is idempotent, so retrying is safe.
 const WRITE_TIMEOUT_MS = 20_000;
+// Founder registration is usually a new account's first request after the API
+// sat idle, and an idle staging API takes about half a minute to wake (32 s
+// observed). It must still end before the browser gives up waiting
+// (REGISTRATION_TIMEOUT_MS) and within the route's maxDuration.
+export const REGISTRATION_WRITE_TIMEOUT_MS = 45_000;
 
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -104,7 +109,7 @@ function failureFor(status: number): ApiFailure {
   return "unavailable";
 }
 
-type Call = { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown };
+type Call = { method?: "GET" | "POST" | "PATCH" | "PUT"; body?: unknown; timeoutMs?: number };
 
 /** Question keys named by a 422 (`loc: ["body", "answers", key]`). */
 export function answerKeysFromApiDetail(detail: unknown): string[] {
@@ -176,7 +181,7 @@ async function apiCall<T>(
       body: write ? JSON.stringify(call.body) : undefined,
       cache: "no-store",
       redirect: "error",
-      signal: AbortSignal.timeout(write ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS),
+      signal: AbortSignal.timeout(call.timeoutMs ?? (write ? WRITE_TIMEOUT_MS : READ_TIMEOUT_MS)),
     });
     if (!response.ok) {
       const failure = failureFor(response.status);
@@ -421,6 +426,7 @@ export function registerCompany(
   return apiCall(config, accessToken, fetcher, "/company-registrations", parseRegistration, {
     method: "POST",
     body: payload,
+    timeoutMs: REGISTRATION_WRITE_TIMEOUT_MS,
   });
 }
 

@@ -1,12 +1,15 @@
 // @vitest-environment node
 import { describe, expect, it, vi } from "vitest";
 
+import { maxDuration } from "@/app/bff/registrations/route";
+import { REGISTRATION_TIMEOUT_MS } from "@/lib/onboarding/registration-client";
 import { API_BASE_URL, COMPANY_ID, CONFIG } from "@/test/fixtures";
 
 import {
   discoverWorkspaces,
   getWorkspaceDetails,
   parseBlueprint,
+  REGISTRATION_WRITE_TIMEOUT_MS,
   registerCompany,
   updateBlueprint,
 } from "./heroos-api";
@@ -365,6 +368,19 @@ describe("registerCompany", () => {
       asFetch(api({ "/company-registrations": new Error("timeout") })),
     );
     expect(result).toEqual({ ok: false, failure: "unavailable" });
+  });
+
+  it("waits out a waking API (32 s observed), then answers before the browser and the route give up", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await registerCompany(TOKEN, CONFIG, PAYLOAD, asFetch(api({ "/company-registrations": json(REGISTERED, 201) })));
+      expect(timeout).toHaveBeenCalledWith(REGISTRATION_WRITE_TIMEOUT_MS);
+    } finally {
+      timeout.mockRestore();
+    }
+    expect(REGISTRATION_WRITE_TIMEOUT_MS).toBeGreaterThanOrEqual(32_000 + 10_000);
+    expect(REGISTRATION_WRITE_TIMEOUT_MS).toBeLessThan(REGISTRATION_TIMEOUT_MS);
+    expect(REGISTRATION_WRITE_TIMEOUT_MS).toBeLessThan(maxDuration * 1000);
   });
 });
 
