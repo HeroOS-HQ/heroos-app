@@ -101,7 +101,7 @@ MAX_VALUE: Final[Mapping[str, int]] = {"text": 300, "long_text": 4000, "list": 3
 
 BUNDLE_ID: Final = re.compile(r"^[a-z][a-z0-9-]{0,49}$")
 VERSION: Final = re.compile(r"^[a-z0-9][a-z0-9.-]{0,49}$")
-# Stable internal identifiers, independent of display codes ("LS02"):
+# Stable internal identifiers, independent of display codes ("EX-01"):
 # renumbering a template changes its code, never its key.
 TEMPLATE_KEY: Final = re.compile(r"^[a-z][a-z0-9_]{0,30}(\.[a-z][a-z0-9_]{0,30}){0,2}$")
 FIELD_KEY: Final = TEMPLATE_KEY

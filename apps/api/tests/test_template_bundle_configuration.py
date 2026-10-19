@@ -241,11 +241,11 @@ def test_no_private_template_bundle_or_word_document_is_in_the_repository() -> N
     "name",
     [
         "disciplinary.private-templates.json",
-        "LS02.private-mapping.json",
+        "EX-01.private-mapping.json",
         "apps/api/private-template-bundles/any.json",
-        "template-review-packs/LS02.md",
-        "Knowledge Library - JJ/LS02 Formal Written Warning.docx",
-        "SM01.docm",
+        "template-review-packs/EX-01.md",
+        "source-documents/EX-01 example letter.docx",
+        "EX-02.docm",
         "old.doc",
     ],
 )
