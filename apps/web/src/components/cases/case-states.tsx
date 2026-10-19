@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
-import { AppShell } from "@/components/app/app-shell";
+import type { CompanySection } from "@/components/app/company-frame";
+import { CompanyShell } from "@/components/app/company-shell";
 import {
   AccessDeniedView,
   ApiUnavailableView,
@@ -15,23 +16,15 @@ import type { Workspace, WorkspaceDetails } from "@/lib/server/heroos-api";
 
 type Ready = { details: WorkspaceDetails; workspaces: Workspace[] };
 
-/** The signed-in frame for one Company (switcher, sign-out). */
-export function CompanyShell({ details, workspaces, children }: Ready & { children: ReactNode }) {
-  return (
-    <AppShell
-      context={details.company.name}
-      switcher={{
-        currentId: details.company.id,
-        items: workspaces.map(({ companyId, name }) => ({ companyId, name })),
-      }}
-    >
-      {children}
-    </AppShell>
-  );
-}
-
-/** The full-page states every Case page shares; null when the page has data to render. */
-export function commonStateView(state: CasesState | CaseState, retryHref: string): ReactNode | null {
+/**
+ * The full-page states every Case page shares; null when the page has data to
+ * render. `current`: the navigation section the page belongs to.
+ */
+export function commonStateView(
+  state: CasesState | CaseState,
+  retryHref: string,
+  current: CompanySection = "cases",
+): ReactNode | null {
   switch (state.kind) {
     case "not_configured":
       return <NotConfiguredView />;
@@ -44,10 +37,10 @@ export function commonStateView(state: CasesState | CaseState, retryHref: string
     case "api_unavailable":
       return <ApiUnavailableView retryHref={retryHref} />;
     case "admin_only":
-      return <AdminOnlyView details={state.details} workspaces={state.workspaces} />;
+      return <AdminOnlyView current={current} details={state.details} workspaces={state.workspaces} />;
     case "workflow_unavailable":
       return (
-        <CompanyShell details={state.details} workspaces={state.workspaces}>
+        <CompanyShell current={current} details={state.details} workspaces={state.workspaces}>
           <StatePanel
             actions={
               <a className={buttonPrimary} href={`/workspaces/${encodeURIComponent(state.details.company.id)}`}>
@@ -71,9 +64,9 @@ export function commonStateView(state: CasesState | CaseState, retryHref: string
  * open only to Company administrators until dedicated HR access roles are
  * approved. Nothing about any Case is shown or was requested.
  */
-export function AdminOnlyView({ details, workspaces }: Ready) {
+export function AdminOnlyView({ details, workspaces, current = "cases" }: Ready & { current?: CompanySection }) {
   return (
-    <CompanyShell details={details} workspaces={workspaces}>
+    <CompanyShell current={current} details={details} workspaces={workspaces}>
       <StatePanel
         actions={
           <a className={buttonPrimary} href={`/workspaces/${encodeURIComponent(details.company.id)}`}>
@@ -95,7 +88,7 @@ export function AdminOnlyView({ details, workspaces }: Ready) {
 export function CaseNotFoundView({ details, workspaces }: Ready) {
   const casesHref = `/workspaces/${encodeURIComponent(details.company.id)}/cases`;
   return (
-    <CompanyShell details={details} workspaces={workspaces}>
+    <CompanyShell current="cases" details={details} workspaces={workspaces}>
       <StatePanel
         actions={
           <>

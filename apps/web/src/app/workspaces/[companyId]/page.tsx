@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { AppShell } from "@/components/app/app-shell";
+import { CompanyShell } from "@/components/app/company-shell";
 import { LoadingView } from "@/components/app/loading-view";
 import {
   AccessDeniedView,
@@ -13,12 +13,12 @@ import {
 import { WorkspaceHome } from "@/components/workspace/workspace-home";
 import { loadWorkspace } from "@/lib/server/app-state";
 
-export const metadata: Metadata = { title: "Workspace · HeroOS" };
+export const metadata: Metadata = { title: "Dashboard · HeroOS" };
 
-/** WORKSPACE_READY for one Company; the URL id is authorized by the API on every request. */
+/** WORKSPACE_READY for one Company (its dashboard); the URL id is authorized by the API on every request. */
 export default function WorkspacePage({ params }: PageProps<"/workspaces/[companyId]">) {
   return (
-    <Suspense fallback={<LoadingView />}>
+    <Suspense fallback={<LoadingView layout="full" />}>
       <WorkspaceContent params={params} />
     </Suspense>
   );
@@ -40,15 +40,9 @@ async function WorkspaceContent({ params }: Pick<PageProps<"/workspaces/[company
       return <ApiUnavailableView retryHref={`/workspaces/${encodeURIComponent(companyId)}`} />;
     case "workspace_ready":
       return (
-        <AppShell
-          context={state.details.company.name}
-          switcher={{
-            currentId: state.details.company.id,
-            items: state.workspaces.map(({ companyId: id, name }) => ({ companyId: id, name })),
-          }}
-        >
+        <CompanyShell current="dashboard" details={state.details} workspaces={state.workspaces}>
           <WorkspaceHome details={state.details} />
-        </AppShell>
+        </CompanyShell>
       );
   }
 }

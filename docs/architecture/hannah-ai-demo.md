@@ -21,11 +21,15 @@ is already right; "Check again" re-reads it through the BFF.
 ## In the case workspace
 
 The case page follows the JJ design-review direction for the master case
-conversation (screen 10; user-selected, JJ review pending):
+conversation (screen 10; user-selected, JJ review pending). It spans the full
+window under the company header, in place of the company navigation (never two
+sidebars): about 284 px / the rest / 398 px on large screens, the centre taking
+any extra width.
 
-- **Left:** "New case" and the Company's Disciplinary Cases (titles, statuses,
-  last update), the current one highlighted.
-- **Centre:** the case header, then two tabs: **Chat with Hannah** (AI demo)
+- **Left:** "New case", a search of the Company's Disciplinary Cases (titles,
+  statuses, last update; the current one highlighted) and the way back to the
+  dashboard and the full case list.
+- **Centre:** a compact case header, then two tabs: **Chat with Hannah** (AI demo)
   and **Guided case workflow** (the official record: the guided conversation,
   next steps, question groups, decisions & history, documents, unchanged). On
   large screens the chat fills the screen, its messages scroll on their own and

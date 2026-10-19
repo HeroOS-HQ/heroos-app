@@ -38,36 +38,88 @@ const bodyOf = (fetcher: ReturnType<typeof fetcherOf>, call = 0) =>
 const summary = (overrides: Record<string, unknown> = {}) => parseCaseSummary(apiCaseSummary(overrides))!;
 
 describe("CasesDashboard", () => {
+  const two = () => [
+    summary({ status: { code: "intake_in_progress", label: "Intake in progress" }, answered: 3, total: 10 }),
+    summary({ id: OTHER_CASE_ID, title: "[SYNTHETIC] Second", status: { code: "held_for_specialist_review", label: "On hold: specialist review needed" }, answered: 19, total: 19 }),
+  ];
+
   it("lists the Company's cases with their status in words and a New case action for administrators", () => {
-    render(
-      <CasesDashboard
-        cases={[
-          summary({ status: { code: "intake_in_progress", label: "Intake in progress" }, answered: 3, total: 10 }),
-          summary({ id: OTHER_CASE_ID, title: "[SYNTHETIC] Second", status: { code: "held_for_specialist_review", label: "On hold: specialist review needed" }, answered: 19, total: 19 }),
-        ]}
-        companyId={COMPANY_ID}
-        companyName="[SYNTHETIC] Alpha"
-      />,
-    );
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Disciplinary cases");
-    expect(screen.getByRole("link", { name: "New case" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/new`);
-    const list = screen.getByRole("list", { name: "Disciplinary cases" });
-    const links = within(list).getAllByRole("link");
+    render(<CasesDashboard cases={two()} companyId={COMPANY_ID} />);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Conduct & Discipline – Cases");
+    expect(screen.getByRole("link", { name: /Create a new case/ })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/new`);
+    const table = screen.getByRole("table");
+    const links = within(table).getAllByRole("link");
     expect(links.map((a) => a.getAttribute("href"))).toEqual([
       `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`,
       `/workspaces/${COMPANY_ID}/cases/${OTHER_CASE_ID}`,
     ]);
-    expect(links[0]).toHaveTextContent("3 of 10 intake questions answered");
-    expect(links[0]).toHaveTextContent("Last updated 15 Oct 2026");
-    expect(links[1]).toHaveTextContent("On hold: specialist review needed");
-    // The slice says what it does not do.
-    expect(screen.getByText("Early version: intake only")).toBeInTheDocument();
+    expect(links[0]).toHaveAccessibleName("View case: [SYNTHETIC] Attendance concern");
+    const rows = within(table).getAllByRole("row").slice(1);
+    expect(rows[0]).toHaveTextContent("3 of 10 answered");
+    expect(rows[0]).toHaveTextContent("15 Oct 2026");
+    expect(rows[1]).toHaveTextContent("On hold: specialist review needed");
+    // No columns the API has no data for.
+    expect(within(table).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Case",
+      "Status",
+      "Intake",
+      "Created",
+      "Last updated",
+      "Open",
+    ]);
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" })).toHaveTextContent("HR ServicesConduct & DisciplineCases");
   });
 
-  it("explains the empty state and that cases are confidential to administrators", () => {
-    render(<CasesDashboard cases={[]} companyId={COMPANY_ID} companyName="A" />);
+  it("searches by title or ID and filters by the statuses the cases actually have", () => {
+    render(<CasesDashboard cases={two()} companyId={COMPANY_ID} />);
+    const status = screen.getByRole("combobox", { name: "Status" });
+    expect(within(status).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All statuses",
+      "Intake in progress",
+      "On hold: specialist review needed",
+    ]);
+    const rows = () => within(screen.getByRole("table")).getAllByRole("row").slice(1);
+
+    fireEvent.change(screen.getByRole("searchbox", { name: /Search cases/ }), { target: { value: "second" } });
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("[SYNTHETIC] Second");
+    expect(screen.getByRole("status")).toHaveTextContent("Showing 1 of 2 cases");
+
+    fireEvent.change(screen.getByRole("searchbox", { name: /Search cases/ }), { target: { value: OTHER_CASE_ID.slice(-12) } });
+    expect(rows()[0]).toHaveTextContent("[SYNTHETIC] Second");
+
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    fireEvent.change(status, { target: { value: "intake_in_progress" } });
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toHaveTextContent("Intake in progress");
+
+    fireEvent.change(screen.getByRole("searchbox", { name: /Search cases/ }), { target: { value: "nothing like this" } });
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText("No cases match your search.")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+    expect(rows()).toHaveLength(2);
+  });
+
+  it("explains the empty state, an unconfirmed jurisdiction and that cases are confidential to administrators", () => {
+    render(
+      <CasesDashboard
+        blueprint={{
+          companyId: COMPANY_ID,
+          legalName: null,
+          industry: null,
+          employeeCount: null,
+          licensing: { location: "not_sure", authority: null },
+          jurisdiction: { readiness: "unconfirmed", reason: "licensing_not_sure", employmentJurisdiction: null, confirmedAt: null, guidanceAllowed: false },
+          updatedAt: null,
+        }}
+        cases={[]}
+        companyId={COMPANY_ID}
+      />,
+    );
     expect(screen.getByRole("heading", { name: "No Disciplinary cases yet" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Start a case" })).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    expect(screen.getByText("Case progression depends on your jurisdiction status.")).toBeInTheDocument();
     expect(screen.getByText(/only your company's administrators can see them/)).toBeInTheDocument();
   });
 });
@@ -176,6 +228,23 @@ describe("CaseWorkspace", () => {
     ]);
     expect(within(groups).getByRole("button", { current: "step" })).toHaveTextContent("Initial facts");
     expect(screen.getByRole("heading", { name: "Initial facts", level: 2 })).toBeInTheDocument();
+  });
+
+  it("searches the case list by title and keeps the way back to the dashboard and all cases", () => {
+    const fetcher = renderWorkspace();
+    const rail = screen.getByRole("complementary", { name: "Disciplinary cases" });
+    const cases = within(rail).getByRole("navigation", { name: "Cases" });
+    expect(within(cases).getAllByRole("link")).toHaveLength(2);
+    fireEvent.change(within(rail).getByRole("searchbox", { name: "Search cases" }), { target: { value: "other" } });
+    expect(within(cases).getAllByRole("link").map((a) => a.textContent)).toEqual([expect.stringContaining("[SYNTHETIC] Other case")]);
+    fireEvent.change(within(rail).getByRole("searchbox", { name: "Search cases" }), { target: { value: "no such case" } });
+    expect(within(cases).queryAllByRole("link")).toHaveLength(0);
+    expect(within(rail).getByText(/No cases match/)).toBeInTheDocument();
+    expect(within(rail).getByRole("link", { name: "Dashboard" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}`);
+    expect(within(rail).getByRole("link", { name: "All cases" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases`);
+    // Searching is local: nothing is requested and the case itself is unchanged.
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("[SYNTHETIC] Attendance concern");
   });
 
   it("shows why a step can't be answered yet instead of its questions", () => {

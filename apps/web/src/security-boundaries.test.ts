@@ -26,10 +26,12 @@ describe("browser/server boundary", () => {
   it("finds the client components it checks", () => {
     expect(clientFiles.map(({ path }) => path).sort()).toEqual([
       "components/app/back-forward-cache-guard.tsx",
+      "components/app/company-frame.tsx",
       "components/app/company-switcher.tsx",
       "components/cases/answers-form.tsx",
       "components/cases/case-timeline.tsx",
       "components/cases/case-workspace.tsx",
+      "components/cases/cases-table.tsx",
       "components/cases/decision-form.tsx",
       "components/cases/decisions-panel.tsx",
       "components/cases/document-form.tsx",

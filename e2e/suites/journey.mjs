@@ -73,7 +73,7 @@ export async function run(ctx) {
     chooser.includes(COMPANY) && chooser.includes("[SYNTHETIC DEMO] Example Logistics LLC"), chooser.slice(0, 300));
   await shot(page, "journey-01-choose-company");
   await page.click(`a[href="${companyPath}"]`);
-  await page.waitForText("Open Disciplinary cases");
+  await page.waitForText("Go to Cases");
   const home = await text();
   await shot(page, "journey-02-company-workspace");
 

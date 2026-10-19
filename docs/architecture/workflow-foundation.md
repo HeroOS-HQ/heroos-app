@@ -130,6 +130,20 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
   `/cases/[caseId]` (guided workspace). The workspace home's Disciplinary card
   links to the list and says "Initial facts only"; Probation and Recruitment
   remain "Coming soon".
+- Since the company workspace redesign (JJ design review screens 06–10,
+  user-selected, JJ review pending), every page of one Company shares a
+  full-width frame (`components/app/company-frame.tsx`): the header with the
+  Company's name (or the switcher when the account has several), sign-out, and
+  a navigation of the Company's real routes: Dashboard, Company Blueprint
+  (`/settings`), HR Services (`/hr-services`), Cases (administrators only) and
+  "Team & Access" shown as coming soon, never a link. `/hr-services` lists the
+  three V1 workflows with their availability; `/disciplinary` (administrators;
+  members get the "administrators only" state) explains what the product does,
+  what waits for a confirmed jurisdiction, and the recent Cases. The case list
+  has a search by title or id and a filter by the statuses the Cases have; both
+  work on the list the page received. The review mockups' pathway stages,
+  employee fields and document actions are not shown: they are illustrative and
+  not approved.
 - BFF mutations (same CSRF, content-type, size and session guard as M1-10D):
   `POST /bff/companies/{id}/workflows/{key}/cases` and
   `PUT /bff/companies/{id}/cases/{case}/steps/{step}/answers`. Bodies are rebuilt

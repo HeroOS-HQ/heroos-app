@@ -189,3 +189,63 @@ export function SendIcon({ className }: IconProps) {
     </Icon>
   );
 }
+
+export function HomeIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M3.5 10.5 12 3.5l8.5 7M5.5 9v10.5h4.5v-6h4v6h4.5V9" />
+    </Icon>
+  );
+}
+
+export function SearchIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="m16 16 4.5 4.5" />
+    </Icon>
+  );
+}
+
+export function LockIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <rect height="9.5" rx="2" width="14" x="5" y="10.5" />
+      <path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" />
+    </Icon>
+  );
+}
+
+export function ScaleIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M12 4v16M7.5 20h9M5 7.5h14M12 4.5 5 7.5M12 4.5l7 3" />
+      <path d="m5 8-2.5 6a2.8 2.8 0 0 0 5 0L5 8ZM19 8l-2.5 6a2.8 2.8 0 0 0 5 0L19 8Z" />
+    </Icon>
+  );
+}
+
+export function BookIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M12 6.5C10.2 5 7.6 4.5 3.5 4.5v14c4.1 0 6.7.5 8.5 2 1.8-1.5 4.4-2 8.5-2v-14c-4.1 0-6.7.5-8.5 2Zm0 0v14" />
+    </Icon>
+  );
+}
+
+export function LightbulbIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M9 17.5h6M10 20.5h4M12 3.5a6 6 0 0 0-3.6 10.8c.6.5 1 1.2 1 2V17h5.2v-.7c0-.8.4-1.5 1-2A6 6 0 0 0 12 3.5Z" />
+    </Icon>
+  );
+}
+
+export function InfoIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5.5M12 7.6v.2" />
+    </Icon>
+  );
+}
