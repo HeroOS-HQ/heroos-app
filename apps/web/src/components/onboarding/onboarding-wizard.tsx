@@ -42,7 +42,7 @@ import { type StepKey, Stepper } from "./stepper";
 type Submission =
   | { status: "idle" }
   | { status: "submitting" }
-  | { status: "navigating" }
+  | { status: "navigating"; destination: string }
   | { status: "failed"; reason: RegistrationFailure };
 
 const COMPANY_FIELDS: FieldName[] = ["companyName", "legalName", "industry", "employeeCount"];
@@ -72,6 +72,9 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submission, setSubmission] = useState<Submission>({ status: "idle" });
   const inFlight = useRef(false);
+  // Set synchronously once the workspace exists: the page may leave at once,
+  // before React re-renders and removes the unsaved-details listener.
+  const leaving = useRef(false);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const feedbackRef = useRef<HTMLDivElement>(null);
   const firstRender = useRef(true);
@@ -92,12 +95,16 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
   }, [step]);
 
   // Ask before leaving with unsaved details (the draft is not stored anywhere).
+  // Never once the workspace exists: a "Leave site?" prompt there could cancel
+  // the way to it and leave this page locked on "Opening your workspace…".
   useEffect(() => {
-    if (!dirty || submission.status === "navigating") return;
-    const onBeforeUnload = (event: BeforeUnloadEvent) => event.preventDefault();
+    if (!dirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!leaving.current) event.preventDefault();
+    };
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
-  }, [dirty, submission.status]);
+  }, [dirty]);
 
   useEffect(() => {
     if (submission.status === "failed") feedbackRef.current?.focus();
@@ -156,9 +163,11 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
     setSubmission({ status: "submitting" });
     const result = await submitRegistration(built.value, fetcher);
     if (result.kind === "success") {
-      setSubmission({ status: "navigating" });
-      (navigate ?? ((url: string) => window.location.assign(url)))(readyPath(result.outcome, result.companyId));
-      return; // Stay locked: the page is leaving.
+      const destination = readyPath(result.outcome, result.companyId);
+      leaving.current = true;
+      setSubmission({ status: "navigating", destination });
+      (navigate ?? ((url: string) => window.location.assign(url)))(destination);
+      return; // Stay locked: the page is leaving (with a link, should it not).
     }
     if (result.reason === "invalid" && result.fields.length > 0) {
       setErrors(Object.fromEntries(result.fields.map((field) => [field, SERVER_FIELD_MESSAGE])));
@@ -335,6 +344,16 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
               {submission.status === "submitting" ? "Creating your workspace…" : null}
               {submission.status === "navigating" ? "Opening your workspace…" : null}
             </div>
+
+            {submission.status === "navigating" ? (
+              <p className="mt-6 text-sm text-hero-muted">
+                If your workspace doesn&apos;t open in a moment,{" "}
+                <a className="font-bold text-hero-blue-ink underline underline-offset-4" href={submission.destination}>
+                  open it here
+                </a>
+                .
+              </p>
+            ) : null}
 
             {submission.status === "failed" ? (
               <div className="mt-6" ref={feedbackRef} tabIndex={-1}>
