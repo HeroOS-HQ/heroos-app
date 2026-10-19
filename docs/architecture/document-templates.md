@@ -1,7 +1,7 @@
 # Document Templates and Safe Previews (M2-04C, first slice)
 
-**Status:** Implemented (M2-04C phases C1–C2), not deployed. No migration:
-contract stays 7.\
+**Status:** Implemented (M2-04C phases C1–C3), not deployed. No migration:
+contract stays 7. No real template converted or installed.\
 **Owner:** Technical Lead\
 **Milestone:** M2 — Workflow Platform ("Generate documents from approved templates")\
 **Related:** [Workflow Progression](workflow-progression.md) (M2-03, the rule
@@ -177,11 +177,63 @@ typed can change the template, run anything or become markup or a link.
   `components/cases/documents.test.tsx`, `security-boundaries.test.ts`.
 - End to end: the `documents` suite (DOCS-0 to DOCS-15).
 
-## 9. Not in this slice
+## 9. The offline converter (phase C3)
 
-- Converting JJ's Word documents into a template bundle (the offline
-  converter, phase C3) and installing any real template (C4/C5, after JJ's
-  content decisions, legal approval and a separate release authorization).
+JJ's templates are Word documents. They are converted **offline**, by
+engineering, into a template-bundle "working copy"; the API never reads Word
+files (`scripts/` isn't in the API image, and an import-boundary test keeps
+`app/` away from the converter and any ZIP or XML parser).
+
+```
+uv run python -m scripts.template_import scan DOCX --out DIR
+uv run python -m scripts.template_import convert DOCX MAPPING --out DIR
+uv run python -m scripts.template_import verify DOCX MAPPING ENGINE_COPY SOURCE_MAP
+uv run python -m scripts.template_import assemble META ENGINE_COPY... --out FILE.private-templates.json [--rules RULES]
+```
+
+- **Reading** (`scripts/docx_reader.py`, standard library only): text,
+  paragraphs, runs and their highlighting, headings, list items and tables;
+  nothing else. Refused: more than 200 parts, a part over 5 MiB or 20 MiB in
+  all, a suspicious compression ratio, unsafe or duplicate part names,
+  encrypted or unreadable parts, macros, embedded or ActiveX objects, external
+  relationships, any DTD or entity, tracked changes, field codes, text boxes,
+  unknown body elements and nesting deeper than 32 levels. Text in headers or
+  footers, footnotes or endnotes, comments, images and symbols are flagged
+  for a person.
+- **Scan** reports every bracketed gap and what needs a decision: gaps not
+  (fully) highlighted, conditional or instruction-like gaps, highlighted text
+  outside brackets, unbalanced brackets, and the flags above.
+- **Convert** follows a mapping (`heroos.template-mapping/1`) written by
+  engineering and approved by the template owner: gap → field, the employer
+  instructions' paragraphs, conditional paragraphs (prefix and choice),
+  repeated identical paragraphs (per list entry), and wording changes
+  ("patches") each with a recorded approval. **Nothing is guessed:** an
+  un-highlighted or partly highlighted gap is never mapped by its text alone
+  (only by a confirmed occurrence), highlighted text outside brackets and
+  non-standard brackets (`［ ］`, `【 】`…) must be confirmed literal, a patch
+  can't touch a gap, flags must be acknowledged, and anything unsettled stops
+  the conversion.
+- **Verify, always:** the working copy turned back into text (each field
+  replaced by its original gap, prefixes and repeated paragraphs restored,
+  approved patches reversed) must equal the source text exactly, paragraph by
+  paragraph and in order. Only layout normalizations are allowed (a tab or
+  special space becomes a space, a soft hyphen is dropped, empty paragraphs
+  skipped) and they are counted. `verify` repeats the check on stored files,
+  so any later edit to a working copy is caught.
+- **Outputs** (mode 600, refused inside any git repository because they hold
+  wording): the working copy, its source map, a side-by-side review pack for
+  the template owner, and a report with counts only. The console prints counts
+  only. `assemble` combines approved working copies into a private bundle
+  (file name `*.private-templates.json`), validated exactly as the API does,
+  optionally against the rule bundle.
+- **Tests** (`tests/test_template_import.py`) build synthetic Word documents
+  in memory; no real template is read by any test.
+
+## 10. Not in this slice
+
+- Running the converter on JJ's documents, assembling a private bundle and
+  installing it (phases C4/C5): after JJ's content decisions, the lawyer's
+  approval and a separate release authorization.
 - Saving drafts, issuing, delivering, acknowledging, DOCX/PDF output and
   storage (ADR-005): blocked on PRIV-004 (document retention) and JJ's
   lifecycle decisions.

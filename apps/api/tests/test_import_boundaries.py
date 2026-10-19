@@ -265,3 +265,16 @@ def test_the_rules_never_read_employer_decision_records() -> None:
         imported = _imports(path)
         assert not any(name.startswith(forbidden) for name in imported), path
         assert "decision_record" not in path.read_text(encoding="utf-8"), path
+
+
+def test_the_api_never_reads_word_documents() -> None:
+    """M2-04C: converting Word templates is offline tooling (``scripts``), never the API's job.
+
+    Only ``apps/api/app`` is in the API image; nothing in it may import the
+    converter, the Word reader, or a ZIP or XML parser.
+    """
+    for path in APP.rglob("*.py"):
+        imported = _imports(path)
+        assert not any(
+            name.startswith(("scripts", "zipfile", "xml", "lxml", "docx")) for name in imported
+        ), path
