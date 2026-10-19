@@ -51,9 +51,10 @@ pass before production customer data is accepted.
 - **Runtime:** local PostgreSQL 16, the local private-object provider,
   development authentication, structured logging to stdout, and logical
   backup/restore verification on disposable databases.
-- **CI:** every M1 job keeps running on every pull request and push to `main`:
-  Web, API, Containers, Tenant Isolation, Backup & Restore and Privacy
-  Decisions. AWS deployment pipelines are M5 work.
+- **CI:** every M1 job keeps running on every pull request and on every push
+  to `main` or `dev` (the integration branch, so merges into `dev` are
+  verified too): Web, API, Containers, Tenant Isolation, Backup & Restore and
+  Privacy Decisions. AWS deployment pipelines are M5 work.
 - **Infrastructure:** the M1-03 Terraform scaffold stays a dormant, cloud-ready
   foundation. No AWS resource is created, and the region (`me-central-1`),
   naming, tagging, staging/production separation and GitHub OIDC design
