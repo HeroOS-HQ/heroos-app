@@ -26,8 +26,9 @@ import {
 // The BFF waits up to 45 s for the API (lib/server/heroos-api.ts), within the
 // route's 60 s maxDuration; the browser waits a little longer than the BFF.
 export const HANNAH_BROWSER_TIMEOUT_MS = 55_000;
+/** The demo's disclosure, always on screen above the conversation (after the "AI demo" label). */
 export const NOTICE =
-  "Hannah AI Demo — Use fictional employee scenarios only. Responses are exploratory and do not authorize disciplinary decisions.";
+  "Fictional scenarios only · Exploratory responses that don't authorize disciplinary decisions · Not saved to the official case, which this chat can't change";
 
 type Turn = ChatTurn & { id: number; at: number; failed?: boolean };
 type Failure =
@@ -81,8 +82,15 @@ const TIME = new Intl.DateTimeFormat(undefined, { hour: "2-digit", minute: "2-di
  * figure scaled up inside a circle, positioned on her face with classes only
  * (the CSP forbids inline style attributes).
  */
-export function HannahAvatar({ size = "md" }: { size?: "sm" | "md" | "lg" }) {
-  const box = size === "lg" ? "size-14" : size === "sm" ? "size-6" : "size-10 sm:size-12 xl:size-14";
+export function HannahAvatar({ size = "md" }: { size?: "sm" | "md" | "lg" | "xl" }) {
+  const box =
+    size === "xl"
+      ? "size-16 sm:size-[4.5rem]"
+      : size === "lg"
+        ? "size-14"
+        : size === "sm"
+          ? "size-6"
+          : "size-10 sm:size-12 xl:size-14";
   return (
     <span
       aria-hidden="true"
@@ -345,19 +353,17 @@ export function HannahChat({
       <h2 className="sr-only" id="hannah-heading">
         Conversation with Hannah (AI demo)
       </h2>
-      {/* The demo's disclosure stays in view above the conversation, compact so the messages keep the space. */}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#f1df8d] bg-hero-yellow-tint/80 px-4 py-1.5 sm:px-6 lg:px-7">
-        <p className="flex min-w-0 flex-1 items-start gap-2 text-[0.8125rem] font-semibold leading-snug text-hero-navy">
-          <AlertIcon className="mt-px size-4 shrink-0" />
-          <span>
-            {NOTICE}{" "}
-            <span className="hidden font-normal text-hero-navy/80 sm:inline">
-              AI demo · not part of the case record · not saved.
-            </span>
+      {/* The demo's disclosure stays in view above the conversation: every point visible, kept light so the messages lead. */}
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#f3e7b5] bg-[#fffcf0] px-4 py-1 sm:px-6 lg:px-7">
+        <p className="min-w-0 flex-1 text-xs leading-[1.3] text-hero-navy/85 sm:text-[0.8125rem]">
+          <span className="mr-1.5 inline-flex h-4 items-center gap-1 rounded-full bg-hero-yellow-tint px-1.5 align-[-2px] text-[0.6875rem] font-bold leading-none text-hero-navy ring-1 ring-[#f1df8d]">
+            <AlertIcon className="size-3 shrink-0" />
+            AI demo
           </span>
+          <span>{NOTICE}</span>
         </p>
         <button
-          className="inline-flex min-h-9 shrink-0 items-center rounded-full border border-hero-control bg-white px-3.5 text-sm font-bold text-hero-navy transition-colors duration-150 hover:bg-hero-blue-tint disabled:cursor-not-allowed disabled:opacity-60"
+          className="inline-flex min-h-8 shrink-0 items-center rounded-full border border-hero-control bg-white px-2.5 text-xs font-bold sm:px-3 sm:text-[0.8125rem] text-hero-navy transition-colors duration-150 hover:bg-hero-blue-tint disabled:cursor-not-allowed disabled:opacity-60"
           disabled={turns.length === 0 && draft.length === 0 && failure === null}
           onClick={restart}
           type="button"
@@ -373,31 +379,40 @@ export function HannahChat({
         className="relative flex flex-col gap-5 px-4 py-5 sm:px-6 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:px-7"
         role="log"
       >
-        <li className="flex items-start gap-3 sm:gap-4">
-          <HannahAvatar />
-          <div className="min-w-0 max-w-[36rem] flex-1">
-            <Speaker name="Hannah" />
-            <div className={`mt-1 ${hannahBubble}`}>
-              <p>Hi, I&apos;m Hannah.</p>
-              <p className="mt-1.5">
-                Tell me about the made-up situation you&apos;re thinking through, and we&apos;ll work through it together,
-                one question at a time.
-              </p>
-            </div>
-            <div className="mt-1.5 rounded-2xl bg-[#f3f7fe] px-4 py-2.5 text-sm leading-relaxed text-hero-navy/85">
-              <p>You can include, for example:</p>
-              <ul className="mt-0.5 list-disc pl-5 marker:text-hero-blue">
-                <li>what happened (a fictional example)</li>
-                <li>when it happened, and how often</li>
-                <li>any relevant context, like earlier conversations</li>
-              </ul>
-              <p className="mt-1.5 text-xs text-hero-muted">
-                Hannah gives general, exploratory guidance. She can&apos;t see this case&apos;s saved answers, and nothing
-                said here changes the case.
-              </p>
-            </div>
-          </div>
-        </li>
+        {turns.length === 0 && !pending ? (
+          // A fresh conversation: one welcome, centred in the space the messages will use. It is the page's own
+          // text, not a reply (no bubble, no time), so nothing looks as if Hannah had already answered.
+          <li className="my-auto flex flex-col items-center px-2 py-6 text-center">
+            <HannahAvatar size="xl" />
+            <p className="mt-3 text-lg font-extrabold tracking-[-0.01em] text-hero-navy">Hi, I&apos;m Hannah.</p>
+            <p className="mt-1 max-w-[30rem] text-[0.9375rem] leading-relaxed text-hero-navy/85">
+              Tell me about the made-up situation you&apos;re thinking through, and we&apos;ll work through it together,
+              one question at a time.
+            </p>
+            <p className="mt-3 text-xs font-bold uppercase tracking-[0.12em] text-hero-muted" id="hannah-include">
+              You can include
+            </p>
+            <ul aria-labelledby="hannah-include" className="mt-1.5 flex flex-wrap justify-center gap-1.5">
+              {["What happened (fictional)", "When, and how often", "Earlier conversations"].map((item) => (
+                <li className="rounded-full bg-[#eef4fd] px-3 py-1 text-[0.8125rem] font-semibold text-hero-navy" key={item}>
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 max-w-[30rem] text-xs leading-relaxed text-hero-muted">
+              Hannah gives general, exploratory guidance. She can&apos;t see this case&apos;s saved answers.
+            </p>
+          </li>
+        ) : (
+          // Once the conversation has started, the welcome shrinks to one quiet line above it.
+          <li className="flex items-center gap-2.5 border-b border-hero-border pb-3 text-[0.8125rem] text-hero-muted">
+            <HannahAvatar size="sm" />
+            <p className="min-w-0">
+              <span className="font-bold text-hero-navy">Hi, I&apos;m Hannah.</span> Tell me about a made-up situation and
+              we&apos;ll work through it one question at a time. I can&apos;t see this case&apos;s saved answers.
+            </p>
+          </li>
+        )}
         {turns.map((turn) =>
           turn.role === "user" ? (
             <li className="flex items-start justify-end gap-3 sm:gap-4" key={turn.id}>

@@ -225,6 +225,20 @@ describe("HrServices", () => {
     expect(screen.getByText("In development")).toBeInTheDocument();
   });
 
+  it("makes the workflow that can be opened the primary action; the jurisdiction link stays secondary", () => {
+    render(<HrServices details={details()} />);
+    const open = screen.getByRole("link", { name: /View details/ });
+    const jurisdiction = screen.getByRole("link", { name: /View jurisdiction details/ });
+    expect(open.className).toContain("bg-hero-yellow");
+    expect(jurisdiction.className).not.toContain("bg-hero-yellow");
+    expect(jurisdiction.className).toContain("border-hero-control");
+    // Nothing yellow for what can't be opened.
+    for (const unavailable of ["Probation", "Recruitment"]) {
+      const card = screen.getByRole("heading", { name: unavailable }).closest("li")!;
+      expect(within(card).queryByRole("link")).toBeNull();
+    }
+  });
+
   it("gives a member no way into Disciplinary", () => {
     render(<HrServices details={details({ membership: MEMBER })} />);
     expect(within(screen.getByRole("list", { name: "HR workflows" })).queryAllByRole("link")).toHaveLength(0);

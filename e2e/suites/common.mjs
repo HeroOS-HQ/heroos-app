@@ -41,3 +41,13 @@ export async function counts(ctx) {
 export const sameCounts = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
 export { quote };
+
+/**
+ * Opens the case page's folded "Full case details" (progress, the jurisdiction's
+ * basis, facts, missing information) as a person would, by its summary; does
+ * nothing if it is already open.
+ */
+export async function openFullCaseDetails(page) {
+  await page.eval(`(() => { const d = document.getElementById("case-full-details"); if (d && !d.open) d.querySelector("summary").click(); return true; })()`);
+  await page.waitFor(`document.getElementById("case-full-details")?.open === true`, { message: "full case details open" });
+}
