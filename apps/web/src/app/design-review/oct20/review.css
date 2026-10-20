@@ -1,0 +1,235 @@
+/*
+ * Page 1 (Ask HeroOS) design review only. Loaded by this route's layout, so
+ * nothing here reaches the product. The response tones are JJ's colour
+ * semantics (20 Oct): blue = HeroOS guidance, amber = warning, red = stop,
+ * dark pink = expert review. Each tone is always paired with an icon, a label
+ * and its own wording; colour never carries the meaning alone.
+ */
+
+.tone-guidance {
+  --tone-rule: #c3d5f5;
+  --tone-ink: #2f57a8;
+  --tone-bg: #f3f7fe;
+  --tone-line: #d4e2f9;
+  --tone-rail: #3d6bc4;
+  --tone-chip: #e3ecfc;
+}
+
+.tone-warning {
+  --tone-rule: #efd690;
+  --tone-ink: #8a4a00;
+  --tone-bg: #fff8e4;
+  --tone-line: #f0d07c;
+  --tone-rail: #dc9b00;
+  --tone-chip: #ffeaa6;
+}
+
+.tone-stop {
+  --tone-rule: #efc0c5;
+  --tone-ink: #a01b2b;
+  --tone-bg: #fff3f3;
+  --tone-line: #f1c2c6;
+  --tone-rail: #cc3443;
+  --tone-chip: #fde0e2;
+}
+
+.tone-expert {
+  --tone-rule: #e9bfd5;
+  --tone-ink: #8a1c58;
+  --tone-bg: #fdf2f8;
+  --tone-line: #eec2da;
+  --tone-rail: #a92f6c;
+  --tone-chip: #f9dcea;
+}
+
+/* The composer reacts without JavaScript: Send stays quiet until there is text. */
+.dr-composer:has(textarea:placeholder-shown) .dr-send {
+  background: #c5ccd9;
+  box-shadow: none;
+  pointer-events: none;
+}
+.dr-typing-hint {
+  opacity: 0;
+  transition: opacity 200ms ease-out;
+}
+.dr-composer:has(textarea:not(:placeholder-shown)) + .dr-typing-hint {
+  opacity: 1;
+}
+
+/* A conversation that starts scrolled to its newest turn (no script needed). */
+.dr-log {
+  display: flex;
+  flex-direction: column-reverse;
+}
+
+@keyframes dr-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes dr-title {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+    transform: none;
+  }
+}
+
+@keyframes dr-from-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes dr-from-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes dr-from-bottom {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes dr-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes dr-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes dr-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+    transform: none;
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes dr-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(61 107 196 / 0.28);
+  }
+  50% {
+    box-shadow: 0 0 0 7px rgb(61 107 196 / 0);
+  }
+}
+
+@keyframes dr-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(61 107 196 / 0.35);
+  }
+  100% {
+    box-shadow: 0 0 0 8px rgb(61 107 196 / 0);
+  }
+}
+
+.dr-rise {
+  animation: dr-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dr-rise-late {
+  animation: dr-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) 160ms both;
+}
+.dr-title-in {
+  animation: dr-title 700ms cubic-bezier(0.22, 1, 0.36, 1) 150ms both;
+}
+.dr-fade {
+  animation: dr-fade 220ms ease-out both;
+}
+.dr-from-left {
+  animation: dr-from-left 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dr-panel-in {
+  animation: dr-from-bottom 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@media (min-width: 640px) {
+  .dr-panel-in {
+    animation-name: dr-from-right;
+  }
+}
+.dr-shimmer {
+  background: linear-gradient(90deg, #e6e9ef 0%, #f4f6f9 40%, #e6e9ef 80%);
+  background-size: 200% 100%;
+  animation: dr-shimmer 1.6s linear infinite;
+}
+.dr-dot {
+  animation: dr-dot 1.2s ease-in-out infinite;
+}
+.dr-dot:nth-child(2) {
+  animation-delay: 150ms;
+}
+.dr-dot:nth-child(3) {
+  animation-delay: 300ms;
+}
+.dr-breathe {
+  animation: dr-breathe 2.2s ease-in-out infinite;
+}
+.dr-ring {
+  animation: dr-ring 1.8s ease-out infinite;
+}
+.dr-step {
+  animation: dr-rise 380ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.dr-step:nth-child(2) {
+  animation-delay: 500ms;
+}
+.dr-step:nth-child(3) {
+  animation-delay: 1000ms;
+}
+.dr-step:nth-child(4) {
+  animation-delay: 1500ms;
+}
+
+/* Popovers (the account menu) open beside their button, not mid-screen. */
+.dr-popover {
+  inset: auto;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dr-shimmer,
+  .dr-dot,
+  .dr-breathe,
+  .dr-ring {
+    animation: none;
+  }
+}
