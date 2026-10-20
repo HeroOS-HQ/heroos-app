@@ -14,14 +14,14 @@ describe("LandingPage", () => {
     expect(screen.getByText(ENVIRONMENT_NOTICE)).toBeInTheDocument();
   });
 
-  it("shows JJ's approved mark and wordmark in the header and footer, and no extra hero sentence", () => {
+  it("shows the approved speech-bubble logo (symbol and wordmark) in the header and footer, and no extra hero sentence", () => {
     const { container } = render(<LandingPage />);
 
     for (const area of ["header", "footer"]) {
       const images = [...container.querySelectorAll(`${area} img`)];
       expect(images.map((image) => image.getAttribute("src"))).toEqual([
-        "/branding/heroos-mark-transparent.svg",
-        "/branding/heroos-wordmark-transparent.svg",
+        "/branding/heroos-logo-symbol.png",
+        "/branding/heroos-logo-wordmark.png",
       ]);
       for (const image of images) expect(image).toHaveAttribute("alt", "");
     }

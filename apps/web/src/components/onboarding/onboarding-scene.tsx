@@ -165,7 +165,7 @@ function StageProp({ stage }: { stage: SceneStage }) {
           <span className="absolute -right-[4.5rem] bottom-[14%] w-[7rem] -rotate-[9deg] 2xl:-right-[4.5rem] 2xl:w-[9rem]">
             <span className="flex h-[4.25rem] items-center justify-center rounded-t-lg border-[3px] border-[#c4cddd] bg-white shadow-[0_10px_20px_-12px_rgb(14_30_61/0.35)] 2xl:h-[5.5rem]">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img alt="" className="size-9 2xl:size-12" height={1200} src="/branding/heroos-mark-transparent.svg" width={1200} />
+              <img alt="" className="h-auto w-10 2xl:w-14" height={144} src="/branding/heroos-logo-symbol.png" width={212} />
             </span>
             <span className="-mx-[8%] block h-2 rounded-b-md bg-[#c4cddd]" />
           </span>
