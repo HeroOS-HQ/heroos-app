@@ -249,3 +249,103 @@ export function InfoIcon({ className }: IconProps) {
     </Icon>
   );
 }
+
+export function StoreIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M4 9.5V20h16V9.5M3 9.5 4.6 4h14.8L21 9.5M3 9.5a3 3 0 0 0 6 0 3 3 0 0 0 6 0 3 3 0 0 0 6 0" />
+      <path d="M9.5 20v-5h5v5" />
+    </Icon>
+  );
+}
+
+export function BriefcaseIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <rect height="13" rx="2.5" width="18" x="3" y="7" />
+      <path d="M9 7V5.5A1.5 1.5 0 0 1 10.5 4h3A1.5 1.5 0 0 1 15 5.5V7M3 12.5h7M14 12.5h7M10 11h4v3h-4z" />
+    </Icon>
+  );
+}
+
+export function MapPinIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M12 21s-6.5-5.6-6.5-11.2a6.5 6.5 0 0 1 13 0C18.5 15.4 12 21 12 21Z" />
+      <circle cx="12" cy="9.8" r="2.4" />
+    </Icon>
+  );
+}
+
+export function HelpIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.6 9.4a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.1-2.4 3.7M12 17h.01" />
+    </Icon>
+  );
+}
+
+export function UserIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="12" cy="8" r="3.8" />
+      <path d="M4.5 20.5c0-4 3.4-6.5 7.5-6.5s7.5 2.5 7.5 6.5" />
+    </Icon>
+  );
+}
+
+export function RocketIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M14 4.5c2.6-1.1 4.6-1 5.5-1 0 .9.1 2.9-1 5.5L13 14.5 9.5 11 15 5.5" />
+      <path d="M9.5 11 6 10.5 8.5 8h4M13 14.5l.5 3.5 2.5-2.5v-4M6.5 17.5c-1 1-1.5 3-1.5 3s2-.5 3-1.5a1.8 1.8 0 0 0-1.5-1.5Z" />
+    </Icon>
+  );
+}
+
+export function MonitorIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <rect height="12.5" rx="2" width="18" x="3" y="4" />
+      <path d="M8.5 20.5h7M12 16.5v4M9.5 10.5l1.8 1.8 3.2-3.3" />
+    </Icon>
+  );
+}
+
+export function CertificateIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M13 20H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9l4 4v3.5" />
+      <path d="M8 8h6M8 11.5h4" />
+      <circle cx="17" cy="15" r="2.8" />
+      <path d="m15.6 17.4-.8 3.6 2.2-1.2 2.2 1.2-.8-3.6" />
+    </Icon>
+  );
+}
+
+export function ChartIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M4 20h16M7 20v-6M12 20V8M17 20v-9" />
+    </Icon>
+  );
+}
+
+export function CheckCircleIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m8 12.3 2.7 2.7L16 9.6" />
+    </Icon>
+  );
+}
+
+/** A filled four-point sparkle (decoration around Hannah). */
+export function SparkleIcon({ className }: IconProps) {
+  return (
+    <Icon className={className}>
+      <path d="M12 2.5c.6 4.6 2.9 6.9 7.5 7.5-4.6.6-6.9 2.9-7.5 7.5-.6-4.6-2.9-6.9-7.5-7.5 4.6-.6 6.9-2.9 7.5-7.5Z" fill="currentColor" stroke="none" />
+    </Icon>
+  );
+}

@@ -276,13 +276,64 @@ describe("WorkspaceReady", () => {
     expect(document.body.textContent).not.toMatch(/compliant|verified|approved|ready for legal advice/i);
   });
 
+  it("is the Complete stage: every earlier stage completed, Complete current", () => {
+    render(<WorkspaceReady details={details()} outcome="created" />);
+    const progress = screen.getByRole("list", { name: "Setup progress" });
+    const stages = within(progress).getAllByRole("listitem");
+    expect(stages.map((stage) => stage.textContent)).toEqual([
+      "Welcome (completed)",
+      "Company Basics (completed)",
+      "Licence & Jurisdiction (completed)",
+      "Review (completed)",
+      "5Complete",
+    ]);
+    expect(stages[4]).toHaveAttribute("aria-current", "step");
+    // Phones say it in words above the card; the card says it too.
+    expect(screen.getAllByText("Step 5 of 5")).toHaveLength(2);
+  });
+
+  it("shows only what the API returned: the saved details, the licensing answer and an unconfirmed jurisdiction", () => {
+    render(<WorkspaceReady details={details()} outcome="created" />);
+    const status = screen.getByRole("region", { name: "Setup status" });
+    expect(within(status).getByText(/Gamma Trading FZ-LLC · Retail · 1,200 employees/)).toBeInTheDocument();
+    expect(within(status).getByText(/Other licensing authority · Example Free Zone Authority/)).toBeInTheDocument();
+    expect(within(status).getByText("Not yet confirmed")).toBeInTheDocument();
+    // No suggested law, upload receipt or activated templates.
+    expect(document.body.textContent).not.toMatch(/UAE Federal|MOHRE|suggested|uploaded|templates? (are )?(active|ready)/i);
+  });
+
+  it("offers the company's real routes as next steps", () => {
+    render(<WorkspaceReady details={details()} outcome="created" />);
+    const next = screen.getByRole("region", { name: "What you can do now" });
+    expect(within(next).getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual([
+      `/workspaces/${COMPANY_ID}`,
+      `/workspaces/${COMPANY_ID}/settings`,
+      `/workspaces/${COMPANY_ID}/hr-services`,
+    ]);
+    expect(screen.getByRole("link", { name: "Edit company information" })).toHaveAttribute(
+      "href",
+      `/workspaces/${COMPANY_ID}/settings`,
+    );
+    // No way back into a wizard whose draft no longer exists.
+    expect(screen.queryByRole("button", { name: /Back/ })).toBeNull();
+  });
+
+  it("gives a member no edit actions", () => {
+    render(<WorkspaceReady details={details({ membership: MEMBER })} outcome="existing" />);
+    expect(screen.queryByRole("link", { name: /^Edit/ })).toBeNull();
+    expect(screen.getByText("Available to view")).toBeInTheDocument();
+    expect(screen.queryByText(/administrator/)).toBeNull();
+  });
+
   it("an existing registration says the submission changed nothing, true even after an uncertain retry", () => {
     render(<WorkspaceReady details={details()} outcome="existing" />);
     expect(screen.getByRole("heading", { level: 1, name: "You already have a workspace" })).toBeInTheDocument();
     expect(screen.getByText("Your existing workspace wasn't changed")).toBeInTheDocument();
     expect(screen.getByText(/kept the details already on record/)).toBeInTheDocument();
+    // Details are "on record", never "saved" by this submission.
+    expect(within(screen.getByRole("region", { name: "Setup status" })).getAllByText(/^On record/)).toHaveLength(2);
     // Never claims the details are lost: an uncertain first attempt may have saved them.
-    expect(document.body.textContent).not.toMatch(/workspace is ready|weren't saved|were not saved/);
+    expect(document.body.textContent).not.toMatch(/workspace is ready|weren't saved|were not saved|are saved in/);
   });
 });
 

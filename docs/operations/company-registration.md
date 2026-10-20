@@ -140,7 +140,7 @@ sign in or sign up (provider) ──▶ GET /me/companies
                          ├─ 200 []    → "no active workspace" (all Memberships revoked)
                          └─ 403       → neutral welcome; the 403 is not proof of
                                         eligibility (a blocked identity looks the same)
-"Set up my company" (deliberate click) ──▶ three-step form ──▶ "Create my workspace"
+"Set up my company" (deliberate click) ──▶ Welcome + three-step form ──▶ "Create my workspace"
                      ──▶ POST /bff/registrations ──▶ POST /company-registrations
                          ├─ 201 created  → /workspaces/{company_id}/ready
                          ├─ 200 existing → same page, "your existing workspace wasn't changed"

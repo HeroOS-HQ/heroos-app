@@ -51,8 +51,19 @@ export async function run(ctx) {
   };
   const visible = (page, text) => page.eval(`document.body.innerText.includes(${JSON.stringify(text)})`);
 
-  async function fillWizard(page, { name, legal, industry, employees, location, authority }) {
+  // Onboarding opens on Welcome (a presentation that sends nothing); "Get Started" opens Company Basics.
+  // A page already past Welcome (e.g. after a validation check) carries on where it is.
+  async function startOnboarding(page) {
+    await page.waitFor(`document.getElementById("onboarding-start") || document.getElementById("company-name")`, { message: "onboarding" });
+    if (await page.eval(`Boolean(document.getElementById("onboarding-start"))`)) {
+      await page.waitForHydrated("#onboarding-start");
+      await page.click("#onboarding-start");
+    }
     await page.waitForHydrated("#company-name");
+  }
+
+  async function fillWizard(page, { name, legal, industry, employees, location, authority }) {
+    await startOnboarding(page);
     await page.type("#company-name", name);
     if (legal) await page.type("#legal-name", legal);
     if (industry) await page.type("#industry", industry);
@@ -65,7 +76,7 @@ export async function run(ctx) {
       await page.type("#onboarding-authority", authority);
     }
     await page.clickText("button", "Continue");
-    await page.waitForText("Review your company details");
+    await page.waitForText("Review your company information");
   }
 
   // ===== R1 in the browser: hosted sign-up -> onboarding -> workspace -> settings =====
@@ -83,8 +94,13 @@ export async function run(ctx) {
   await page.click("#continue");
   await page.waitFor(`location.pathname === "/onboarding"`, { message: "landing on /onboarding" });
   check("UI-3", "after sign-up the founder lands on /onboarding (no workspace was created by signing in)", (await identityFacts(ctx, founderSubject)).length === 0);
+  await page.waitForText("Welcome to HeroOS");
+  await shot(page, "r1-onboarding-welcome-390");
+  await startOnboarding(page);
+  check("UI-3b", "onboarding opens on Welcome, and Get Started opens Company Basics without sending anything",
+    page.network.filter((r) => r.url.includes("/bff/") && r.method !== "GET").length === 0 &&
+      (await page.eval(`document.querySelector('[aria-current="step"]')?.textContent ?? ""`)) === "2Company Basics");
   await shot(page, "r1-onboarding-step1-390");
-  await page.waitForHydrated("#company-name");
   await page.clickText("button", "Continue");
   await page.waitForText("Enter your company name");
   // The wizard shows the error at once and moves focus on the next animation
@@ -189,7 +205,7 @@ export async function run(ctx) {
   await lost.clickText("button", "Continue");
   await lost.waitFor(`document.getElementById("onboarding-location-difc")`);
   await lost.clickText("button", "Continue");
-  await lost.waitForText("Review your company details");
+  await lost.waitForText("Review your company information");
   await lost.clickText("button", "Create my workspace");
   await lost.waitForText("You already have a workspace");
   const lostText = await lost.text();
@@ -463,7 +479,7 @@ export async function run(ctx) {
   await withSession(lic, ctx.token(ctx.subject("ui-licensing")));
   await lic.viewport(390, 844);
   await lic.goto(`${webOrigin}/onboarding`);
-  await lic.waitForHydrated("#company-name");
+  await startOnboarding(lic);
   await lic.type("#company-name", "[SYNTHETIC E2E] Licensing Look Co.");
   await lic.clickText("button", "Continue");
   await lic.waitFor(`document.getElementById("onboarding-location-difc")`);
@@ -617,7 +633,7 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
     ["workspace", `/workspaces/${alpha.companyId}`, "Coming soon"],
     ["chooser", "/workspaces", "Choose a workspace"],
     ["settings", `/workspaces/${alpha.companyId}/settings`, "Company details"],
-    ["onboarding", "/onboarding", "Let's set up your company"],
+    ["onboarding", "/onboarding", "Welcome to HeroOS"],
     ["ready", `/workspaces/${alpha.companyId}/ready?outcome=created`, "Your workspace is ready"],
   ];
   for (const [name, path, text] of screens) {
@@ -661,6 +677,8 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
 
   // Onboarding by keyboard: Enter submits, errors are announced and focused.
   await page.goto(`${webOrigin}/onboarding`);
+  await page.waitForHydrated("#onboarding-start");
+  await page.click("#onboarding-start");
   await page.waitForHydrated("#company-name");
   await page.eval(`document.getElementById("company-name").focus()`);
   await page.press("Enter");

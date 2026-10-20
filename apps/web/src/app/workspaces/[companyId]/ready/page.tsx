@@ -16,13 +16,15 @@ import { loadWorkspace } from "@/lib/server/app-state";
 export const metadata: Metadata = { title: "Workspace ready · HeroOS" };
 
 /**
- * Screen E. Reached only after the BFF confirmed a registration. `outcome`
+ * Complete, the last stage of the setup journey (JJ design review, screen 05),
+ * in the onboarding's full-width frame. Reached only after the BFF confirmed a
+ * registration. `outcome`
  * selects wording only; the Company, role and readiness are read from the API,
  * which authorizes the id like any other request.
  */
 export default function WorkspaceReadyPage({ params, searchParams }: PageProps<"/workspaces/[companyId]/ready">) {
   return (
-    <Suspense fallback={<LoadingView label="Opening your workspace…" />}>
+    <Suspense fallback={<LoadingView label="Opening your workspace…" layout="full" />}>
       <ReadyContent params={params} searchParams={searchParams} />
     </Suspense>
   );
@@ -48,7 +50,7 @@ async function ReadyContent({
       return <ApiUnavailableView retryHref={`/workspaces/${encodeURIComponent(companyId)}`} />;
     case "workspace_ready":
       return (
-        <AppShell context={state.details.company.name}>
+        <AppShell context={state.details.company.name} layout="full">
           <WorkspaceReady details={state.details} outcome={outcome} />
         </AppShell>
       );
