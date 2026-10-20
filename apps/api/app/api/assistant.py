@@ -16,14 +16,17 @@ Routes:
   never retried. The Case is only checked to exist for this Company: nothing
   about it is sent to the provider, and nothing is written. The chat is not
   case history, not ``case_facts`` and not a workflow action; the model gets no
-  tools.
+  tools. Each reply is checked before it is returned
+  (``app.assistant.response_safety``): one that prescribes a sanction, claims
+  an action in HeroOS or states a law or procedure as certain is replaced by a
+  fixed, neutral reply.
 
 Usage limits (``app.assistant.limits``, in this process's memory): messages
 per account and per 5 minutes, and for the whole service per minute and per
 day, below the provider's shared free-tier quota.
 
 Nothing logs a message, history, reply, prompt, key or account: logs carry the
-outcome only.
+outcome only (and, for a replaced reply, the name of the check, never the text).
 
 Responses: 401 / 403 / 404 (demo disabled, or a Case that isn't one of this
 Company's) exactly as the Company routes; 422 field locations only; 429 ``Too
@@ -44,6 +47,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr, StringConstraints,
 from app.assistant.limits import UsageLimits
 from app.assistant.persona import HANNAH_SYSTEM_INSTRUCTION
 from app.assistant.provider import AssistantError, ChatProvider, ChatTurn
+from app.assistant.response_safety import review_reply
 from app.auth.dependencies import CompanyAdminContext
 from app.repositories import workflows
 from app.tenancy.dependencies import CompanyAdminReadOnlyDb
@@ -227,12 +231,24 @@ def send_assistant_message(
                 status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Timed out"
             ) from None
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unavailable") from None
-    logger.info(
-        "Hannah demo reply (provider=%s, model=%s, outcome=ok, turns=%d)",
-        provider.name,
-        provider.model,
-        len(turns),
-    )
+    # The model's text is checked before the browser sees it; an unsafe reply never leaves.
+    reviewed = review_reply(reply)
+    if reviewed.replaced_by is None:
+        logger.info(
+            "Hannah demo reply (provider=%s, model=%s, outcome=ok, turns=%d)",
+            provider.name,
+            provider.model,
+            len(turns),
+        )
+    else:
+        logger.info(
+            "Hannah demo reply (provider=%s, model=%s, outcome=safety_fallback, check=%s, "
+            "turns=%d)",
+            provider.name,
+            provider.model,
+            reviewed.replaced_by,
+            len(turns),
+        )
     return AssistantReplyOut(
-        reply=reply, provider=provider.name, model=provider.model, notice=NOTICE
+        reply=reviewed.text, provider=provider.name, model=provider.model, notice=NOTICE
     )

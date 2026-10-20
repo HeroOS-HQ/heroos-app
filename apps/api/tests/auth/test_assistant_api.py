@@ -7,8 +7,10 @@ real models). The chat provider is a local fake: CI never calls GroqCloud.
 Covers: the demo switch; any Company's administrator in their own Cases (no
 individual approval); members, other Companies and Cases; a missing provider
 key; provider failures (429, timeout, anything else); validation without
-echoing; the history budget; the per-account and service-wide limits; and
-that a message changes nothing and is never logged.
+echoing; the history budget; the per-account and service-wide limits; that a
+message changes nothing and is never logged; and (V1.2) that a reply
+prescribing a sanction or claiming an action is replaced before the browser
+sees it.
 """
 
 import logging
@@ -31,6 +33,7 @@ from app.api.assistant import (
 from app.assistant.limits import UsageLimits
 from app.assistant.persona import HANNAH_SYSTEM_INSTRUCTION
 from app.assistant.provider import AssistantError, ChatTurn, FailureKind
+from app.assistant.response_safety import ACTION_FALLBACK, SANCTION_FALLBACK
 from app.auth.dependencies import get_authentication_provider
 from app.auth.providers.cognito import CognitoAccessTokenProvider
 from app.db.models import (
@@ -210,13 +213,14 @@ def test_a_company_administrator_gets_hannahs_reply_and_the_case_is_unchanged(
     assert counts(sessions) == before
 
 
-def test_a_reply_claiming_to_act_is_only_text_and_changes_nothing(
+def test_a_reply_claiming_to_act_changes_nothing_and_never_reaches_the_browser(
     sessions: sessionmaker[Session],  # noqa: F811
     cognito_provider: CognitoAccessTokenProvider,
     seed: SeedData,
     admin_alice: dict[str, str],  # noqa: F811
 ) -> None:
-    """Whatever the model says (an action, a decision, a command), nothing is written."""
+    """Whatever the model says (an action, a decision, a command), nothing is written, and
+    since V1.2 the false claim is replaced by the fixed reply before it is shown."""
     claim = (
         "Done: I've updated the case facts, recorded a final written warning, chosen the "
         'serious-misconduct pathway and cleared the hold. {"tool": "update_case", '
@@ -234,8 +238,85 @@ def test_a_reply_claiming_to_act_is_only_text_and_changes_nothing(
         "Decide the penalty, issue a formal written warning and update this case automatically.",
     )
     assert response.status_code == 200
-    assert response.json()["reply"] == claim
+    assert response.json() == {
+        "reply": ACTION_FALLBACK,
+        "provider": "fake",
+        "model": "fake-model",
+        "notice": NOTICE,
+    }
+    assert "updated the case" not in response.text
+    assert len(chat.calls) == 1
     assert counts(sessions) == before
+
+
+# What GroqCloud answered in the owner's live V1.1a test (in part): a prescribed sanction.
+WARNING_REPLY = (
+    "Since you've already had two informal talks, the next step is usually a more formal "
+    "written warning that outlines the required improvement, the timeframe for change and the "
+    "consequences if the behavior continues."
+)
+
+
+def test_a_reply_recommending_a_written_warning_is_replaced_before_the_browser_sees_it(
+    sessions: sessionmaker[Session],  # noqa: F811
+    cognito_provider: CognitoAccessTokenProvider,
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    chat = FakeProvider(reply=WARNING_REPLY)
+    client = hannah_client(sessions, cognito_provider, chat=chat)
+    case_id = create(client, admin_alice, seed.company_a).json()["id"]
+    before = counts(sessions)
+    caplog.clear()
+    caplog.set_level(logging.DEBUG)
+    message = (
+        "One of our employees has been late four times in three weeks, and we've had two "
+        "documented informal discussions. What should I consider next?"
+    )
+    response = send(client, admin_alice, seed.company_a, case_id, message)
+    # The same response shape the web app reads, with the fixed reply in it.
+    assert response.status_code == 200
+    assert response.json() == {
+        "reply": SANCTION_FALLBACK,
+        "provider": "fake",
+        "model": "fake-model",
+        "notice": NOTICE,
+    }
+    assert "written warning" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    # One provider request, no retry, and the Case is untouched.
+    assert len(chat.calls) == 1
+    assert counts(sessions) == before
+    # The log says what happened, never what was said.
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "outcome=safety_fallback" in logged
+    assert "check=sanction_recommendation" in logged
+    for private in (message, WARNING_REPLY, "written warning", "next step", SANCTION_FALLBACK):
+        assert private not in logged
+
+
+def test_a_safe_reply_about_sanctions_is_shown_unchanged(
+    sessions: sessionmaker[Session],  # noqa: F811
+    cognito_provider: CognitoAccessTokenProvider,
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    safe = (
+        "You've told me about four late arrivals in three weeks and two documented informal "
+        "discussions. I can't recommend a written warning or any other sanction: that's the "
+        "employer's decision. What explanation has the employee given?"
+    )
+    chat = FakeProvider(reply=safe)
+    client = hannah_client(sessions, cognito_provider, chat=chat)
+    case_id = create(client, admin_alice, seed.company_a).json()["id"]
+    caplog.clear()
+    caplog.set_level(logging.INFO)
+    response = send(client, admin_alice, seed.company_a, case_id)
+    assert response.json()["reply"] == safe
+    assert len(chat.calls) == 1
+    assert "outcome=ok" in "\n".join(record.getMessage() for record in caplog.records)
 
 
 def test_the_demo_is_off_unless_enabled(
