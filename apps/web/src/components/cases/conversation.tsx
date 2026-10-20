@@ -18,7 +18,7 @@ function HeroAvatar() {
     >
       {/* Plain <img>: next/image adds an inline style attribute the CSP forbids. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img alt="" className="size-6" height={1200} src="/branding/heroos-mark-transparent.svg" width={1200} />
+      <img alt="" className="h-auto w-6" height={144} src="/branding/heroos-logo-symbol.png" width={212} />
     </span>
   );
 }
