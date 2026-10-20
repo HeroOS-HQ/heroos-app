@@ -32,6 +32,16 @@ This changes delivery timing only. It does not invalidate the M1 architecture,
 implementation, security controls, tests or acceptance evidence. **M1 remains
 Done.**
 
+## Later amendment: M2 rebaselined, 2026-10-20
+
+M2 has since been redefined as **Reliable AI HR Workflow Platform**
+([M2 contract](m2-reliable-ai-hr-workflow-platform.md),
+[Delivery Plan §7](delivery-plan.md#7-decision-record-m2-rebaselined-as-reliable-ai-hr-workflow-platform)).
+The milestone list above records the 2026-10-09 plan. Its "Workflow Platform"
+acceptance model for M2 is superseded. §9's readiness conclusion still stands,
+and its boundaries apply to the redefined M2 as Delivery Plan §4 now states
+them. Nothing else in this record changes.
+
 ## 1. Purpose
 
 M1 establishes the security foundation that every HeroOS workflow builds on:

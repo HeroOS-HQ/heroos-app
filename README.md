@@ -181,13 +181,17 @@ Bringing the demo to the current code is approval-gated:
 ## Milestones
 
 - M1 — Foundation & Security — Done
-- M2 — Workflow Platform — Local + CI
-- M3 — Workflow Proof — Local + CI
-- M4 — Intelligence Layer — Local + CI
+- M2 — Reliable AI HR Workflow Platform — Local + CI; accepted on the temporary
+  demo staging (rebaselined 2026-10-20; the former "Workflow Platform"
+  acceptance model is superseded)
+- M3 — Workflow Proof — Local + CI (not re-scoped since the M2 rebaseline)
+- M4 — Intelligence Layer — Local + CI (not re-scoped since the M2 rebaseline)
 - M5 — AWS activation, Staging hardening & Production release
 
 HeroOS stays local-first and CI-verified through M4; AWS activation begins in
-M5. Sequencing, the M5 Staging test/fix loop and the decision record are in the
-[Delivery Plan](docs/milestones/delivery-plan.md). M1 verification evidence and
-M2 readiness are in the
+M5. Sequencing, the M5 Staging test/fix loop and the decision records are in the
+[Delivery Plan](docs/milestones/delivery-plan.md). M2's definition, acceptance
+pillars, Done statement and issue sequence are in
+[M2 — Reliable AI HR Workflow Platform](docs/milestones/m2-reliable-ai-hr-workflow-platform.md).
+M1 verification evidence and M2 readiness are in the
 [M1 Closeout](docs/milestones/m1-foundation-security-closeout.md).

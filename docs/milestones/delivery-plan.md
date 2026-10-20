@@ -2,8 +2,9 @@
 
 **Status:** Current plan (authoritative for milestone sequencing)\
 **Owner:** Technical Lead\
-**Decision date:** 2026-10-09\
-**Related:** [M1 Closeout](m1-foundation-security-closeout.md),
+**Decision date:** 2026-10-09; M2 rebaselined 2026-10-20 (§7)\
+**Related:** [M2 — Reliable AI HR Workflow Platform](m2-reliable-ai-hr-workflow-platform.md),
+[M1 Closeout](m1-foundation-security-closeout.md),
 [Production Security Gates](../architecture/production-security-gates.md),
 [Decision Register](../privacy/decision-register.md),
 [JJ Review Packet](../privacy/jj-decision-review-packet.md)
@@ -16,10 +17,12 @@ link here instead of repeating it.
 | Milestone | Scope | Environment |
 | --- | --- | --- |
 | M1 | Foundation & Security | **Done** (local + CI) |
-| M2 | Workflow Platform | Local + CI; temporary demo hosting (§6) |
-| M3 | Workflow Proof | Local + CI; temporary demo hosting (§6) |
-| M4 | Intelligence Layer | Local + CI; temporary demo hosting (§6) |
+| M2 | Reliable AI HR Workflow Platform ([definition and acceptance](m2-reliable-ai-hr-workflow-platform.md); rebaselined 2026-10-20, §7) | Local + CI; accepted on temporary demo hosting (§6) |
+| M3 | Workflow Proof (not re-scoped since §7) | Local + CI; temporary demo hosting (§6) |
+| M4 | Intelligence Layer (not re-scoped since §7) | Local + CI; temporary demo hosting (§6) |
 | M5 | Cloud Activation, Staging Hardening & Production Release | AWS begins here |
+
+M2's former "Workflow Platform" acceptance model is **superseded** (§7).
 
 HeroOS is **local-first, cloud-ready, cloud-late, but not cloud-last**. The
 product is built and verified locally and in CI through M4. AWS activation
@@ -72,7 +75,7 @@ gate the milestone where the affected behavior first appears, not M5 alone:
 | Gate | Applies when | Decisions |
 | --- | --- | --- |
 | Deletion | Before M2 introduces any user-facing deletion policy, API or UI | PRIV-020 (and the retention decisions it defers to) |
-| External AI processing | Before any external AI provider receives identifiable or customer HR data. This may happen in M4 (Intelligence Layer). If M4 uses only local models or synthetic/test data, these may remain pending | PRIV-009, PRIV-010, PRIV-011, PRIV-012, PRIV-021, and PRIV-014 for the provider's approval |
+| External AI processing | Before any external AI provider receives identifiable or customer HR data. Since the M2 rebaseline (§7), this may first happen in M2, which now includes the controlled AI conversation. While AI processing uses only local models or synthetic/test data, these may remain pending | PRIV-009, PRIV-010, PRIV-011, PRIV-012, PRIV-021, and PRIV-014 for the provider's approval |
 | Cloud and Production | Before M5 cloud/Production activation | PRIV-006, PRIV-007, PRIV-013, PRIV-014, PRIV-017, PRIV-019, PRIV-022 |
 
 ## 5. Decision record: cloud activation moves to M5
@@ -121,4 +124,56 @@ The existing development VPS is unaffected.
 **Non-effect.** M5 is unchanged: AWS (`me-central-1`) with Cognito, RDS, S3 and
 the other managed services. The demo hosting and its identity provider are
 temporary and are not carried into Staging or Production.
+
+## 7. Decision record: M2 rebaselined as Reliable AI HR Workflow Platform
+
+**Date:** 2026-10-20 (M2-NEW-01)
+
+**Decision.** M2 is redefined as **Reliable AI HR Workflow Platform**. It is a
+signed-in platform where a founder describes an HR situation naturally, and
+HeroOS guides the case with approved HeroOS knowledge, Company Blueprint
+context and authorized case history. Deterministic workflow state, Conditions,
+jurisdiction controls and employment-decision boundaries remain authoritative.
+Disciplinary is the end-to-end reference workflow. The definition, acceptance
+pillars, Done statement, scope, deferrals and issue sequence are in
+[M2 — Reliable AI HR Workflow Platform](m2-reliable-ai-hr-workflow-platform.md).
+
+**Previous plan: SUPERSEDED.** Under the 2026-10-09 plan, M2 "Workflow
+Platform" was accepted as a primarily non-AI workflow and Conditions platform,
+and controlled AI intelligence was planned for M4 "Intelligence Layer". That
+acceptance model is retired. M2 does not have to be completed without AI
+first.
+
+**Rationale.** JJ's requirement changed between the 13 October and 21 October
+2026 discussions. HeroOS must behave as an AI-first HR adviser that identifies
+the workflow from the founder's own words. The signed-in product becomes three
+areas: Ask HeroOS, Company Blueprint and Company Space.
+
+**Non-effect.**
+- **Earlier work.** The M2-01 to M2-05 engineering, the Hannah AI demo and the
+  workspace UI remain valid and become the foundation of the new M2 (inventory:
+  [M2 contract §11](m2-reliable-ai-hr-workflow-platform.md#11-what-the-earlier-m2-work-provides)).
+  Their documents keep their original milestone label as a historical record.
+- **M1 and the architecture.** M1 remains Done. No architecture principle,
+  security control or privacy decision changes, and no governance gate's
+  trigger or decisions change. §4 now only notes that the external-AI gate may
+  first apply in M2.
+  [V1 System Architecture §3.4](../architecture/v1-system-architecture.md#34-ai-is-not-the-source-of-hr-truth)
+  still governs what AI may do.
+- **Hosting and cloud timing.** §3, §5 and §6 are unchanged: local + CI through
+  M4, temporary demo hosting with synthetic data only, and AWS from M5.
+- **M3 and M4.** They keep their names in §1 but are not re-scoped yet. The
+  earlier plan put controlled AI conversation and approved-knowledge guidance
+  in M4; for Disciplinary, they are now M2 requirements. What remains in M3 and
+  M4 is an open decision.
+
+**Privacy documents.** The [Decision Register](../privacy/decision-register.md),
+[JJ Review Packet](../privacy/jj-decision-review-packet.md),
+[Third-Party Service Inventory](../privacy/third-party-service-inventory.md) and
+[Production Security Gates](../architecture/production-security-gates.md) say
+the external-AI gate may arise in "M4 (Intelligence Layer)". The gate is
+triggered by the processing itself, in whichever milestone it happens (§4).
+Read "M4" there as "the first milestone that sends identifiable or customer
+data to an external AI provider", which may now be M2. This record does not
+change those documents.
 
