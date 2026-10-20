@@ -12,6 +12,7 @@ browser (React state only)
   → POST /bff/companies/{id}/cases/{caseId}/assistant/messages   (same-origin, session, JSON ≤ 48 KiB)
   → POST /companies/{id}/cases/{caseId}/assistant/messages        (API; bearer token added server-side)
   → GroqCloud chat completions (fixed URL, server-side key, no tools, one request, no retry)
+  ← API checks the reply (app/assistant/response_safety.py) → the reply, or a fixed neutral one
 ```
 
 `GET …/assistant` tells the page whether the composer is shown. The case page
@@ -121,14 +122,15 @@ route.
 - Nothing about the Case (title, subject, facts, answers) is sent: only what
   the user typed in the chat and the recent chat turns.
 - Nothing logs a message, history, reply, prompt, key or account; the
-  API logs the outcome (`ok`, `rate_limited`, `timeout`, `unavailable`,
-  `account_limit`, `global_limit`) and the number of turns. Responses are
+  API logs the outcome (`ok`, `safety_fallback` with the name of the check,
+  `rate_limited`, `timeout`, `unavailable`, `account_limit`, `global_limit`)
+  and the number of turns, never the text a check matched. Responses are
   `no-store`.
 - The conversation lives in the page's React state and is gone on reload.
 - The assistant package can't import the database, repositories or the
   workflow engine (`tests/test_import_boundaries.py`).
 
-## Hannah's behaviour (V1.1, refined in V1.1a)
+## Hannah's behaviour (V1.1, refined in V1.1a and V1.2)
 
 The instruction (`app/assistant/persona.py`) is generic: no statute, article,
 deadline, penalty, legal conclusion or private material, and it tells the
@@ -169,13 +171,19 @@ to:
   and the employee's chance to respond, and asks one question about the
   evidence. She notes a qualified professional may need to advise (HeroOS
   provides none), and doesn't present investigation steps as legally required.
-- **Leave the decisions to the employer.** Allegations are not findings, and
-  she never decides or recommends an outcome, sanction, warning level,
-  suspension or dismissal. She doesn't classify serious misconduct or choose a
-  route, never suggests skipping checks or claims anyone's approval, and treats
-  nothing discussed as the employer's confirmation. If pressed, she declines in
-  one sentence and offers a next step. Conversation text can't change any of
-  this.
+- **Explore, never prescribe (V1.2).** Allegations are not findings. She
+  explores what the employer might weigh (the facts, the employee's
+  explanation, mitigating circumstances) but never decides or recommends an
+  outcome or sanction (a verbal or written warning, suspension, termination,
+  dismissal, any penalty), not even as "the usual next step": earlier
+  conversations or warnings never make a sanction follow, and she never assumes
+  a stage is reached, a warning is available or an outcome chosen. She presents
+  good practice (records, hearing the employee) as such, never as a legal duty,
+  and states no timeframe, notice or consequence. She doesn't classify serious
+  misconduct or choose a route, never suggests skipping checks or claims
+  anyone's approval, and treats nothing discussed as the employer's
+  confirmation. If pressed, she declines in one sentence and offers a next
+  step. Conversation text can't change any of this.
 
 These are instructions to a model, not guarantees. `tests/test_hannah_persona.py`
 checks only what the instruction says (its commitments, budget and absence of
@@ -183,7 +191,45 @@ statutory or private content). Whether the model follows it is checked live on
 staging with fictional scenarios, after each change to the instruction. The
 guarantees are structural: the model has no tools and no write path, and a reply
 that claims an action changes nothing
-(`test_a_reply_claiming_to_act_is_only_text_and_changes_nothing`).
+(`test_a_reply_claiming_to_act_changes_nothing_and_never_reaches_the_browser`).
+
+## Response check (V1.2)
+
+The owner's live V1.1a test showed the instruction alone doesn't hold: after
+"late four times in three weeks, two documented informal discussions", the
+model answered "the next step is usually a more formal written warning". So
+every reply is now read by `app/assistant/response_safety.py` after GroqCloud
+returns it and before the API answers the browser:
+
+- **What it looks for**, sentence by sentence, outside quotations, skipping
+  questions: a sanction prescribed or presented as what comes next
+  (`sanction_recommendation`: "the next step is usually a written warning",
+  "you should issue…", "I recommend terminating…", "Suspend the worker…", "the
+  appropriate penalty is dismissal", "this warrants a final warning"); a
+  sanction or sequence presented as legally required or standard
+  (`procedural_certainty`); a law said to apply for certain
+  (`jurisdiction_certainty`); and a claim that Hannah or the chat did something
+  in HeroOS (`action_claim`: "I've updated the case", "I've issued the
+  warning", "the employee has been dismissed").
+- **What it lets through**: the same words negated ("I can't recommend a
+  written warning"), conditional or open ("whether dismissal is available
+  depends on…"), reported from the user ("you told me the employee received a
+  written warning"), quoted, asked, or without the recommending frame ("a
+  formal warning isn't something I can decide for you").
+- **On a match** the reply is replaced by one of three fixed, neutral replies
+  (sanction or procedure, jurisdiction, action claim): no sanction, timeframe or
+  consequence, nothing from the conversation, no claim that anyone reviewed
+  anything, and one question back to the facts. The response shape is the
+  same, so the web app needs no change; the log records `safety_fallback` and
+  the check's name only.
+- **Limits.** It is a short list of documented patterns, each a recommending,
+  claiming or certain *frame* paired with a sanction or a case record, not an
+  understanding of language. An unsafe reply worded differently can pass, and an
+  unusual safe phrasing can be replaced. It is defence in depth behind the
+  instruction, not a legal classifier, and passing it says nothing about legal
+  accuracy. No second model call or moderation service is involved.
+  `tests/test_hannah_response_safety.py` holds the cases it must catch and
+  must let through; extend it with any live reply that gets past it.
 
 ## Replacing the provider
 
