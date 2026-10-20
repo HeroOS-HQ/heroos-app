@@ -32,6 +32,27 @@ This changes delivery timing only. It does not invalidate the M1 architecture,
 implementation, security controls, tests or acceptance evidence. **M1 remains
 Done.**
 
+## Later amendment: M2 rebaselined, 2026-10-20
+
+M2 has since been redefined as **Reliable AI HR Workflow Platform**
+([M2 contract](m2-reliable-ai-hr-workflow-platform.md),
+[Delivery Plan §7](delivery-plan.md#7-decision-record-m2-rebaselined-as-reliable-ai-hr-workflow-platform)).
+The milestone list above records the 2026-10-09 plan, and that sequencing is
+superseded:
+
+- **AI is part of the current M2.** It is allowed and required there, subject
+  to the normal privacy, provider and data-governance gates
+  ([Delivery Plan §4](delivery-plan.md#4-governance-gates-by-milestone)).
+- **M4 no longer introduces AI.** Its provisional scope is AI Intelligence
+  Hardening & Optimization.
+- **Historical wording kept below.** Wherever this record ties AI to M4 or
+  excludes it from M2 (§7's "external-AI (M4)", §9's "no external AI
+  processing" boundary, §10's "M4 (Intelligence Layer)"), it describes the
+  2026-10-09 plan. It is kept as written, with an amendment beside §9 and §10.
+
+§9's readiness conclusion still stands. The M1 security foundation and its
+evidence remain valid, and nothing else in this record changes.
+
 ## 1. Purpose
 
 M1 establishes the security foundation that every HeroOS workflow builds on:
@@ -215,6 +236,21 @@ RLS, so a missed step is caught in CI rather than in review.
 - No production customer data and no external AI processing (PRIV-009 to PRIV-012, PRIV-014, PRIV-021).
 - New loggers and log fields follow [Observability §6](../architecture/observability.md).
 
+> **Amendment, 2026-10-20: the "no external AI processing" boundary is
+> superseded.**
+> - **Why it was there.** This boundary reflected the original 2026-10-09
+>   milestone plan, in which AI began in M4. That sequencing has been
+>   superseded.
+> - **What applies now.** AI processing is now allowed, and required, in M2
+>   ([M2 contract](m2-reliable-ai-hr-workflow-platform.md),
+>   [Delivery Plan §7](delivery-plan.md#7-decision-record-m2-rebaselined-as-reliable-ai-hr-workflow-platform)),
+>   subject to the normal privacy, provider and data-governance gates.
+> - **What is still gated.** No identifiable or customer HR data reaches an
+>   external AI provider before PRIV-009 to PRIV-012, PRIV-021 and PRIV-014
+>   are decided ([Delivery Plan §4](delivery-plan.md#4-governance-gates-by-milestone)).
+> - **What is unchanged.** The other boundaries above and the M1 security
+>   foundation are unchanged.
+
 ## 10. M5 deferral (live cloud activation)
 
 Originally recorded as the M3 deferral; moved to M5 by the post-closeout
@@ -240,6 +276,11 @@ None of the following exists or is claimed. Each is owned by M5 and specified in
 **Not an M5-only gate:** PRIV-009 to PRIV-012, PRIV-014 and PRIV-021 must be
 decided before any external AI provider receives identifiable or customer data,
 which may happen in M4 (Intelligence Layer). PRIV-020 remains an M2 boundary (§8).
+
+> **Amendment, 2026-10-20.** "M4 (Intelligence Layer)" above reflects the
+> superseded 2026-10-09 plan. AI is now part of M2, so this external-AI gate
+> may first apply in M2. The gate itself is unchanged (see the amendment in
+> §9).
 
 ## 11. Known technical debt (non-blocking)
 
