@@ -181,11 +181,14 @@ Bringing the demo to the current code is approval-gated:
 ## Milestones
 
 - M1 — Foundation & Security — Done
-- M2 — Reliable AI HR Workflow Platform — Local + CI; accepted on the temporary
-  demo staging (rebaselined 2026-10-20; the former "Workflow Platform"
-  acceptance model is superseded)
+- M2 — Reliable AI HR Workflow Platform — the AI foundation: AI is a core part
+  of M2. Local + CI; accepted on the temporary demo staging. Rebaselined
+  2026-10-20; the former non-AI "Workflow Platform" acceptance model is
+  superseded
 - M3 — Workflow Proof — Local + CI (not re-scoped since the M2 rebaseline)
-- M4 — Intelligence Layer — Local + CI (not re-scoped since the M2 rebaseline)
+- M4 — AI Intelligence Hardening & Optimization (provisional) — Local + CI.
+  Refines and hardens the AI delivered in M2; M4 does not introduce AI. Its
+  acceptance scope will be defined separately
 - M5 — AWS activation, Staging hardening & Production release
 
 HeroOS stays local-first and CI-verified through M4; AWS activation begins in

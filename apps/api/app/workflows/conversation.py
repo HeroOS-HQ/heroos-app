@@ -6,7 +6,7 @@ saved answer group, the Case jurisdiction, holds, cautions, what is still
 missing or uncertain, and the stages that are not available yet. The employer's
 turns are the persisted submissions. Facts are stored independently
 (``case_facts``); this module only presents them, so a future presentation (or
-an M4 assistant) can change without touching the data.
+the M2 AI conversation) can change without touching the data.
 
 Stage checklists (M2-03, ``extra_steps``) are saved like any answer group and
 appear as the employer's turns too, labelled by the installed rules; the final

@@ -33,6 +33,13 @@ natural-language intake, automatic case creation, contextual questioning,
 deterministic Guidance / Warning / Block / Expert Review behavior, persistent
 case state/history and safe escalation without scripted demo-only responses.
 
+**AI is core to M2.** AI is not an optional enhancement to M2. It is part of
+the M2 product architecture and acceptance contract.
+
+M4 does not introduce AI into HeroOS. M4 improves the AI capability delivered
+by M2. Its provisional name is "AI Intelligence Hardening & Optimization"
+([Delivery Plan §7](delivery-plan.md#7-decision-record-m2-rebaselined-as-reliable-ai-hr-workflow-platform)).
+
 "Staging" in this document means the temporary demo hosting of
 [Delivery Plan §6](delivery-plan.md#6-decision-record-no-aws-before-m4-temporary-demo-hosting)
 (Vercel, Render, Supabase and a standards-based OpenID Provider). It is not
@@ -45,8 +52,11 @@ the AWS Staging environment of M5.
 implementation. It covered guided structured questions, deterministic intake
 and progression, decision records, case history and template previews, each
 built and labelled "no AI". Controlled AI intelligence was scheduled for M4
-("Intelligence Layer"). That model is retired. M2 is no longer accepted
-against it, and M2 does not have to be completed without AI first.
+("Intelligence Layer"). That model and that sequencing are retired:
+- M2 is no longer accepted against the old model, and it does not have to be
+  completed without AI first.
+- AI is a core part of M2.
+- M4 is no longer where AI first appears.
 
 **Current requirement.** JJ's requirement changed between the 13 October and
 21 October 2026 discussions. HeroOS must now behave as an AI-first HR adviser:
@@ -74,8 +84,15 @@ Platform": it accurately records when, and under which plan, they were built.
 
 ## 3. Product and safety boundaries
 
+An AI-based M2 does not mean that the AI controls HR decisions.
+
 > AI controls the conversation. Approved HeroOS methodology controls the
-> guidance. The employer makes the final employment decision.
+> guidance. Deterministic workflow state, Conditions and jurisdiction controls
+> remain authoritative. The employer makes the final employment decision.
+
+AI may understand, extract, propose, phrase and ask. It may not bypass
+deterministic safeguards, and it may not approve employment actions on its
+own.
 
 **AI may:**
 
@@ -138,21 +155,35 @@ have been built.
 
 ## 6. In scope
 
-- The real signed-in Ask HeroOS experience.
-- A real Company Blueprint.
-- A real Company Space.
-- Natural-language HR intake.
+**AI (core to M2):**
+
+- Natural-language Ask HeroOS, as the real signed-in experience.
+- AI-assisted identification of intent and workflow.
+- AI-assisted proposal of the case title.
+- AI-assisted extraction and proposal of facts.
+- Contextual follow-up questions.
+- Company Blueprint context.
+- Authorized case-history context.
+- Approved HeroOS knowledge context, through an approved knowledge runtime.
+- AI-generated wording of user-facing guidance. The AI phrases it; approved
+  methodology supplies the substance.
 - A controlled AI gateway.
-- An approved HeroOS knowledge runtime.
-- Company Blueprint context in the conversation.
-- Persistent case facts and history.
+
+**Deterministic and product foundations:**
+
 - Deterministic workflow transitions.
 - Deterministic Conditions enforcement.
 - Jurisdiction isolation.
-- Disciplinary as the end-to-end reference workflow.
+- Persistent cases: their facts, workflow state and history.
 - The four outcomes: Normal Guidance, Warning, Block and Expert Review.
 - The Expert Review MVP lifecycle.
+- Disciplinary as the end-to-end reference workflow.
+- A real Company Blueprint.
+- A real Company Space.
 - Safe, supported document actions.
+
+**Acceptance:**
+
 - A real staging acceptance journey.
 - The Michael demonstration as the final external proof.
 
@@ -203,14 +234,41 @@ them stay where they are.
 - **No hard-coded commercial limits.** Expert Review usage limits are not
   decided and are not built into the product.
 - **Fictional data on staging.** The temporary demo hosting holds synthetic data
-  only ([Delivery Plan §6](delivery-plan.md#6-decision-record-no-aws-before-m4-temporary-demo-hosting)).
-  No identifiable or customer HR data may reach an external AI provider before
-  PRIV-009 to PRIV-012, PRIV-014 and PRIV-021 are decided
-  ([Delivery Plan §4](delivery-plan.md#4-governance-gates-by-milestone)). The
-  M2 acceptance journey therefore uses fictional scenarios.
+  only ([Delivery Plan §6](delivery-plan.md#6-decision-record-no-aws-before-m4-temporary-demo-hosting)),
+  so the M2 acceptance journey uses fictional scenarios (§8.1).
 - **No user-facing deletion** before PRIV-020 is decided (Delivery Plan §4).
 - **Engineering doesn't settle HR or legal questions.** Open content and legal
   questions go to JJ.
+
+### 8.1 AI, data and providers
+
+Whether M2 uses AI and whether real HR data may go to an external provider are
+separate questions:
+
+| Question | Answer |
+| --- | --- |
+| Is AI part of M2? | **Yes.** It is decided and part of the acceptance contract (§1) |
+| May identifiable or customer HR data be sent to an external AI provider? | **Only after the external-AI gate:** PRIV-009 to PRIV-012, PRIV-021, and PRIV-014 for that provider ([Delivery Plan §4](delivery-plan.md#4-governance-gates-by-milestone)). Rebaselining M2 approves no vendor |
+
+M2 may use:
+- synthetic and demo data immediately;
+- local or private models, where applicable;
+- approved external providers, once the relevant governance decisions are met.
+
+Privacy and tenant-isolation controls are unchanged.
+
+**GroqCloud** is the language-model provider of the Hannah demo
+([Hannah AI demo](../architecture/hannah-ai-demo.md)).
+- **Current use:** fictional scenarios on the temporary demo hosting only,
+  behind `HEROOS_HANNAH_DEMO_ENABLED`, which production refuses.
+- **Inventory:** it is not listed in the
+  [Third-Party Service Inventory](../privacy/third-party-service-inventory.md).
+- **Approval:** it is not approved for real employee or customer HR data.
+  Choosing M2's provider for such data is part of PRIV-009 and PRIV-014.
+- **What may continue:** its synthetic demo use, within the existing demo
+  constraints only.
+- **Follow-up:** recording it in the inventory is a governance follow-up
+  (§12). That follow-up doesn't block M2's AI architecture.
 
 ## 9. The Michael demonstration: acceptance proof
 
@@ -292,7 +350,7 @@ a "specialist review" hold).
 
 | Area | What exists | Gap for M2 |
 | --- | --- | --- |
-| AI conversation | The Hannah demo: a chat on the case page, through GroqCloud | The model receives only a fixed instruction and the chat turns: no Blueprint, no case facts and no approved knowledge. The turns live in browser memory only, and the chat never writes. It is off unless `HEROOS_HANNAH_DEMO_ENABLED` is set, and production refuses it |
+| AI conversation | The Hannah demo: a chat on the case page, through GroqCloud (classification: §8.1) | The model receives only a fixed instruction and the chat turns: no Blueprint, no case facts and no approved knowledge. The turns live in browser memory only, and the chat never writes. It is off unless `HEROOS_HANNAH_DEMO_ENABLED` is set, and production refuses it |
 | Case creation | `POST /companies/{id}/workflows/{key}/cases` | The founder has to choose Disciplinary and type the case title |
 | Case status | Derived on every read from evaluations and progress events | A case can't be closed; there is no end-of-case lifecycle |
 | Company Blueprint | Stored fields: legal name, primary jurisdiction, industry, employee count, licensing location and authority, and the operator-confirmed employment jurisdiction. The deterministic jurisdiction routing uses them | Not used as AI context. Any field in the approved Blueprint design that this schema lacks needs a migration |
@@ -350,13 +408,19 @@ a "specialist review" hold).
 
 **For the Technical Lead and JJ:**
 
-5. What is the scope of M3 and M4 after this rebaseline?
-   ([Delivery Plan §7](delivery-plan.md#7-decision-record-m2-rebaselined-as-reliable-ai-hr-workflow-platform))
-6. The privacy documents need aligning:
-   - They place the external-AI gate in "M4 (Intelligence Layer)", but it may
-     now first arise in M2.
-   - The [M1 Closeout §9](m1-foundation-security-closeout.md#9-m2-readiness)
-     lists "no external AI processing" as an M2 boundary, while
-     Delivery Plan §4 gates identifiable or customer data.
-   - GroqCloud, the Hannah demo's provider, is not in the
-     [Third-Party Service Inventory](../privacy/third-party-service-inventory.md).
+5. What is the scope of M3? M4 is provisionally AI Intelligence Hardening &
+   Optimization; its detailed acceptance scope will be defined separately
+   ([Delivery Plan §7](delivery-plan.md#7-decision-record-m2-rebaselined-as-reliable-ai-hr-workflow-platform)).
+6. Three governance follow-ups are open. They don't block M2's AI
+   architecture, and no privacy decision changes:
+   - **Timing text.** The privacy documents' external-AI timing text still
+     says "M4 (Intelligence Layer)": the
+     [Decision Register](../privacy/decision-register.md),
+     [JJ Review Packet](../privacy/jj-decision-review-packet.md),
+     [Third-Party Service Inventory](../privacy/third-party-service-inventory.md) and
+     [Production Security Gates](../architecture/production-security-gates.md).
+     It should be aligned to M2.
+   - **GroqCloud.** It should be recorded in the Third-Party Service Inventory
+     as a demo-only provider that is not approved for real HR data (§8.1).
+   - **Technical facts.** The Decision Register's AI packets still state that
+     no AI integration exists in the code. The Hannah demo is one.
