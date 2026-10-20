@@ -11,7 +11,7 @@
 // stops everything, persistence after a reload and a new sign-in, and a phone.
 // Then what the product refuses, checked against the real API and database.
 // Synthetic data only: no rule or template here is HeroOS or legal guidance.
-import { newFounder, quote } from "./common.mjs";
+import { newFounder, openFullCaseDetails, quote } from "./common.mjs";
 
 const AUTHORITY = "[SYNTHETIC DEMO] Free Zone Authority";
 const COMPANY = "[SYNTHETIC DEMO] Example Trading LLC";
@@ -108,6 +108,7 @@ export async function run(ctx) {
   await page.click(radio("jurisdiction.case_confirmation", "uae_federal"));
   await page.clickText("button", "Save answers");
   await page.waitForText("Jurisdiction confirmed for this case");
+  await openFullCaseDetails(page);
   const jurisdiction = await text();
   await shot(page, "journey-04-jurisdiction");
   await page.clickText("button", "Continue to Incident context");

@@ -247,6 +247,43 @@ describe("CaseWorkspace", () => {
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("[SYNTHETIC] Attendance concern");
   });
 
+  it("keeps the status, the hold, the case's jurisdiction and links in view, and folds the rest of the details away", () => {
+    renderWorkspace();
+    const details = screen.getByRole("complementary", { name: "Case details" });
+    // The hold is never folded away, and sits above the case info.
+    const alerts = within(details).getByRole("region", { name: "Hold and cautions" });
+    expect(alerts.closest("details")).toBeNull();
+    expect(within(alerts).getByText("Paused: jurisdiction not confirmed")).toBeInTheDocument();
+    const info = within(details).getByRole("region", { name: "Case info" });
+    expect(alerts.compareDocumentPosition(info) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(info).getByText("Case ID").nextElementSibling).toHaveTextContent(CASE_ID.slice(0, 8).toUpperCase());
+    // The case's jurisdiction status appears once, in the case info.
+    expect(within(info).getByText("Waiting for your company's jurisdiction")).toBeInTheDocument();
+    expect(within(details).getAllByText("Waiting for your company's jurisdiction")).toHaveLength(1);
+    // (This fixture's API has no decision records or unified history, so those two links are absent.)
+    for (const name of ["Next steps", "Documents"]) {
+      expect(within(info).getByRole("button", { name })).toBeInTheDocument();
+    }
+
+    // The rest is one click (or Enter) away, closed at first.
+    const full = details.querySelector("details#case-full-details") as HTMLDetailsElement;
+    expect(full.open).toBe(false);
+    const summary = within(full).getByText("Full case details").closest("summary")!;
+    expect(within(full).getByRole("region", { name: "Case progress" })).toBeInTheDocument();
+    expect(within(full).getByRole("region", { name: "Known facts" })).toBeInTheDocument();
+    expect(within(full).getByRole("region", { name: "Missing information" })).toBeInTheDocument();
+    expect(within(full).getByRole("region", { name: "Not available yet" })).toBeInTheDocument();
+    fireEvent.click(summary);
+    expect(full.open).toBe(true);
+  });
+
+  it("shows no hold card when the case has neither a hold nor cautions", () => {
+    renderWorkspace(view({ company: "uae_federal", answers: { "jurisdiction.case_confirmation": "uae_federal" } }));
+    const details = screen.getByRole("complementary", { name: "Case details" });
+    expect(within(details).queryByRole("region", { name: "Hold and cautions" })).toBeNull();
+    expect(within(within(details).getByRole("region", { name: "Case info" })).getByText("UAE Federal (MOHRE)")).toBeInTheDocument();
+  });
+
   it("shows why a step can't be answered yet instead of its questions", () => {
     renderWorkspace();
     fireEvent.click(screen.getByRole("button", { name: /Safety screening/ }));
@@ -281,7 +318,7 @@ describe("CaseWorkspace", () => {
     const fetcher = renderWorkspace(confirmed, fetcherOf(reply(200, { view: confirmed })));
     fireEvent.click(screen.getByRole("button", { name: /Safety screening/ }));
     expect(screen.getByText(/haven't been legally reviewed yet/)).toBeInTheDocument();
-    const groups = screen.getAllByRole("group");
+    const groups = within(screen.getByRole("region", { name: "Your answers" })).getAllByRole("group");
     expect(groups).toHaveLength(9);
     for (const group of groups) fireEvent.click(within(group).getByRole("radio", { name: "No" }));
     fireEvent.click(within(groups[3]).getByRole("radio", { name: "Not sure" }));

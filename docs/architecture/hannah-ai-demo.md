@@ -36,10 +36,18 @@ any extra width.
   the composer stays at the bottom; on phones the composer is pinned to the
   bottom of the screen.
 - **Right:** "Case status" (the official status, the stage in progress, the
-  next step the guided workflow offers), "Case info" (recorded facts) and links
-  into the guided workflow, above the full case details. Everything there is the
-  API's data; nothing comes from the chat. On smaller screens the case list and
-  the case details open as panels from the case header.
+  next step the guided workflow offers), then any hold and cautions (never
+  folded away), "Case info" (case ID, dates, intake, the case's jurisdiction,
+  pathway) and links into the guided workflow. "Full case details" (progress,
+  the jurisdiction's basis, facts, missing information, history pointer, what
+  isn't available yet) is a disclosure, closed at first. Everything there is
+  the API's data; nothing comes from the chat. On smaller screens the case list
+  and the case details open as panels from the case header.
+- **The chat's disclosure** ("AI demo · Fictional scenarios only · Exploratory
+  responses that don't authorize disciplinary decisions · Not saved to the
+  official case, which this chat can't change") is always on screen above the
+  messages. A fresh conversation shows one welcome (the page's own text, not a
+  reply); once it has started, the welcome shrinks to one line.
 
 Which view leads, by the status:
 

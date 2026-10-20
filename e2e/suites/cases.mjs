@@ -6,7 +6,7 @@
 // -> reload -> sign out and in -> still there; then a member's view-only
 // access, another Company's denial, duplicate and stale writes, PostgreSQL
 // rows and RLS, and no case content in any log. Synthetic data only.
-import { newFounder, quote } from "./common.mjs";
+import { newFounder, openFullCaseDetails, quote } from "./common.mjs";
 
 const TITLE = "[SYNTHETIC E2E] Attendance concern";
 const NARRATIVE = "[SYNTHETIC E2E] A team member left the site early on two shifts without telling anyone.";
@@ -60,6 +60,8 @@ export async function run(ctx) {
   const instances = await owner(`SELECT count(*), min(c.case_type), min(i.created_by_user_id::text) FROM workflow_instances i JOIN cases c ON c.id = i.case_id WHERE i.company_id = ${quote(founder.companyId)}`);
   check("CASE-3", "a double-clicked Create makes exactly one case, typed disciplinary by the server", UUID.test(caseId) && instances[0][0] === "1" && instances[0][1] === "disciplinary", JSON.stringify(instances));
 
+  // The progress and "not available yet" lists are in the folded "Full case details": open them as a person would.
+  await openFullCaseDetails(page);
   const opened = await page.text();
   check("CASE-4", "the guided workspace says it is not AI, asks the initial questions, and pauses on the unconfirmed jurisdiction with stages coming later",
     opened.includes("not an AI assistant") && opened.includes("What happened?") && opened.includes("Paused: jurisdiction not confirmed") &&
@@ -99,6 +101,7 @@ export async function run(ctx) {
   await page.click("#q-incident-evidence-available-not_sure");
   await page.clickText("button", "Save answers");
   await page.waitForText("Your answers are saved to this case.");
+  await openFullCaseDetails(page);
   const complete = await page.text();
   const completeView = await ctx.apiFetch(`/companies/${founder.companyId}/cases/${caseId}/workflow`, { token: founder.token });
   const unavailable = (completeView.json?.steps ?? []).filter((s) => !s.available).map((s) => s.key);

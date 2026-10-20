@@ -6,6 +6,7 @@ import { DemoNotice } from "@/components/site/demo-notice";
 import {
   CaseIcon,
   ChecklistIcon,
+  ChevronDownIcon,
   ChevronRightIcon,
   CloseIcon,
   DocumentIcon,
@@ -21,7 +22,7 @@ import { caseStatusTone, formatDay, formatDayTime } from "@/lib/workflows/copy";
 import type { CaseSummary, WorkflowView } from "@/lib/workflows/model";
 
 import { AnswersForm } from "./answers-form";
-import { CaseContextPanel } from "./case-context-panel";
+import { CaseAlertsPanel, CaseContextPanel } from "./case-context-panel";
 import { CaseSummaryPanel, type WorkflowTarget } from "./case-summary-panel";
 import { Conversation } from "./conversation";
 import { DecisionsPanel } from "./decisions-panel";
@@ -593,13 +594,31 @@ export function CaseWorkspace({
           </button>
         </div>
         <div className="flex flex-col gap-3 px-3 py-3 xl:px-3.5 xl:py-3.5">
-          <CaseSummaryPanel onOpenWorkflow={openWorkflow} view={view} />
-          <section aria-labelledby="full-details-heading" className="rounded-2xl border border-hero-border bg-white p-4 shadow-hero-card">
-            <h2 className="mb-4 text-base font-extrabold tracking-[-0.01em] text-hero-navy" id="full-details-heading">
-              Full case details
-            </h2>
-            <CaseContextPanel view={view} />
-          </section>
+          <CaseSummaryPanel
+            alerts={
+              // A hold or a caution is never folded away.
+              view.intake.hold || view.intake.cautions.length > 0 ? (
+                <section aria-label="Hold and cautions" className="rounded-2xl border border-hero-border bg-white p-4 shadow-hero-card">
+                  <CaseAlertsPanel view={view} />
+                </section>
+              ) : null
+            }
+            onOpenWorkflow={openWorkflow}
+            view={view}
+          />
+          {/* Everything else about the case, one click away (a native disclosure: keyboard and screen readers know it). */}
+          <details className="group rounded-2xl border border-hero-border bg-white shadow-hero-card" id="case-full-details">
+            <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 rounded-2xl px-4 py-2.5 transition-colors duration-150 hover:bg-hero-blue-tint/50 [&::-webkit-details-marker]:hidden">
+              <span className="min-w-0">
+                <span className="block text-[0.9375rem] font-extrabold text-hero-navy">Full case details</span>
+                <span className="block text-xs text-hero-muted">Progress, jurisdiction, facts, missing information</span>
+              </span>
+              <ChevronDownIcon className="size-5 shrink-0 text-hero-blue-ink transition-transform duration-150 group-open:rotate-180" />
+            </summary>
+            <div className="border-t border-hero-border px-4 pb-4 pt-4">
+              <CaseContextPanel view={view} />
+            </div>
+          </details>
         </div>
       </aside>
     </div>

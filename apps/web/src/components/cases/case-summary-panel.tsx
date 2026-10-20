@@ -11,6 +11,9 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { caseStatusTone, formatDayTime } from "@/lib/workflows/copy";
 import type { WorkflowView } from "@/lib/workflows/model";
 
+import { CASE_JURISDICTION } from "./case-context-panel";
+import { shortId } from "./cases-table";
+
 /**
  * The case at a glance beside the conversation (top of "Case details"): the
  * official status, the stage in progress, the next step the guided workflow
@@ -27,7 +30,8 @@ type Next = WorkflowTarget & { title: string; detail: string | null };
 /** The next official step, in the guided workflow's order: a hold, then intake answers, then progression. */
 function nextOfficialStep(view: WorkflowView): Next | null {
   const hold = view.intake.hold;
-  if (hold) return { title: hold.title, detail: hold.body, target: "guided-conversation" };
+  // The hold's explanation is in its own card just below; here only what it is.
+  if (hold) return { title: hold.title, detail: null, target: "guided-conversation" };
   const open = view.steps.find(
     (step) => step.available && step.questions.some((question) => view.missing.includes(question.key)),
   );
@@ -52,7 +56,7 @@ const cardClass = "rounded-2xl border border-hero-border bg-white shadow-hero-ca
 
 function Row({ term, children }: { term: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-x-3 py-1.5">
+    <div className="grid grid-cols-[6.25rem_minmax(0,1fr)] gap-x-3 py-1">
       <dt className="text-sm text-hero-muted">{term}</dt>
       <dd className="min-w-0 break-words text-sm font-semibold text-hero-navy">{children}</dd>
     </div>
@@ -63,7 +67,7 @@ function LinkRow({ icon, label, onClick }: { icon: ReactNode; label: string; onC
   return (
     <li className="border-t border-hero-border first:border-t-0">
       <button
-        className="flex min-h-12 w-full items-center gap-3 px-4 text-left text-[0.9375rem] font-bold text-hero-navy transition-colors duration-150 hover:bg-hero-blue-tint/60"
+        className="flex min-h-11 w-full items-center gap-3 px-4 text-left text-[0.9375rem] font-bold text-hero-navy transition-colors duration-150 hover:bg-hero-blue-tint/60"
         onClick={onClick}
         type="button"
       >
@@ -78,9 +82,12 @@ function LinkRow({ icon, label, onClick }: { icon: ReactNode; label: string; onC
 export function CaseSummaryPanel({
   view,
   onOpenWorkflow,
+  alerts,
 }: {
   view: WorkflowView;
   onOpenWorkflow: (where: WorkflowTarget) => void;
+  /** Shown between the status and the case info (a hold, cautions): never folded away. */
+  alerts?: ReactNode;
 }) {
   const stage = view.progression?.stages.find((item) => item.status === "in_progress") ?? null;
   const next = nextOfficialStep(view);
@@ -88,9 +95,10 @@ export function CaseSummaryPanel({
   const answered = total - view.missing.length;
   const pathway = view.progression?.pathway ?? null;
   const escalated = (view.progression?.escalations.length ?? 0) > 0;
+  const caseJurisdiction = view.intake.caseJurisdiction;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-3">
       <section aria-labelledby="case-status-heading" className={`${cardClass} p-4`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-extrabold tracking-[-0.01em] text-hero-navy" id="case-status-heading">
@@ -142,11 +150,14 @@ export function CaseSummaryPanel({
         ) : null}
       </section>
 
+      {alerts}
+
       <section aria-labelledby="case-info-heading" className={cardClass}>
         <h2 className="px-4 pt-4 text-base font-extrabold tracking-[-0.01em] text-hero-navy" id="case-info-heading">
           Case info
         </h2>
         <dl className="px-4 pb-3 pt-2">
+          <Row term="Case ID">{shortId(view.case.id)}</Row>
           <Row term="Case type">{view.workflow.title}</Row>
           <Row term="Created">
             <time dateTime={view.case.createdAt}>{formatDayTime(view.case.createdAt)}</time>
@@ -156,6 +167,12 @@ export function CaseSummaryPanel({
           </Row>
           <Row term="Intake">
             {answered} of {total} questions answered
+          </Row>
+          <Row term="Jurisdiction">
+            {caseJurisdiction.label ?? "Not confirmed yet"}
+            <span className="block text-xs font-normal text-hero-muted">
+              {CASE_JURISDICTION[caseJurisdiction.status].status}
+            </span>
           </Row>
           {pathway ? (
             <Row term="Pathway">

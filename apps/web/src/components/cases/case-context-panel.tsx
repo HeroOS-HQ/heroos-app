@@ -21,7 +21,7 @@ const SCREENING_NOW: Record<string, string> = {
   positive: "a high-risk factor reported",
 };
 
-const CASE_JURISDICTION: Record<CaseJurisdictionStatus, { status: string; tone: "positive" | "caution" | "muted" }> = {
+export const CASE_JURISDICTION: Record<CaseJurisdictionStatus, { status: string; tone: "positive" | "caution" | "muted" }> = {
   resolved: { status: "Confirmed for this case", tone: "positive" },
   awaiting_case_confirmation: { status: "Confirm for this case", tone: "caution" },
   company_unconfirmed: { status: "Waiting for your company's jurisdiction", tone: "muted" },
@@ -99,11 +99,58 @@ function HistoryEntry({ item }: { item: HistoryItem | ProgressHistoryItem }) {
 }
 
 /**
- * The Case at a glance: progress, the Case's jurisdiction and its basis, any
- * hold and cautions (all from the API's intake evaluation), the facts as the
- * employer gave them, what is missing or uncertain, where the case history is
- * (M2-04: under "Decisions & history"; before it, the per-source histories
- * here) and what this version doesn't do yet. Nothing here is an assessment.
+ * What must never be folded away: the Case's hold (with when it was first
+ * placed and what the current screening says) and HeroOS's cautions, from the
+ * API's intake evaluation. Renders nothing when there are neither.
+ */
+export function CaseAlertsPanel({ view }: { view: WorkflowView }) {
+  const { hold, cautions } = view.intake;
+  if (!hold && cautions.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-5">
+      {hold ? (
+        <Section id="hold-heading" title="Hold">
+          <div
+            className={`mt-3 rounded-2xl border px-4 py-3.5 text-hero-navy ${
+              hold.action === "escalate" ? "border-[#e9b4c0] bg-hero-danger-tint" : "border-[#f1df8d] bg-hero-yellow-tint"
+            }`}
+          >
+            <HoldCard hold={hold} />
+          </div>
+          {view.intake.escalation ? (
+            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm text-hero-navy">
+              <dt className="font-bold">Held since</dt>
+              <dd>
+                <time dateTime={view.intake.escalation.since}>{formatDayTime(view.intake.escalation.since)}</time>
+              </dd>
+              <dt className="font-bold">Current screening</dt>
+              <dd>{SCREENING_NOW[view.intake.screening] ?? view.intake.screening}</dd>
+            </dl>
+          ) : null}
+        </Section>
+      ) : null}
+
+      {cautions.length > 0 ? (
+        <Section id="cautions-heading" title="Cautions">
+          <ul className="mt-3 flex flex-col gap-3">
+            {cautions.map((caution) => (
+              <li className="rounded-2xl border border-[#f1df8d] bg-hero-yellow-tint px-4 py-3.5 text-hero-navy" key={caution.id}>
+                <CautionCard caution={caution} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The rest of the Case's details: progress, the Case's jurisdiction and its
+ * basis, the facts as the employer gave them, what is missing or uncertain,
+ * where the case history is (M2-04: under "Decisions & history"; before it,
+ * the per-source histories here) and what this version doesn't do yet. The
+ * hold and cautions are `CaseAlertsPanel`'s. Nothing here is an assessment.
  */
 export function CaseContextPanel({ view }: { view: WorkflowView }) {
   const questions: Question[] = view.steps.flatMap((step) => step.questions);
@@ -111,8 +158,7 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
   const known = asked.filter((question) => view.answers[question.key] !== undefined);
   const missing = asked.filter((question) => view.missing.includes(question.key));
   const uncertain = asked.filter((question) => view.uncertain.includes(question.key));
-  const { caseJurisdiction, hold, cautions } = view.intake;
-  const caseCopy = CASE_JURISDICTION[caseJurisdiction.status];
+  const { caseJurisdiction } = view.intake;
 
   return (
     <div className="flex flex-col gap-7">
@@ -136,56 +182,17 @@ export function CaseContextPanel({ view }: { view: WorkflowView }) {
         </ol>
       </Section>
 
-      {hold ? (
-        <Section id="hold-heading" title="Hold">
-          <div
-            className={`mt-3 rounded-2xl border px-4 py-3.5 text-hero-navy ${
-              hold.action === "escalate" ? "border-[#e9b4c0] bg-hero-danger-tint" : "border-[#f1df8d] bg-hero-yellow-tint"
-            }`}
-          >
-            <HoldCard hold={hold} />
-          </div>
-          {view.intake.escalation ? (
-            <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm text-hero-navy">
-              <dt className="font-bold">Held since</dt>
-              <dd>
-                <time dateTime={view.intake.escalation.since}>{formatDayTime(view.intake.escalation.since)}</time>
-              </dd>
-              <dt className="font-bold">Current screening</dt>
-              <dd>{SCREENING_NOW[view.intake.screening] ?? view.intake.screening}</dd>
-            </dl>
-          ) : null}
-        </Section>
-      ) : null}
-
+      {/* The Case's jurisdiction and its status are in "Case info" above; this is their basis. */}
       <Section id="jurisdiction-heading" title="Jurisdiction">
-        <div className="mt-3 rounded-2xl border border-hero-border bg-white px-4 py-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-base font-extrabold text-hero-navy">{caseJurisdiction.label ?? "This case"}</p>
-            <StatusBadge tone={caseCopy.tone}>{caseCopy.status}</StatusBadge>
-          </div>
-          <p className="mt-1.5 text-sm leading-relaxed text-hero-navy/80">
-            {caseJurisdiction.status === "resolved"
-              ? "Based on your company's confirmed jurisdiction and your confirmation for this case."
-              : "Checks that depend on the jurisdiction don't run until it's confirmed for this case."}
-          </p>
-        </div>
+        <p className="mt-3 text-sm leading-relaxed text-hero-navy/80">
+          {caseJurisdiction.status === "resolved"
+            ? "Based on your company's confirmed jurisdiction and your confirmation for this case."
+            : "Checks that depend on the jurisdiction don't run until it's confirmed for this case."}
+        </p>
         <div className="mt-3">
           <JurisdictionStatus jurisdiction={view.jurisdiction} />
         </div>
       </Section>
-
-      {cautions.length > 0 ? (
-        <Section id="cautions-heading" title="Cautions">
-          <ul className="mt-3 flex flex-col gap-3">
-            {cautions.map((caution) => (
-              <li className="rounded-2xl border border-[#f1df8d] bg-hero-yellow-tint px-4 py-3.5 text-hero-navy" key={caution.id}>
-                <CautionCard caution={caution} />
-              </li>
-            ))}
-          </ul>
-        </Section>
-      ) : null}
 
       <Section id="facts-heading" title="Known facts">
         {known.length === 0 ? (

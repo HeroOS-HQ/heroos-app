@@ -9,7 +9,7 @@
 // specialist review instead of screened. An API with the default setting never
 // collects the sensitive screening. PostgreSQL rows, RLS and logs are checked
 // too. Synthetic data only.
-import { newFounder, quote } from "./common.mjs";
+import { newFounder, openFullCaseDetails, quote } from "./common.mjs";
 
 const TITLE = "[SYNTHETIC E2E] Intake journey";
 const NARRATIVE = "[SYNTHETIC E2E] A team member posted rude remarks about a colleague after a shift ended.";
@@ -86,6 +86,7 @@ export async function run(ctx) {
   await page.click(radio("jurisdiction.case_confirmation", "uae_federal"));
   await page.clickText("button", "Save answers");
   await page.waitForText("Jurisdiction confirmed for this case");
+  await openFullCaseDetails(page);
   const afterJurisdiction = await page.text();
   check("INTAKE-2", "the case jurisdiction is confirmed against the company's operator confirmation, never chosen freely",
     JSON.stringify(options) === JSON.stringify(["Yes, UAE Federal (MOHRE)", "No, a different jurisdiction applies", "Not sure"]) &&

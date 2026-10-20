@@ -8,8 +8,10 @@ export const pageGutter = "px-4 sm:px-6 lg:px-[1.5625rem]";
 /**
  * Hannah greeting from the top right of a company page (JJ design review,
  * screens 06–09): JJ's approved front-view artwork, unchanged and never
- * animated, in a soft sky with a sun and a quiet skyline drawn in the brand's
- * light blue. Decorative only, so hidden from assistive technology. The
+ * animated, in a soft sky with a sun, a quiet two-depth skyline drawn in the
+ * brand's light blue and a waterfront. An abstract composition from the brand
+ * palette, not the review mockups' watercolour Dubai painting (no such asset
+ * exists yet). Decorative only, so hidden from assistive technology. The
  * caller positions it (`relative` with a height, or `absolute`); the speech
  * bubble may reach past its left edge (`bubbleOut`).
  */
@@ -25,28 +27,48 @@ export function HannahScene({
   return (
     <div aria-hidden="true" className={`pointer-events-none ${className ?? ""}`}>
       <div className="absolute inset-0 overflow-hidden">
-        {/* Sky, fading into the page on the left. */}
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,#e1ecfc_0%,#eef3fb_50%,#fbf4e0_100%)] [mask-image:linear-gradient(90deg,transparent_0%,black_30%)]" />
-        <div className="absolute right-[4%] top-[8%] size-40 rounded-full bg-hero-yellow/35 blur-2xl" />
-        {/* A quiet skyline. */}
-        <div className="absolute inset-x-0 bottom-0 flex h-[82%] items-end justify-end gap-[0.4rem] pr-[2%] [mask-image:linear-gradient(90deg,transparent_0%,black_40%)]">
-          <span className="h-[30%] w-8 rounded-t-md bg-hero-light-blue/20" />
-          <span className="h-[48%] w-5 rounded-t-md bg-hero-light-blue/25" />
-          <span className="h-[38%] w-9 rounded-t-lg bg-hero-light-blue/20" />
-          <span className="h-[62%] w-6 rounded-t-md bg-hero-light-blue/30" />
-          <span className="h-[44%] w-8 rounded-t-md bg-hero-light-blue/20" />
-          <span className="h-[96%] w-3 rounded-t-full bg-hero-light-blue/35" />
-          <span className="h-[56%] w-6 rounded-t-md bg-hero-light-blue/25" />
-          <span className="h-[40%] w-10 rounded-t-lg bg-hero-light-blue/20" />
-          <span className="h-[70%] w-5 rounded-t-md bg-hero-light-blue/30" />
-          <span className="h-[34%] w-9 rounded-t-lg bg-hero-light-blue/20" />
+        {/* A soft wash of sky and sand, fading into the page on the left. */}
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,#dfeafb_0%,#ecf2fb_46%,#f8f2e0_100%)] [mask-image:linear-gradient(90deg,transparent_0%,black_28%)]" />
+        <div className="absolute -top-16 right-0 h-56 w-[70%] rounded-full bg-[#cfdff8]/60 blur-3xl" />
+        <div className="absolute bottom-[18%] left-[30%] h-24 w-[45%] rounded-full bg-white/70 blur-2xl" />
+        {/* The sun, with a glow. */}
+        <div className="absolute right-[2%] top-[4%] size-40 rounded-full bg-hero-yellow/30 blur-2xl" />
+        <div className="absolute right-[7%] top-[13%] size-14 rounded-full bg-[radial-gradient(circle,#ffe36b_0%,#ffd401_60%,transparent_72%)] opacity-70" />
+        {/* A quiet skyline in two depths (brand light blue), with one tall tower. */}
+        <div className="absolute inset-x-0 bottom-[11%] flex h-[70%] items-end justify-end gap-[0.3rem] pr-[1%] opacity-80 [mask-image:linear-gradient(90deg,transparent_0%,black_42%)]">
+          <span className="h-[26%] w-10 rounded-t-md bg-hero-light-blue/15" />
+          <span className="h-[40%] w-6 rounded-t-md bg-hero-light-blue/15" />
+          <span className="h-[34%] w-9 rounded-t-lg bg-hero-light-blue/15" />
+          <span className="h-[52%] w-5 rounded-t-md bg-hero-light-blue/20" />
+          <span className="h-[30%] w-11 rounded-t-lg bg-hero-light-blue/15" />
+          <span className="h-[46%] w-7 rounded-t-md bg-hero-light-blue/20" />
+          <span className="h-[38%] w-8 rounded-t-md bg-hero-light-blue/15" />
+          <span className="h-[58%] w-6 rounded-t-md bg-hero-light-blue/20" />
+          <span className="h-[28%] w-10 rounded-t-lg bg-hero-light-blue/15" />
         </div>
-        <div className="absolute inset-x-0 bottom-0 h-[14%] bg-[linear-gradient(180deg,transparent,#fbf1d6)]" />
-        {/* Hannah, from the waist up. Plain <img>: next/image adds an inline style the CSP forbids. */}
+        <div className="absolute inset-x-0 bottom-[11%] flex h-[88%] items-end justify-end gap-[0.4rem] pr-[2%] [mask-image:linear-gradient(90deg,transparent_0%,black_40%)]">
+          <span className="h-[30%] w-9 rounded-t-md bg-[linear-gradient(180deg,rgb(88_136_232/0.3),rgb(88_136_232/0.16))]" />
+          <span className="h-[46%] w-6 rounded-t-md bg-[linear-gradient(180deg,rgb(88_136_232/0.34),rgb(88_136_232/0.18))]" />
+          <span className="h-[38%] w-10 rounded-t-md bg-[linear-gradient(180deg,rgb(88_136_232/0.3),rgb(88_136_232/0.16))]" />
+          <span className="h-[54%] w-8 rounded-t-lg bg-[linear-gradient(180deg,rgb(88_136_232/0.34),rgb(88_136_232/0.18))]" />
+          <span className="h-[42%] w-7 rounded-t-md bg-[linear-gradient(180deg,rgb(88_136_232/0.32),rgb(88_136_232/0.18))]" />
+          <span className="h-[62%] w-5 rounded-t-md bg-[linear-gradient(180deg,rgb(88_136_232/0.38),rgb(88_136_232/0.2))]" />
+          <span className="h-[48%] w-8 rounded-t-lg bg-[linear-gradient(180deg,rgb(88_136_232/0.34),rgb(88_136_232/0.18))]" />
+          {/* The tall tower: a tapering silhouette, to Hannah's right. */}
+          <span className="h-full w-8 bg-[linear-gradient(180deg,rgb(88_136_232/0.5),rgb(88_136_232/0.24))] [clip-path:polygon(47%_0,53%_0,64%_38%,78%_62%,100%_100%,0_100%,22%_62%,36%_38%)]" />
+          <span className="h-[58%] w-7 rounded-t-md bg-[linear-gradient(180deg,rgb(88_136_232/0.38),rgb(88_136_232/0.2))]" />
+          <span className="h-[36%] w-9 rounded-t-lg bg-[linear-gradient(180deg,rgb(88_136_232/0.3),rgb(88_136_232/0.16))]" />
+        </div>
+        {/* The waterfront. */}
+        <div className="absolute inset-x-0 bottom-0 h-[12%] bg-[linear-gradient(180deg,#f6ecc8_0%,#fbf4de_100%)] [mask-image:linear-gradient(90deg,transparent_0%,black_30%)]" />
+        <div className="absolute inset-x-0 bottom-[11%] h-px bg-white/80 [mask-image:linear-gradient(90deg,transparent_0%,black_40%)]" />
+        {/* A soft halo so Hannah stands clear of the skyline. */}
+        <div className="absolute right-[18%] top-[2%] h-[110%] w-[clamp(13rem,46%,19rem)] rounded-full bg-[radial-gradient(closest-side,rgb(255_255_255/0.85),rgb(255_255_255/0)_100%)]" />
+        {/* Hannah, from the waist up: JJ's approved artwork, unchanged. Plain <img>: next/image adds an inline style the CSP forbids. */}
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           alt=""
-          className="absolute right-[13%] top-[0.5rem] h-auto w-[clamp(12rem,44%,18.5rem)] max-w-none drop-shadow-[0_10px_18px_rgb(14_30_61/0.16)]"
+          className="absolute right-[20%] top-[0.5rem] h-auto w-[clamp(12rem,42%,17.5rem)] max-w-none drop-shadow-[0_10px_18px_rgb(14_30_61/0.16)]"
           height={900}
           src="/branding/hannah-hero-front.webp"
           width={600}
@@ -54,7 +76,7 @@ export function HannahScene({
       </div>
       <p
         className={`absolute top-[12%] w-[14rem] -rotate-[5deg] rounded-[2.5rem] border-2 border-hero-yellow bg-white px-6 py-3.5 text-center text-[1.0625rem] font-extrabold italic leading-snug text-hero-navy shadow-[0_8px_22px_-14px_rgb(14_30_61/0.35)] ${
-          bubbleOut ? "-left-[5rem]" : "right-[calc(13%_+_clamp(9.5rem,36%,15rem))]"
+          bubbleOut ? "-left-[5.5rem]" : "right-[calc(20%_+_15rem)]"
         }`}
       >
         {bubble}

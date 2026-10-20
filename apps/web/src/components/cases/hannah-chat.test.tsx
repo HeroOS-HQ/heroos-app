@@ -80,10 +80,24 @@ describe("HannahChat (Hannah AI demo)", () => {
     const fetcher = fetcherOf();
     chat(fetcher);
     expect(screen.getByRole("heading", { name: "Conversation with Hannah (AI demo)" })).toBeInTheDocument();
-    expect(screen.getByText(NOTICE)).toBeInTheDocument();
-    expect(screen.getByText(/AI demo · not part of the case record · not saved/)).toBeInTheDocument();
+    // Every point of the disclosure is on screen, not behind a click.
+    const notice = screen.getByText(NOTICE).closest("p")!;
+    expect(notice).toHaveTextContent("AI demo");
+    for (const point of [
+      "Fictional scenarios only",
+      "Exploratory responses",
+      "don't authorize disciplinary decisions",
+      "Not saved to the official case",
+      "can't change",
+    ]) {
+      expect(notice).toHaveTextContent(point);
+    }
     expect(log().getByText("Hi, I'm Hannah.")).toBeInTheDocument();
     expect(log().getByText(/can't see this case's saved answers/)).toBeInTheDocument();
+    // The welcome is the page's own text: nothing looks like an answer from Hannah yet.
+    expect(log().queryAllByRole("listitem").filter((item) => item.dataset.role === "assistant")).toHaveLength(0);
+    expect(within(screen.getByRole("log", { name: /Conversation with Hannah/ })).queryByText(/AI · exploratory/)).toBeNull();
+    expect(screen.getByRole("log", { name: /Conversation with Hannah/ }).querySelector("time")).toBeNull();
     expect(box()).toHaveAttribute("maxlength", "2000");
     expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Start over" })).toBeDisabled();
@@ -161,6 +175,34 @@ describe("HannahChat (Hannah AI demo)", () => {
     expect(message.closest("li")).toHaveAttribute("data-role", "assistant");
     expect(within(message.closest("li")!).getByText("AI · exploratory, not saved")).toBeInTheDocument();
     expect(screen.queryByText("Hannah is thinking…")).toBeNull();
+  });
+
+  it("keeps a four-turn conversation in order under a one-line introduction, and starts fresh on Start over", async () => {
+    const fetcher = fetcherOf(hannah("[SYNTHETIC] First reply."), hannah("[SYNTHETIC] Second reply."));
+    chat(fetcher);
+    type("[SYNTHETIC] First message");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("[SYNTHETIC] First reply.");
+    type("[SYNTHETIC] Second message");
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByText("[SYNTHETIC] Second reply.");
+
+    const items = log().getAllByRole("listitem");
+    expect(items[0]).toHaveTextContent("Hi, I'm Hannah.");
+    expect(items[0]).not.toHaveAttribute("data-role");
+    const order = ["[SYNTHETIC] First message", "[SYNTHETIC] First reply.", "[SYNTHETIC] Second message", "[SYNTHETIC] Second reply."].map(
+      (text) => items.findIndex((item) => item.textContent?.includes(text)),
+    );
+    expect(order).toEqual([1, 2, 3, 4]);
+    expect(items.filter((item) => item.dataset.role === "assistant")).toHaveLength(2);
+    // Only the welcome's chips besides: the long welcome is gone once the conversation has started.
+    expect(log().queryByText("You can include")).toBeNull();
+    expect(screen.getByText(NOTICE)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Start over" }));
+    expect(log().getByText("You can include")).toBeInTheDocument();
+    expect(log().queryByText("[SYNTHETIC] First message")).toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("remembers the conversation: earlier turns go with the next message", async () => {

@@ -78,8 +78,9 @@ export function HrServices({ details }: { details: WorkspaceDetails }) {
                       <p className="text-[0.9375rem] text-hero-muted">{availability.detail}</p>
                     )}
                     {availability.href ? (
+                      // The one workflow this account can open: the page's primary action.
                       <a
-                        className={`${buttonSecondary} min-h-12 shrink-0 rounded-xl px-6 text-[0.9375rem]`}
+                        className={`${buttonPrimary} min-h-12 shrink-0 rounded-xl px-6 text-[0.9375rem]`}
                         href={availability.href}
                       >
                         View details
@@ -126,7 +127,8 @@ export function HrServices({ details }: { details: WorkspaceDetails }) {
                     Your employment jurisdiction still needs to be confirmed before jurisdiction-specific guidance is
                     available. You can still create and record Disciplinary cases.
                   </p>
-                  <a className={`${buttonPrimary} mt-4 min-h-12 rounded-xl px-5 text-[0.9375rem]`} href={settingsHref}>
+                  {/* Secondary: HeroOS confirms the jurisdiction; this only shows where it stands. */}
+                  <a className={`${buttonSecondary} mt-4 min-h-12 rounded-xl px-5 text-[0.9375rem]`} href={settingsHref}>
                     View jurisdiction details
                     <ArrowRightIcon className="size-4" />
                   </a>
