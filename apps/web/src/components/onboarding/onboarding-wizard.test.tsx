@@ -25,12 +25,23 @@ const field = (name: RegExp) => screen.getByRole("textbox", { name });
 const type = (name: RegExp, value: string) => fireEvent.change(field(name), { target: { value } });
 const click = (name: RegExp | string) => fireEvent.click(screen.getByRole("button", { name }));
 
+/** Welcome is a presentation: "Get Started" opens Company Basics. */
+function start() {
+  click(/^Get Started/);
+}
+
 function completeCompanyStep() {
+  start();
   type(/^Company name/, "Gamma Trading");
   type(/^Legal business name/, "Gamma Trading FZ-LLC");
   type(/^Number of employees/, "12");
-  click("Continue");
+  click(/^Continue to Licence/);
 }
+
+const progressLabels = () =>
+  within(screen.getByRole("list", { name: "Setup progress" }))
+    .getAllByRole("listitem")
+    .map((item) => `${item.getAttribute("aria-current") === "step" ? "> " : ""}${item.textContent}`);
 
 function chooseLicensing(label: "DIFC" | "Other" | "I'm not sure") {
   fireEvent.click(screen.getByRole("radio", { name: new RegExp(`^${label}`) }));
@@ -52,48 +63,141 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("OnboardingWizard: company details (step 1)", () => {
+describe("OnboardingWizard: welcome (stage 1 of 5)", () => {
+  it("welcomes the founder, previews the setup and sends nothing", () => {
+    const { fetcher } = setup();
+    expect(screen.getByRole("heading", { level: 1, name: "Welcome to HeroOS" })).toBeInTheDocument();
+    const steps = screen.getByRole("list", { name: "Setup steps" });
+    expect(within(steps).getAllByRole("heading").map((heading) => heading.textContent)).toEqual([
+      "Step 1: Company Basics",
+      "Step 2: Business Licence & Jurisdiction",
+      "Step 3: Company Blueprint Review",
+      "Step 4: Workspace Ready",
+    ]);
+    // The previews are not links or buttons: no skipping ahead.
+    expect(within(steps).queryAllByRole("link")).toHaveLength(0);
+    expect(within(steps).queryAllByRole("button")).toHaveLength(0);
+    expect(screen.getByRole("heading", { level: 2, name: "What happens next" })).toBeInTheDocument();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("never offers to save unfinished details: leaving is honest about it", () => {
+    setup();
+    expect(document.body.textContent).not.toMatch(/Finish later|Save and finish|resume/i);
+    expect(screen.getByText(/isn't saved until you create your workspace/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Leave setup" })).toHaveAttribute("href", "/workspaces");
+  });
+
+  it("Get Started opens Company Basics without a request, focusing its heading", () => {
+    const { fetcher } = setup();
+    expect(window.scrollTo).not.toHaveBeenCalled();
+    start();
+    expect(screen.getByRole("heading", { level: 1, name: "Tell us about your company" })).toHaveFocus();
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("Back from Company Basics returns to Welcome and keeps what was typed", () => {
+    setup();
+    start();
+    type(/^Company name/, "Gamma Trading");
+    click("Back");
+    expect(screen.getByRole("heading", { level: 1, name: "Welcome to HeroOS" })).toHaveFocus();
+    start();
+    expect(field(/^Company name/)).toHaveValue("Gamma Trading");
+  });
+});
+
+describe("OnboardingWizard: five-stage progress", () => {
+  it("marks earlier stages completed and the current one, never Complete before the server answered", () => {
+    setup();
+    // Welcome mirrors its review screen: the step cards preview the journey instead.
+    expect(screen.queryByRole("list", { name: "Setup progress" })).toBeNull();
+    start();
+    expect(progressLabels()).toEqual([
+      "Welcome (completed)",
+      "> 2Company Basics",
+      "3Licence & Jurisdiction",
+      "4Review",
+      "5Complete",
+    ]);
+    type(/^Company name/, "Gamma Trading");
+    click(/^Continue to Licence/);
+    expect(progressLabels()[2]).toBe("> 3Licence & Jurisdiction");
+    chooseLicensing("DIFC");
+    click(/^Continue to Review/);
+    expect(progressLabels()).toEqual([
+      "Welcome (completed)",
+      "Company Basics (completed)",
+      "Licence & Jurisdiction (completed)",
+      "> 4Review",
+      "5Complete",
+    ]);
+    expect(screen.getAllByText("Step 4 of 5").length).toBeGreaterThan(0);
+  });
+});
+
+describe("OnboardingWizard: company basics (stage 2)", () => {
   it("requires a company name and says so next to the field", async () => {
     setup();
-    expect(screen.getByRole("heading", { level: 1, name: "Let's set up your company" })).toBeInTheDocument();
-    click("Continue");
+    start();
+    expect(screen.getByRole("heading", { level: 1, name: "Tell us about your company" })).toBeInTheDocument();
+    click(/^Continue to Licence/);
 
     const name = field(/^Company name/);
     expect(name).toHaveAttribute("aria-invalid", "true");
     expect(name).toHaveAccessibleDescription(/Enter your company name\./);
     await waitFor(() => expect(name).toHaveFocus());
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Let's set up your company");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tell us about your company");
   });
 
   it("validates optional fields only when given", () => {
     setup();
+    start();
     type(/^Company name/, "Gamma");
     type(/^Number of employees/, "a dozen");
-    click("Continue");
+    click(/^Continue to Licence/);
     expect(field(/^Number of employees/)).toHaveAccessibleDescription(/Enter a whole number, such as 12\./);
 
     type(/^Number of employees/, "");
-    click("Continue");
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Where is your company licensed?");
+    click(/^Continue to Licence/);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your licence and jurisdiction");
+  });
+
+  it("validates the optional text fields' limits and characters", () => {
+    setup();
+    start();
+    type(/^Company name/, "Gamma");
+    type(/^Legal business name/, "x".repeat(201));
+    type(/^Industry/, "Retail\u2028Wholesale");
+    click(/^Continue to Licence/);
+    expect(field(/^Legal business name/)).toHaveAccessibleDescription(/Use 200 characters or fewer\./);
+    expect(field(/^Industry/)).toHaveAccessibleDescription(/Remove line breaks, tabs or other special characters\./);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tell us about your company");
   });
 
   it("on a step change, returns to the top and focuses the new step's heading", () => {
     setup();
-    expect(window.scrollTo).not.toHaveBeenCalled();
     completeCompanyStep();
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
-    expect(screen.getByRole("heading", { level: 1, name: "Where is your company licensed?" })).toHaveFocus();
+    expect(screen.getByRole("heading", { level: 1, name: "Your licence and jurisdiction" })).toHaveFocus();
   });
 
-  it("marks the required field and uses organization autocomplete", () => {
+  it("marks the one required field, the optional ones, and keeps the input hints", () => {
     setup();
-    expect(screen.getByText("(required)")).toBeInTheDocument();
+    start();
+    expect(screen.getAllByText("Required")).toHaveLength(1);
+    expect(screen.getAllByText("Optional")).toHaveLength(3);
+    expect(field(/^Company name/)).toHaveAttribute("aria-required", "true");
     expect(field(/^Company name/)).toHaveAttribute("autocomplete", "organization");
     expect(field(/^Number of employees/)).toHaveAttribute("inputmode", "numeric");
+    // Only the registration contract's fields: no business description or other unsaved inputs.
+    expect(screen.getAllByRole("textbox")).toHaveLength(4);
+    expect(screen.queryByRole("combobox")).toBeNull();
   });
 });
 
-describe("OnboardingWizard: licensing (step 2)", () => {
+describe("OnboardingWizard: licence & jurisdiction (stage 3)", () => {
   it("offers exactly DIFC, Other and I'm not sure, with no follow-up questions", () => {
     setup();
     completeCompanyStep();
@@ -111,10 +215,23 @@ describe("OnboardingWizard: licensing (step 2)", () => {
     expect(screen.getByText(/That's okay\. Your licensing details can be confirmed later\./)).toBeInTheDocument();
   });
 
+  it("offers no licence number, upload, issuing-area list or multi-jurisdiction question, and suggests no law", () => {
+    setup();
+    completeCompanyStep();
+    expect(document.querySelector("input[type=file]")).toBeNull();
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByText(/licence number|upload/i)).toBeNull();
+    for (const choice of ["DIFC", "Other", "I'm not sure"] as const) {
+      chooseLicensing(choice);
+      expect(document.body.textContent).not.toMatch(/MOHRE|UAE Federal|suggest|will detect|we've identified/i);
+    }
+    expect(screen.getByText("Jurisdiction is confirmed separately")).toBeInTheDocument();
+  });
+
   it("requires a choice", () => {
     setup();
     completeCompanyStep();
-    click("Continue");
+    click(/^Continue to Review/);
     expect(screen.getByRole("group", { name: "Where is your company licensed?" })).toHaveAccessibleDescription(
       /Choose where your company is licensed/,
     );
@@ -138,37 +255,64 @@ describe("OnboardingWizard: licensing (step 2)", () => {
     setup();
     completeCompanyStep();
     click("Back");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tell us about your company");
     expect(field(/^Company name/)).toHaveValue("Gamma Trading");
     expect(field(/^Number of employees/)).toHaveValue("12");
   });
 });
 
-describe("OnboardingWizard: review and create (step 3)", () => {
+describe("OnboardingWizard: review and create (stage 4)", () => {
   function toReview(licensing: "DIFC" | "Other" | "I'm not sure" = "Other", authority = "Example Free Zone Authority") {
     completeCompanyStep();
     chooseLicensing(licensing);
     if (licensing === "Other") type(/^Which authority issued your licence\?/, authority);
-    click("Continue");
+    click(/^Continue to Review/);
   }
 
   it("shows the entered values, no jurisdiction, and edit links back to each step", () => {
     setup();
     toReview();
 
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Review your company details");
-    const details = screen.getByRole("region", { name: "Company details" });
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Review your company information");
+    const details = screen.getByRole("region", { name: "Company information" });
     expect(within(details).getByText("Gamma Trading")).toBeInTheDocument();
     expect(within(details).getByText("Gamma Trading FZ-LLC")).toBeInTheDocument();
     expect(within(details).getByText("12")).toBeInTheDocument();
-    const licensing = screen.getByRole("region", { name: "Licensing" });
+    const licensing = screen.getByRole("region", { name: "Licence details" });
     expect(within(licensing).getByText("Other licensing authority")).toBeInTheDocument();
     expect(within(licensing).getByText("Example Free Zone Authority")).toBeInTheDocument();
     expect(screen.getByText("Jurisdiction: not yet confirmed")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/MOHRE|UAE Federal|verified|compliant|eligible/);
 
     fireEvent.click(within(licensing).getByRole("button", { name: /Edit/ }));
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Where is your company licensed?");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your licence and jurisdiction");
     expect(screen.getByRole("radio", { name: /^Other/ })).toBeChecked();
+    expect(field(/^Which authority issued your licence\?/)).toHaveValue("Example Free Zone Authority");
+  });
+
+  it("shows what will be sent, with not-provided gaps, and asks for no certification", () => {
+    setup();
+    start();
+    type(/^Company name/, "  Gamma Trading  ");
+    click(/^Continue to Licence/);
+    chooseLicensing("I'm not sure");
+    click(/^Continue to Review/);
+    const details = screen.getByRole("region", { name: "Company information" });
+    // Trimmed, exactly as buildRegistrationPayload sends it.
+    expect(within(details).getByText("Gamma Trading")).toBeInTheDocument();
+    expect(within(details).getAllByText("Not provided")).toHaveLength(3);
+    expect(within(screen.getByRole("region", { name: "Licence details" })).getByText("Not sure yet")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Confirm company details/ })).toBeNull();
+  });
+
+  it("Edit on company information returns to Company Basics with the draft intact", () => {
+    setup();
+    toReview();
+    fireEvent.click(within(screen.getByRole("region", { name: "Company information" })).getByRole("button", { name: /Edit/ }));
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tell us about your company");
+    expect(field(/^Company name/)).toHaveValue("Gamma Trading");
+    expect(field(/^Legal business name/)).toHaveValue("Gamma Trading FZ-LLC");
   });
 
   it("creates the workspace once, with exactly the M1-10C payload, then opens the ready page", async () => {
@@ -261,6 +405,8 @@ describe("OnboardingWizard: review and create (step 3)", () => {
     fireEvent.click(button);
     expect(screen.getByRole("button", { name: /Creating your workspace/ })).toBeDisabled();
     expect(screen.getByRole("button", { name: /Back/ })).toBeDisabled();
+    expect(screen.queryByRole("link", { name: "Leave setup" })).toBeNull();
+    for (const edit of screen.getAllByRole("button", { name: /^Edit/ })) expect(edit).toBeDisabled();
 
     await act(async () => resolve(reply(201, { outcome: "created", companyId: COMPANY_ID })));
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
@@ -284,7 +430,7 @@ describe("OnboardingWizard: review and create (step 3)", () => {
     expect(navigate).not.toHaveBeenCalled();
     expect(document.body.textContent).not.toMatch(/workspace is ready|Opening your workspace/);
     // The draft is kept for another attempt.
-    expect(screen.getByRole("region", { name: "Company details" })).toHaveTextContent("Gamma Trading");
+    expect(screen.getByRole("region", { name: "Company information" })).toHaveTextContent("Gamma Trading");
     expect(screen.getByRole("button", { name: "Create my workspace" })).toBeEnabled();
   });
 
@@ -308,7 +454,7 @@ describe("OnboardingWizard: review and create (step 3)", () => {
     toReview("DIFC");
     click("Create my workspace");
     expect(await screen.findByRole("alert")).toHaveTextContent("Some details need attention");
-    expect(screen.getByRole("region", { name: "Company details" })).toHaveTextContent(
+    expect(screen.getByRole("region", { name: "Company information" })).toHaveTextContent(
       "HeroOS couldn't accept this value",
     );
     fireEvent.click(screen.getByRole("button", { name: "Review company details" }));
@@ -340,6 +486,8 @@ describe("OnboardingWizard: privacy and context", () => {
     setup(undefined, { existingWorkspaces: [{ companyId: COMPANY_ID, name: "Alpha Example" }] });
     expect(screen.getByText("You already have a HeroOS workspace")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Go to my workspace" })).toHaveAttribute("href", "/workspaces");
+    start();
+    expect(screen.getByText("You already have a HeroOS workspace")).toBeInTheDocument();
     expect(field(/^Company name/)).toBeEnabled();
   });
 });

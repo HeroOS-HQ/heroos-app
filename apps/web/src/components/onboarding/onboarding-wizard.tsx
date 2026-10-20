@@ -1,11 +1,22 @@
 "use client";
 
-import { type ReactNode, type Ref, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
-import { ArrowLeftIcon, ArrowRightIcon, PencilIcon } from "@/components/site/icons";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  BriefcaseIcon,
+  BuildingIcon,
+  CertificateIcon,
+  ClockIcon,
+  InfoIcon,
+  PencilIcon,
+  PeopleIcon,
+  ScaleIcon,
+  StoreIcon,
+} from "@/components/site/icons";
 import { Notice } from "@/components/ui/notice";
-import { buttonPrimary, buttonQuiet, buttonSecondary, card, lede, pageTitle } from "@/components/ui/styles";
-import { TextField } from "@/components/ui/text-field";
+import { buttonQuiet } from "@/components/ui/styles";
 import { licensingLabel } from "@/lib/onboarding/copy";
 import {
   buildRegistrationPayload,
@@ -24,20 +35,36 @@ import {
   submitRegistration,
 } from "@/lib/onboarding/registration-client";
 
-import { LicensingFields } from "./licensing-fields";
-import { type StepKey, Stepper } from "./stepper";
+import { IconRow, OnboardingTextField } from "./onboarding-field";
+import {
+  ActionBar,
+  GuidanceCard,
+  onboardingLink,
+  OnboardingStage,
+  onboardingPrimary,
+  onboardingSecondary,
+  StageCard,
+} from "./onboarding-frame";
+import { OnboardingLicensing } from "./onboarding-licensing";
+import { OnboardingWelcome } from "./onboarding-welcome";
 
 /**
- * Founder onboarding (M1-10D): Company details → Licensing → Review, then one
- * registration request. Nothing is saved before "Create my workspace". The
- * draft lives only in this component's memory: never in browser storage.
+ * Founder onboarding: the first four of the journey's five stages (JJ design
+ * review, screens 01–04). Welcome → Company Basics → Licence & Jurisdiction →
+ * Review, then one registration request; the fifth stage, Complete, is the
+ * ready page, reached only after the API confirmed it. Welcome is a
+ * presentation and sends nothing. Nothing is saved before "Create my
+ * workspace". The draft lives only in this component's memory: never in
+ * browser storage.
  *
- * States: ONBOARDING_COMPANY, ONBOARDING_LICENSING, ONBOARDING_REVIEW,
- * REGISTRATION_SUBMITTING, then either navigation to the authoritative
- * "ready" page (REGISTRATION_CREATED / REGISTRATION_EXISTING) or a failure
- * shown on the review step (SESSION_EXPIRED, ACCESS_DENIED,
+ * States: ONBOARDING_WELCOME, ONBOARDING_COMPANY, ONBOARDING_LICENSING,
+ * ONBOARDING_REVIEW, REGISTRATION_SUBMITTING, then either navigation to the
+ * authoritative "ready" page (REGISTRATION_CREATED / REGISTRATION_EXISTING)
+ * or a failure shown on the review step (SESSION_EXPIRED, ACCESS_DENIED,
  * REGISTRATION_DISABLED, validation, API_UNAVAILABLE / uncertain).
  */
+
+type Stage = "welcome" | "company" | "licensing" | "review";
 
 type Submission =
   | { status: "idle" }
@@ -67,7 +94,7 @@ type Props = {
 };
 
 export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }: Props) {
-  const [step, setStep] = useState<StepKey>("company");
+  const [step, setStep] = useState<Stage>("welcome");
   const [draft, setDraft] = useState<OnboardingDraft>(EMPTY_DRAFT);
   const [errors, setErrors] = useState<FieldErrors>({});
   const [submission, setSubmission] = useState<Submission>({ status: "idle" });
@@ -132,7 +159,7 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
     if (first) requestAnimationFrame(() => document.getElementById(FIELD_IDS[first])?.focus());
   }
 
-  function goTo(next: StepKey) {
+  function goTo(next: Stage) {
     setStep(next);
     if (submission.status === "failed") setSubmission({ status: "idle" });
   }
@@ -176,203 +203,199 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
     inFlight.current = false;
   }
 
-  return (
-    <div className="mx-auto w-full max-w-[60rem] px-4 pb-16 pt-8 sm:px-6 sm:pb-24 sm:pt-12">
-      {existingWorkspaces.length > 0 ? (
-        <Notice className="mx-auto mb-6 max-w-[52rem]" title="You already have a HeroOS workspace">
-          <p>
-            Your account can already open{" "}
-            {existingWorkspaces.length === 1 ? (
-              <strong>{existingWorkspaces[0].name}</strong>
-            ) : (
-              `${existingWorkspaces.length} workspaces`
-            )}
-            .{" "}
-            {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full page load, so the unsaved-draft warning applies */}
-            <a className="font-bold text-hero-blue-ink underline underline-offset-4" href="/workspaces">
-              Go to my workspace{existingWorkspaces.length === 1 ? "" : "s"}
-            </a>
-          </p>
-        </Notice>
-      ) : null}
+  const existingNotice =
+    existingWorkspaces.length > 0 ? (
+      <Notice title="You already have a HeroOS workspace">
+        <p>
+          Your account can already open{" "}
+          {existingWorkspaces.length === 1 ? (
+            <strong>{existingWorkspaces[0].name}</strong>
+          ) : (
+            `${existingWorkspaces.length} workspaces`
+          )}
+          .{" "}
+          {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full page load, so the unsaved-draft warning applies */}
+          <a className="font-bold text-hero-blue-ink underline underline-offset-4" href="/workspaces">
+            Go to my workspace{existingWorkspaces.length === 1 ? "" : "s"}
+          </a>
+        </p>
+      </Notice>
+    ) : null;
 
-      <Stepper current={step} />
+  if (step === "welcome") {
+    return <OnboardingWelcome headingRef={headingRef} notice={existingNotice} onStart={() => goTo("company")} />;
+  }
 
-      <section aria-labelledby="onboarding-heading" className={`${card} mx-auto max-w-[52rem] px-5 py-7 sm:px-10 sm:py-10`}>
-        {step === "company" ? (
+  if (step === "company") {
+    return (
+      <OnboardingStage
+        actions={
+          <ActionBar
+            end={
+              <>
+                <LeaveSetup />
+                <button className={`${onboardingPrimary} sm:min-w-[14.5rem]`} form="onboarding-company-form" type="submit">
+                  Continue to Licence
+                  <ArrowRightIcon className="size-5 stroke-[2.25]" />
+                </button>
+              </>
+            }
+            start={<BackButton onClick={() => goTo("welcome")} />}
+          />
+        }
+        bubble="First, let's set up your company!"
+        guidance={
+          <GuidanceCard
+            items={[
+              "Your company name labels your HeroOS workspace.",
+              "Only the name is required. The other details are optional.",
+              "Nothing is saved until you create your workspace.",
+              "You can update the optional details later in Company Blueprint.",
+            ]}
+            title="Why we need this information"
+          />
+        }
+        notice={existingNotice}
+        stage="company"
+      >
+        <StageCard
+          accent="your company"
+          headingRef={headingRef}
+          intro="Let's start with some basic information about your business. No HR experience required."
+          lead="Tell us about"
+          stage="company"
+        >
           <form
+            className="mt-7 flex flex-col gap-[1.375rem]"
+            id="onboarding-company-form"
             noValidate
             onSubmit={(event) => {
               event.preventDefault();
               continueFromCompany();
             }}
           >
-            <StepHeading headingRef={headingRef} title="Let's set up your company">
-              Tell us a little about your business. No HR experience required.
-            </StepHeading>
-            <div className="mt-8 grid gap-6 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <TextField
-                  autoComplete="organization"
-                  error={errors.companyName}
-                  hint="The name your team and customers know you by."
-                  id="company-name"
-                  label="Company name"
-                  onChange={(value) => update("companyName", value)}
-                  required
-                  value={draft.companyName}
-                />
-              </div>
-              <div className="md:col-span-2">
-                <TextField
-                  autoComplete="off"
-                  error={errors.legalName}
-                  hint="As shown on your business licence, if it's different."
-                  id="legal-name"
-                  label="Legal business name"
-                  onChange={(value) => update("legalName", value)}
-                  optional
-                  value={draft.legalName}
-                />
-              </div>
-              <TextField
-                autoComplete="off"
-                error={errors.industry}
-                hint="For example: hospitality, retail, technology."
-                id="industry"
-                label="Industry"
-                onChange={(value) => update("industry", value)}
-                optional
-                value={draft.industry}
-              />
-              <TextField
-                autoComplete="off"
-                error={errors.employeeCount}
-                hint={`A whole number, up to ${LIMITS.employeeCountMax.toLocaleString("en-US")}.`}
-                id="employee-count"
-                inputMode="numeric"
-                label="Number of employees"
-                onChange={(value) => update("employeeCount", value)}
-                optional
-                value={draft.employeeCount}
-              />
-            </div>
-            <StepActions>
-              {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full page load, so the unsaved-draft warning applies */}
-              <a className={buttonQuiet} href="/workspaces">
-                Cancel
-              </a>
-              <button className={buttonPrimary} type="submit">
-                Continue
-                <ArrowRightIcon className="size-4" />
-              </button>
-            </StepActions>
+            <OnboardingTextField
+              autoComplete="organization"
+              error={errors.companyName}
+              hint="The name your team and customers know you by."
+              icon={<BuildingIcon className="size-6" />}
+              id="company-name"
+              label="Company name"
+              onChange={(value) => update("companyName", value)}
+              placeholder="e.g. XYZ Trading"
+              required
+              value={draft.companyName}
+            />
+            <OnboardingTextField
+              autoComplete="off"
+              error={errors.legalName}
+              hint="As shown on your business licence, if it's different."
+              icon={<StoreIcon className="size-6" />}
+              id="legal-name"
+              label="Legal business name"
+              onChange={(value) => update("legalName", value)}
+              placeholder="e.g. XYZ Trading LLC"
+              value={draft.legalName}
+            />
+            <OnboardingTextField
+              autoComplete="off"
+              error={errors.industry}
+              hint="For example: hospitality, retail, construction, technology."
+              icon={<BriefcaseIcon className="size-6" />}
+              id="industry"
+              label="Industry"
+              onChange={(value) => update("industry", value)}
+              placeholder="e.g. Retail"
+              value={draft.industry}
+            />
+            <OnboardingTextField
+              autoComplete="off"
+              error={errors.employeeCount}
+              hint={`A whole number, up to ${LIMITS.employeeCountMax.toLocaleString("en-US")}.`}
+              icon={<PeopleIcon className="size-6" />}
+              id="employee-count"
+              inputMode="numeric"
+              label="Number of employees"
+              onChange={(value) => update("employeeCount", value)}
+              placeholder="e.g. 25"
+              value={draft.employeeCount}
+            />
           </form>
-        ) : null}
+        </StageCard>
+      </OnboardingStage>
+    );
+  }
 
-        {step === "licensing" ? (
+  if (step === "licensing") {
+    return (
+      <OnboardingStage
+        actions={
+          <ActionBar
+            end={
+              <>
+                <LeaveSetup />
+                <button className={`${onboardingPrimary} sm:min-w-[14.5rem]`} form="onboarding-licensing-form" type="submit">
+                  Continue to Review
+                  <ArrowRightIcon className="size-5 stroke-[2.25]" />
+                </button>
+              </>
+            }
+            start={<BackButton onClick={() => goTo("company")} />}
+          />
+        }
+        bubble="Now, where is your business licensed?"
+        guidance={
+          <GuidanceCard
+            items={[
+              "It records where your business licence was issued, as you tell us.",
+              "HeroOS doesn't decide which employment law applies from it.",
+              "Jurisdiction is confirmed separately before any jurisdiction-specific guidance.",
+              "You can update your licensing later in Company Blueprint.",
+            ]}
+            title="Why this information matters"
+          />
+        }
+        notice={existingNotice}
+        stage="licensing"
+      >
+        <StageCard
+          accent="jurisdiction"
+          headingRef={headingRef}
+          intro="Choose where your business licence was issued. This tells HeroOS which services may apply; it doesn't decide which employment law applies."
+          lead="Your licence and"
+          stage="licensing"
+        >
           <form
+            id="onboarding-licensing-form"
             noValidate
             onSubmit={(event) => {
               event.preventDefault();
               continueFromLicensing();
             }}
           >
-            <StepHeading headingRef={headingRef} title="Where is your company licensed?">
-              Choose the location or authority shown on your business licence. This helps HeroOS understand which
-              services may apply.
-            </StepHeading>
-            <div className="mt-8">
-              <LicensingFields
-                authority={draft.licensingAuthority}
-                errors={errors}
-                idPrefix="onboarding"
-                legend="Where is your company licensed?"
-                legendHidden
-                location={draft.licensingLocation}
-                onAuthorityChange={(value) => update("licensingAuthority", value)}
-                onLocationChange={chooseLocation}
-              />
-            </div>
-            <StepActions>
-              <button className={buttonSecondary} onClick={() => goTo("company")} type="button">
-                <ArrowLeftIcon className="size-4" />
-                Back
-              </button>
-              <button className={buttonPrimary} type="submit">
-                Continue
-                <ArrowRightIcon className="size-4" />
-              </button>
-            </StepActions>
+            <OnboardingLicensing
+              authority={draft.licensingAuthority}
+              errors={errors}
+              location={draft.licensingLocation}
+              onAuthorityChange={(value) => update("licensingAuthority", value)}
+              onLocationChange={chooseLocation}
+            />
           </form>
-        ) : null}
+        </StageCard>
+      </OnboardingStage>
+    );
+  }
 
-        {step === "review" ? (
-          <div>
-            <StepHeading headingRef={headingRef} title="Review your company details">
-              Check everything looks right. Your workspace is created only when you select “Create my workspace”.
-            </StepHeading>
-
-            <div className="mt-8 flex flex-col gap-5">
-              <ReviewSection disabled={busy} onEdit={() => goTo("company")} title="Company details">
-                <ReviewRow label="Company name" value={draft.companyName.trim()} error={errors.companyName} />
-                <ReviewRow label="Legal business name" value={draft.legalName.trim()} error={errors.legalName} />
-                <ReviewRow label="Industry" value={draft.industry.trim()} error={errors.industry} />
-                <ReviewRow label="Number of employees" value={draft.employeeCount.trim()} error={errors.employeeCount} />
-              </ReviewSection>
-              <ReviewSection disabled={busy} onEdit={() => goTo("licensing")} title="Licensing">
-                <ReviewRow
-                  label="Licensed in"
-                  value={draft.licensingLocation ? licensingLabel(draft.licensingLocation) : ""}
-                  error={errors.licensingLocation}
-                />
-                {draft.licensingLocation === "other" ? (
-                  <ReviewRow
-                    label="Licensing authority"
-                    value={draft.licensingAuthority.trim()}
-                    error={errors.licensingAuthority}
-                  />
-                ) : null}
-              </ReviewSection>
-              <Notice title="Jurisdiction: not yet confirmed">
-                Your licensing details are recorded as you entered them and confirmed separately. Until then,
-                jurisdiction-specific guidance isn&apos;t available. You can still use your workspace straight away.
-              </Notice>
-            </div>
-
-            <div aria-live="polite" className="sr-only">
-              {submission.status === "submitting" ? "Creating your workspace…" : null}
-              {submission.status === "navigating" ? "Opening your workspace…" : null}
-            </div>
-
-            {submission.status === "navigating" ? (
-              <p className="mt-6 text-sm text-hero-muted">
-                If your workspace doesn&apos;t open in a moment,{" "}
-                <a className="font-bold text-hero-blue-ink underline underline-offset-4" href={submission.destination}>
-                  open it here
-                </a>
-                .
-              </p>
-            ) : null}
-
-            {submission.status === "failed" ? (
-              <div className="mt-6" ref={feedbackRef} tabIndex={-1}>
-                <RegistrationFeedback
-                  onEdit={() => goTo("company")}
-                  onRetry={() => void createWorkspace()}
-                  reason={submission.reason}
-                />
-              </div>
-            ) : null}
-
-            <StepActions>
-              <button className={buttonSecondary} disabled={busy} onClick={() => goTo("licensing")} type="button">
-                <ArrowLeftIcon className="size-4" />
-                Back
-              </button>
+  return (
+    <OnboardingStage
+      actions={
+        <ActionBar
+          end={
+            <>
+              {busy ? null : <LeaveSetup />}
               <button
                 aria-busy={busy || undefined}
-                className={buttonPrimary}
+                className={`${onboardingPrimary} sm:min-w-[14.5rem]`}
                 disabled={busy}
                 onClick={() => void createWorkspace()}
                 type="button"
@@ -383,12 +406,130 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
                   : submission.status === "navigating"
                     ? "Opening your workspace…"
                     : "Create my workspace"}
+                {busy ? null : <ArrowRightIcon className="size-5 stroke-[2.25]" />}
               </button>
-            </StepActions>
+            </>
+          }
+          start={<BackButton disabled={busy} onClick={() => goTo("licensing")} />}
+        />
+      }
+      bubble="Everything look right? Check your details before you continue!"
+      guidance={
+        <GuidanceCard
+          items={[
+            "Your workspace is created only when you select “Create my workspace”.",
+            "Edit any section: what you've entered stays here as you move between steps.",
+            "Jurisdiction stays unconfirmed until it's reviewed separately.",
+            "Afterwards, you can update the optional details in Company Blueprint.",
+          ]}
+          title="Why review before continuing?"
+        />
+      }
+      notice={existingNotice}
+      stage="review"
+    >
+      <StageCard
+        accent="company information"
+        headingRef={headingRef}
+        intro="Here's what you've entered. Edit any section before you create your workspace."
+        lead="Review your"
+        stage="review"
+      >
+        <div className="mt-5 flex flex-col gap-3">
+          <ReviewSection
+            disabled={busy}
+            icon={<BuildingIcon className="size-6" />}
+            id="review-company"
+            onEdit={() => goTo("company")}
+            title="Company information"
+          >
+            <ReviewRow label="Company name" value={draft.companyName.trim()} error={errors.companyName} />
+            <ReviewRow label="Legal business name" value={draft.legalName.trim()} error={errors.legalName} />
+            <ReviewRow label="Industry" value={draft.industry.trim()} error={errors.industry} />
+            <ReviewRow label="Number of employees" value={draft.employeeCount.trim()} error={errors.employeeCount} />
+          </ReviewSection>
+          <ReviewSection
+            disabled={busy}
+            icon={<CertificateIcon className="size-6" />}
+            id="review-licensing"
+            onEdit={() => goTo("licensing")}
+            title="Licence details"
+          >
+            <ReviewRow
+              label="Licensed in"
+              value={draft.licensingLocation ? licensingLabel(draft.licensingLocation) : ""}
+              error={errors.licensingLocation}
+            />
+            {draft.licensingLocation === "other" ? (
+              <ReviewRow
+                label="Licensing authority"
+                value={draft.licensingAuthority.trim()}
+                error={errors.licensingAuthority}
+              />
+            ) : null}
+          </ReviewSection>
+          <IconRow align="top" icon={<ScaleIcon className="size-6" />}>
+            <section aria-labelledby="review-jurisdiction" className="overflow-hidden rounded-xl border border-hero-border">
+              <div className="flex min-h-11 items-center bg-[#f2f4f9] px-4 py-1.5">
+                <h2 className="text-[1.0625rem] font-extrabold text-hero-navy" id="review-jurisdiction">
+                  Jurisdiction
+                </h2>
+              </div>
+              <div className="flex gap-3 bg-hero-yellow-tint/50 px-4 py-3">
+                <span aria-hidden="true" className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-hero-yellow text-hero-navy">
+                  <ClockIcon className="size-5" />
+                </span>
+                <div className="min-w-0 text-[0.9375rem] leading-relaxed text-hero-navy/85">
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <p className="font-bold text-hero-navy">Jurisdiction: not yet confirmed</p>
+                    <span className="rounded-full border border-[#f1df8d] bg-white/70 px-2.5 py-0.5 text-[0.8125rem] font-bold text-hero-navy">
+                      Not yet confirmed
+                    </span>
+                  </div>
+                  <p className="mt-1">
+                    Recorded as you entered it and confirmed separately. Until then, jurisdiction-specific guidance
+                    isn&apos;t available; you can still use your workspace.
+                  </p>
+                </div>
+              </div>
+            </section>
+          </IconRow>
+          <div className="flex gap-3 rounded-xl border border-[#cfe0f8] bg-hero-blue-tint px-4 py-3.5">
+            <InfoIcon className="mt-0.5 size-5 shrink-0 text-hero-blue" />
+            <p className="text-[0.9375rem] leading-relaxed text-hero-navy/85">
+              <span className="font-bold text-hero-navy">Please check these details.</span> Nothing is saved until you
+              select “Create my workspace”. Afterwards, you can update the optional details and licensing in Company
+              Blueprint.
+            </p>
+          </div>
+        </div>
+
+        <div aria-live="polite" className="sr-only">
+          {submission.status === "submitting" ? "Creating your workspace…" : null}
+          {submission.status === "navigating" ? "Opening your workspace…" : null}
+        </div>
+
+        {submission.status === "navigating" ? (
+          <p className="mt-5 text-sm text-hero-muted">
+            If your workspace doesn&apos;t open in a moment,{" "}
+            <a className="font-bold text-hero-blue-ink underline underline-offset-4" href={submission.destination}>
+              open it here
+            </a>
+            .
+          </p>
+        ) : null}
+
+        {submission.status === "failed" ? (
+          <div className="mt-5" ref={feedbackRef} tabIndex={-1}>
+            <RegistrationFeedback
+              onEdit={() => goTo("company")}
+              onRetry={() => void createWorkspace()}
+              reason={submission.reason}
+            />
           </div>
         ) : null}
-      </section>
-    </div>
+      </StageCard>
+    </OnboardingStage>
   );
 }
 
@@ -396,63 +537,71 @@ function without(errors: FieldErrors, fields: FieldName[]): FieldErrors {
   return Object.fromEntries(Object.entries(errors).filter(([field]) => !fields.includes(field as FieldName)));
 }
 
-function StepHeading({
-  title,
-  children,
-  headingRef,
-}: {
-  title: string;
-  children: ReactNode;
-  headingRef: Ref<HTMLHeadingElement>;
-}) {
+function BackButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   return (
-    <header>
-      <h1 className={`${pageTitle} focus-visible:outline-none`} id="onboarding-heading" ref={headingRef} tabIndex={-1}>
-        {title}
-      </h1>
-      <p className={`mt-3 max-w-[40rem] ${lede}`}>{children}</p>
-    </header>
+    <button className={`${onboardingSecondary} sm:min-w-[10.75rem]`} disabled={disabled} onClick={onClick} type="button">
+      <ArrowLeftIcon className="size-5 stroke-[2.25]" />
+      Back
+    </button>
   );
 }
 
-function StepActions({ children }: { children: ReactNode }) {
+/**
+ * Leaving setup (the mockups' "Save and finish later" is not offered: nothing
+ * entered here is kept). A full page load, so the browser asks first whenever
+ * details have been entered.
+ */
+function LeaveSetup() {
   return (
-    <div className="mt-10 flex flex-col-reverse gap-3 border-t border-hero-border pt-6 sm:flex-row sm:items-center sm:justify-between">
-      {children}
-    </div>
+    <>
+      <p className="hidden text-sm text-hero-muted xl:block">Nothing is saved until you create your workspace.</p>
+      {/* eslint-disable-next-line @next/next/no-html-link-for-pages -- a full page load, so the unsaved-draft warning applies */}
+      <a className={onboardingSecondary} href="/workspaces">
+        Leave setup
+      </a>
+    </>
   );
 }
 
 function ReviewSection({
+  id,
   title,
+  icon,
   children,
   onEdit,
   disabled,
 }: {
+  id: string;
   title: string;
+  icon: ReactNode;
   children: ReactNode;
   onEdit: () => void;
   disabled: boolean;
 }) {
   return (
-    <section aria-label={title} className="rounded-2xl border border-hero-border px-4 py-4 sm:px-6 sm:py-5">
-      <div className="flex items-center justify-between gap-3">
-        <h2 className="text-base font-extrabold text-hero-navy">{title}</h2>
-        <button className={buttonQuiet} disabled={disabled} onClick={onEdit} type="button">
-          <PencilIcon className="size-4" />
-          Edit<span className="sr-only"> {title.toLowerCase()}</span>
-        </button>
-      </div>
-      <dl className="mt-2 divide-y divide-hero-border">{children}</dl>
-    </section>
+    <IconRow align="top" icon={icon}>
+      <section aria-labelledby={id} className="@container overflow-hidden rounded-xl border border-hero-border">
+        <div className="flex items-center justify-between gap-3 bg-[#f2f4f9] py-0.5 pl-4 pr-2">
+          <h2 className="text-[1.0625rem] font-extrabold text-hero-navy" id={id}>
+            {title}
+          </h2>
+          <button className={onboardingLink} disabled={disabled} onClick={onEdit} type="button">
+            <PencilIcon className="size-4" />
+            {"Edit "}
+            <span className="sr-only">{title.toLowerCase()}</span>
+          </button>
+        </div>
+        <dl className="grid gap-x-6 gap-y-1.5 px-4 py-3 @[40rem]:grid-cols-2">{children}</dl>
+      </section>
+    </IconRow>
   );
 }
 
 function ReviewRow({ label, value, error }: { label: string; value: string; error?: string }) {
   return (
-    <div className="flex flex-col gap-1 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-      <dt className="text-sm text-hero-muted">{label}</dt>
-      <dd className="min-w-0 break-words text-[0.9375rem] font-semibold text-hero-navy sm:max-w-[60%] sm:text-right">
+    <div className="grid min-w-0 gap-0.5 min-[480px]:grid-cols-[minmax(0,9.25rem)_minmax(0,1fr)] min-[480px]:gap-3">
+      <dt className="text-sm leading-6 text-hero-muted">{label}</dt>
+      <dd className="min-w-0 break-words text-[0.9375rem] font-semibold leading-6 text-hero-navy">
         {value || <span className="font-normal text-hero-muted">Not provided</span>}
         {error ? <span className="mt-1 block text-sm font-semibold text-hero-danger">{error}</span> : null}
       </dd>

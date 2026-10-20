@@ -12,7 +12,9 @@ import { discoverWorkspaces } from "@/lib/server/heroos-api";
 export const metadata: Metadata = { title: "Set up your company · HeroOS" };
 
 /**
- * Founder onboarding (Screens B–D). Requires a signed-in session; nothing is
+ * Founder onboarding: the Welcome, Company Basics, Licence & Jurisdiction and
+ * Review stages of the five-stage setup journey (JJ design review, screens
+ * 01–04), in the full-width frame. Requires a signed-in session; nothing is
  * created until the founder confirms on the review step. Workspace discovery
  * only adds a hint when the account already has a workspace: it never decides
  * whether this person may register (the registration API does). Straight after
@@ -21,7 +23,7 @@ export const metadata: Metadata = { title: "Set up your company · HeroOS" };
  */
 export default function OnboardingPage({ searchParams }: PageProps<"/onboarding">) {
   return (
-    <Suspense fallback={<LoadingView label="Loading…" />}>
+    <Suspense fallback={<LoadingView label="Loading…" layout="full" />}>
       <OnboardingContent searchParams={searchParams} />
     </Suspense>
   );
@@ -42,7 +44,7 @@ async function OnboardingContent({ searchParams }: Pick<PageProps<"/onboarding">
         ? discovery.workspaces
         : [];
   return (
-    <AppShell context="Company setup">
+    <AppShell context="Company setup" layout="full">
       <OnboardingWizard existingWorkspaces={existing.map(({ companyId, name }) => ({ companyId, name }))} />
     </AppShell>
   );
