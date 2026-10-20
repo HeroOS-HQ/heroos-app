@@ -1,6 +1,5 @@
 import type { ReactNode } from "react";
 
-import type { CompanySection } from "@/components/app/company-frame";
 import { CompanyShell } from "@/components/app/company-shell";
 import {
   AccessDeniedView,
@@ -13,18 +12,14 @@ import { StatePanel } from "@/components/ui/state-panel";
 import { buttonPrimary, buttonQuiet } from "@/components/ui/styles";
 import type { CaseState, CasesState } from "@/lib/server/app-state";
 import type { Workspace, WorkspaceDetails } from "@/lib/server/heroos-api";
+import type { CaseSummary } from "@/lib/workflows/model";
 
 type Ready = { details: WorkspaceDetails; workspaces: Workspace[] };
 
-/**
- * The full-page states every Case page shares; null when the page has data to
- * render. `current`: the navigation section the page belongs to.
- */
-export function commonStateView(
-  state: CasesState | CaseState,
-  retryHref: string,
-  current: CompanySection = "cases",
-): ReactNode | null {
+const askHref = (details: WorkspaceDetails) => `/workspaces/${encodeURIComponent(details.company.id)}`;
+
+/** The full-page states every Case page shares; null when the page has data to render. */
+export function commonStateView(state: CasesState | CaseState, retryHref: string): ReactNode | null {
   switch (state.kind) {
     case "not_configured":
       return <NotConfiguredView />;
@@ -37,20 +32,20 @@ export function commonStateView(
     case "api_unavailable":
       return <ApiUnavailableView retryHref={retryHref} />;
     case "admin_only":
-      return <AdminOnlyView current={current} details={state.details} workspaces={state.workspaces} />;
+      return <AdminOnlyView details={state.details} workspaces={state.workspaces} />;
     case "workflow_unavailable":
       return (
-        <CompanyShell current={current} details={state.details} workspaces={state.workspaces}>
+        <CompanyShell details={state.details} workspaces={state.workspaces}>
           <StatePanel
             actions={
-              <a className={buttonPrimary} href={`/workspaces/${encodeURIComponent(state.details.company.id)}`}>
-                Back to your workspace
+              <a className={buttonPrimary} href={askHref(state.details)}>
+                Back to Ask HeroOS
               </a>
             }
             role="status"
-            title="Disciplinary cases aren't available here yet"
+            title="Cases aren't available here yet"
           >
-            <p>The HeroOS service this workspace uses doesn&apos;t offer guided Disciplinary cases yet.</p>
+            <p>The HeroOS service this workspace uses doesn&apos;t offer guided cases yet.</p>
           </StatePanel>
         </CompanyShell>
       );
@@ -60,43 +55,40 @@ export function commonStateView(
 }
 
 /**
- * ADMIN_ONLY (M2-01 interim policy): Disciplinary Cases are confidential and
- * open only to Company administrators until dedicated HR access roles are
- * approved. Nothing about any Case is shown or was requested.
+ * ADMIN_ONLY (M2-01 interim policy): cases are confidential and open only to
+ * Company administrators until dedicated HR access roles are approved.
+ * Nothing about any Case is shown or was requested.
  */
-export function AdminOnlyView({ details, workspaces, current = "cases" }: Ready & { current?: CompanySection }) {
+export function AdminOnlyView({ details, workspaces }: Ready) {
   return (
-    <CompanyShell current={current} details={details} workspaces={workspaces}>
+    <CompanyShell details={details} workspaces={workspaces}>
       <StatePanel
         actions={
-          <a className={buttonPrimary} href={`/workspaces/${encodeURIComponent(details.company.id)}`}>
-            Back to your workspace
+          <a className={buttonPrimary} href={askHref(details)}>
+            Back to Ask HeroOS
           </a>
         }
         role="status"
-        title="Disciplinary cases are for company administrators"
+        title="Cases are for company administrators"
       >
-        <p>
-          Disciplinary cases are confidential. For now, only your company&apos;s administrators can see or work on them.
-        </p>
+        <p>Cases are confidential. For now, only your company&apos;s administrators can see or work on them.</p>
       </StatePanel>
     </CompanyShell>
   );
 }
 
 /** CASE_NOT_FOUND: identical for a Case of another Company and one that doesn't exist. */
-export function CaseNotFoundView({ details, workspaces }: Ready) {
-  const casesHref = `/workspaces/${encodeURIComponent(details.company.id)}/cases`;
+export function CaseNotFoundView({ details, workspaces, cases }: Ready & { cases: CaseSummary[] }) {
   return (
-    <CompanyShell current="cases" details={details} workspaces={workspaces}>
+    <CompanyShell cases={cases} details={details} workspaces={workspaces}>
       <StatePanel
         actions={
           <>
-            <a className={buttonPrimary} href={casesHref}>
-              See Disciplinary cases
+            <a className={buttonPrimary} href={`${askHref(details)}?cases=open`}>
+              See your cases
             </a>
-            <a className={buttonQuiet} href={`/workspaces/${encodeURIComponent(details.company.id)}`}>
-              Back to your workspace
+            <a className={buttonQuiet} href={askHref(details)}>
+              Back to Ask HeroOS
             </a>
           </>
         }

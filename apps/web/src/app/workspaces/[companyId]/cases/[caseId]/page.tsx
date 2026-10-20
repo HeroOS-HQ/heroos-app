@@ -1,18 +1,19 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 
-import { CompanyShell } from "@/components/app/company-shell";
+import { workspaceHeaderData } from "@/components/app/company-shell";
 import { LoadingView } from "@/components/app/loading-view";
 import { CaseNotFoundView, commonStateView } from "@/components/cases/case-states";
 import { CaseWorkspace } from "@/components/cases/case-workspace";
 import { loadCase } from "@/lib/server/app-state";
 import { WORKFLOW_DISCIPLINARY } from "@/lib/workflows/model";
 
-export const metadata: Metadata = { title: "Disciplinary case · HeroOS" };
+export const metadata: Metadata = { title: "Case · HeroOS" };
 
 /**
- * CASE_READY: the guided Case workspace. The Case and Company ids are only
- * resource identifiers; the API authorizes every request (Membership and RLS).
+ * CASE_READY: one case in the Ask HeroOS workspace. The Case and Company ids
+ * are only resource identifiers; the API authorizes every request (Membership
+ * and RLS).
  */
 export default function CasePage({ params }: PageProps<"/workspaces/[companyId]/cases/[caseId]">) {
   return (
@@ -28,18 +29,16 @@ async function CaseContent({ params }: Pick<PageProps<"/workspaces/[companyId]/c
   const retry = `/workspaces/${encodeURIComponent(companyId)}/cases/${encodeURIComponent(caseId)}`;
   const common = commonStateView(state, retry);
   if (common !== null) return common;
-  if (state.kind === "case_not_found") return <CaseNotFoundView details={state.details} workspaces={state.workspaces} />;
+  if (state.kind === "case_not_found") {
+    return <CaseNotFoundView cases={state.cases} details={state.details} workspaces={state.workspaces} />;
+  }
   if (state.kind !== "case_ready") return null;
   return (
-    <CompanyShell details={state.details} mode="case" workspaces={state.workspaces}>
-      {/* Keyed by Case: opening another Case never carries form state over. */}
-      <CaseWorkspace
-        assistant={state.assistant}
-        cases={state.cases}
-        companyId={state.details.company.id}
-        initialView={state.view}
-        key={state.view.case.id}
-      />
-    </CompanyShell>
+    // Keyed by Case: opening another Case never carries form state over.
+    <CaseWorkspace
+      header={workspaceHeaderData(state.details, state.workspaces, state.cases)}
+      initialView={state.view}
+      key={state.view.case.id}
+    />
   );
 }

@@ -38,6 +38,43 @@ export function parseCaseCreate(body: unknown): ParsedRequest<{ title: string; r
   return { ok: true, value: { title, request_key: requestKey } };
 }
 
+/** Line breaks and tabs are the only control characters free text may hold (as the API checks). */
+const TEXT_CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f]/;
+
+/**
+ * Ask HeroOS (`POST /bff/companies/{id}/ask`): the founder's words, the
+ * neutral title of the case they open, and one key per write so a retry after
+ * a lost response is applied once. The text is checked as the API checks a
+ * free-text answer: not empty, no surrounding whitespace, at most 4,000
+ * characters, no control characters but line breaks and tabs.
+ */
+export function parseAskStart(
+  body: unknown,
+): ParsedRequest<{ text: string; title: string; requestKey: string; submissionKey: string }> {
+  if (!isRecord(body) || !onlyKeys(body, ["text", "title", "requestKey", "submissionKey"])) return { ok: false };
+  const { text, title, requestKey, submissionKey } = body;
+  if (
+    typeof text !== "string" ||
+    text.length === 0 ||
+    text.length > MAX_ANSWER_LENGTH ||
+    text !== text.trim() ||
+    TEXT_CONTROL.test(text) ||
+    typeof title !== "string" ||
+    title.length === 0 ||
+    title.length > TITLE_MAX ||
+    title !== title.trim() ||
+    CONTROL.test(title) ||
+    typeof requestKey !== "string" ||
+    !UUID.test(requestKey) ||
+    typeof submissionKey !== "string" ||
+    !UUID.test(submissionKey) ||
+    requestKey === submissionKey
+  ) {
+    return { ok: false };
+  }
+  return { ok: true, value: { text, title, requestKey, submissionKey } };
+}
+
 export function parseAnswersSave(body: unknown): ParsedRequest<{
   expected_revision: number;
   submission_key: string;

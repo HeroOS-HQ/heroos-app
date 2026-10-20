@@ -128,10 +128,22 @@ def test_the_instruction_never_groups_the_difc_with_other_free_zones() -> None:
     assert re.search(grouped, FLAT, re.IGNORECASE) is None
 
 
-def test_the_named_workflow_is_the_tab_the_case_page_shows() -> None:
-    """Hannah points to "Guided case workflow": the web's tab must carry that name."""
+def test_no_web_page_shows_hannah_beside_a_tab_she_names() -> None:
+    """Hannah points to the "Guided case workflow", the tab beside her chat until M2-NEW-02.
+
+    M2-NEW-02 removed her chat (and the tabs) from the case page: HeroOS now
+    speaks with its own mark, and no page shows Hannah's replies, so her words
+    can't send anyone to a tab that isn't there. M2-NEW-05 rewrites this
+    instruction for the controlled conversation gateway. Until then, no web
+    component may send chat messages to the demo.
+    """
     assert "Guided case workflow" in FLAT
-    page = Path(__file__).resolve().parents[3] / "apps/web/src/components/cases/case-workspace.tsx"
-    if not page.exists():
+    components = Path(__file__).resolve().parents[3] / "apps/web/src/components"
+    if not components.exists():
         pytest.skip("the web app isn't part of this checkout")
-    assert '"Guided case workflow"' in page.read_text(encoding="utf-8")
+    senders = [
+        str(path.relative_to(components))
+        for path in components.rglob("*.tsx")
+        if "assistant/messages" in path.read_text(encoding="utf-8")
+    ]
+    assert senders == []

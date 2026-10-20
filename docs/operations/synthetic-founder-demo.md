@@ -12,7 +12,7 @@
 One complete Disciplinary case, in the order an employer meets the M2 features, through the real product. That means the real browser, web BFF, API, PostgreSQL with RLS and the runtime role, the workflow engine, decision records, the unified history, template eligibility and previews. Nothing is mocked or skipped:
 
 1. **Start:** the administrator signs in and chooses the company (they belong to two).
-2. **New case:** they open Disciplinary and start a case. The conversation says it is a guided workflow, not AI.
+2. **Ask HeroOS:** they explain the situation in their own words on Ask HeroOS, the signed-in home. That opens a case (M2-NEW-02) with their words saved as its first answer. The conversation says it is a guided workflow, not AI.
 3. **Intake:** the intake collects the facts. A follow-up appears only when an answer needs it.
 4. **Jurisdiction:** it is confirmed for the case against the company's operator-confirmed jurisdiction.
 5. **Screening:** a clear safety screening records the intake as a *preliminary* status, not a legal assessment.

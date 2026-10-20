@@ -25,22 +25,22 @@ const clientFiles = files.filter(({ text }) => /^["']use client["'];?/m.test(tex
 describe("browser/server boundary", () => {
   it("finds the client components it checks", () => {
     expect(clientFiles.map(({ path }) => path).sort()).toEqual([
+      "components/app/account-menu.tsx",
       "components/app/back-forward-cache-guard.tsx",
-      "components/app/company-frame.tsx",
-      "components/app/company-switcher.tsx",
+      "components/app/cases-panel.tsx",
+      "components/app/workspace-header.tsx",
+      "components/ask/ask-workspace.tsx",
+      "components/blueprint/blueprint-page.tsx",
       "components/cases/answers-form.tsx",
+      "components/cases/case-status-panel.tsx",
       "components/cases/case-timeline.tsx",
       "components/cases/case-workspace.tsx",
-      "components/cases/cases-table.tsx",
       "components/cases/decision-form.tsx",
       "components/cases/decisions-panel.tsx",
       "components/cases/document-form.tsx",
       "components/cases/documents-panel.tsx",
-      "components/cases/hannah-chat.tsx",
-      "components/cases/new-case-form.tsx",
       "components/cases/progression-panel.tsx",
       "components/onboarding/onboarding-wizard.tsx",
-      "components/settings/company-settings-form.tsx",
       "components/site/icons.tsx",
       "components/site/reveal.tsx",
       "components/site/site-header.tsx",
@@ -84,6 +84,7 @@ describe("browser/server boundary", () => {
     };
     const routes = files.filter(({ path }) => path.startsWith("app/bff/") && !(path in reads));
     expect(routes.map(({ path }) => path).sort()).toEqual([
+      "app/bff/companies/[companyId]/ask/route.ts",
       "app/bff/companies/[companyId]/blueprint/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/assistant/messages/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/decisions/[recordId]/corrections/route.ts",
@@ -97,7 +98,7 @@ describe("browser/server boundary", () => {
     ]);
     for (const { path, text } of routes) {
       expect(text, path).toMatch(
-        /handle(Registration|BlueprintUpdate|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview|AssistantMessage)\(request/,
+        /handle(Registration|BlueprintUpdate|AskStart|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview|AssistantMessage)\(request/,
       );
       expect(text, path).not.toMatch(/export async function GET/);
     }
@@ -119,6 +120,9 @@ describe("browser/server boundary", () => {
     // The preview (a POST, so personal details never travel in a URL) goes through the shared guard.
     const preview = bff.slice(bff.indexOf("export async function handleDocumentPreview"));
     expect(preview).toMatch(/^[\s\S]*?await guard\(request, config, deps, MAX_PREVIEW_BYTES\)/);
+    // So does Ask HeroOS (the founder's own words open a case, M2-NEW-02).
+    const ask = bff.slice(bff.indexOf("export async function handleAskStart"));
+    expect(ask).toMatch(/^[\s\S]*?await guard\(request, config, deps\)/);
     // So does a Hannah message (the Hannah AI demo).
     const hannah = bff.slice(bff.indexOf("export async function handleAssistantMessage"));
     expect(hannah).toMatch(/^[\s\S]*?await guard\(request, config, deps, MAX_ASSISTANT_BYTES\)/);
@@ -140,6 +144,14 @@ describe("browser/server boundary", () => {
     // Typed details aren't remembered by the browser's autofill either.
     const form = files.find(({ path }) => path === "components/cases/document-form.tsx")!.text;
     expect(form).toMatch(/<form[\s\S]*?autoComplete="off"/);
+  });
+
+  it("the signed-in product never depends on the frozen design-review package (M2-NEW-02)", () => {
+    // JJ's approved mockups (app/design-review) are the visual reference only: gated, fictional and unchanged.
+    for (const { path, text } of files.filter(({ path }) => !path.startsWith("app/design-review/"))) {
+      expect(text, path).not.toMatch(/from ["'][^"']*design-review[^"']*["']/);
+      expect(text, path).not.toMatch(/["']\/design-review\//);
+    }
   });
 
   it("no web source carries or reads workflow rule content (M2-03)", () => {

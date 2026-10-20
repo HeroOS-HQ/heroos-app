@@ -3,7 +3,8 @@
 // rules and templates installed the way a deployment installs private
 // bundles. It connects every M2 feature in one case, in the order an employer
 // meets them, and takes the screenshots of the founder demo storyboard
-// ("journey-NN-*"): sign in and choose the company, start a case, the guided
+// ("journey-NN-*"): sign in and choose the company, ask HeroOS (the founder's
+// own words open the case, M2-NEW-02), the guided
 // intake, the jurisdiction, HeroOS's checks and cautions, the employer's own
 // pathway choice (with an acknowledged caution), stages that can't be skipped
 // or completed early, a factual employer record, the unified history, a
@@ -11,11 +12,10 @@
 // stops everything, persistence after a reload and a new sign-in, and a phone.
 // Then what the product refuses, checked against the real API and database.
 // Synthetic data only: no rule or template here is HeroOS or legal guidance.
-import { newFounder, openFullCaseDetails, quote } from "./common.mjs";
+import { closeCaseStatus, newFounder, openCaseStatus, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
 
 const AUTHORITY = "[SYNTHETIC DEMO] Free Zone Authority";
 const COMPANY = "[SYNTHETIC DEMO] Example Trading LLC";
-const TITLE = "[SYNTHETIC DEMO] Repeated late shift handovers";
 const NARRATIVE =
   "[SYNTHETIC DEMO] A team member (Sam Example, fictional) missed the shift handover checklist three times in two weeks.";
 const SUMMARY = "[SYNTHETIC DEMO] Check-in meeting held with the team member";
@@ -73,30 +73,27 @@ export async function run(ctx) {
     chooser.includes(COMPANY) && chooser.includes("[SYNTHETIC DEMO] Example Logistics LLC"), chooser.slice(0, 300));
   await shot(page, "journey-01-choose-company");
   await page.click(`a[href="${companyPath}"]`);
-  await page.waitForText("Go to Cases");
+  await page.waitForText("What can HR do for you today?");
   const home = await text();
-  await shot(page, "journey-02-company-workspace");
+  await shot(page, "journey-02-ask-heroos");
 
-  // 3. Start a Disciplinary case.
-  await page.click(`a[href="${companyPath}/cases"]`);
-  await page.waitFor(`Boolean(document.querySelector('a[href="${companyPath}/cases/new"]'))`, { message: "cases list" });
-  await page.click(`a[href="${companyPath}/cases/new"]`);
-  await page.waitForHydrated("#case-title");
-  await page.type("#case-title", TITLE);
-  await page.clickText("button", "Create case");
+  // 3. Ask HeroOS: the founder's own words open the case (no workflow, category or title to choose).
+  await page.waitForHydrated("#ask-heroos");
+  await page.type("#ask-heroos", NARRATIVE);
+  await page.click('button[aria-label="Send"]');
   await page.waitFor(`/^\\/workspaces\\/[^/]+\\/cases\\/[0-9a-f-]{36}$/.test(location.pathname)`, { message: "the new case opens" });
   await page.waitForHydrated("#q-incident-narrative");
   const caseId = await page.eval("location.pathname.split('/').pop()");
   const casePath = `${companyPath}/cases/${caseId}`;
   const welcome = await text();
-  check("JOURNEY-2", "the company workspace opens Disciplinary, and a new case starts a guided (not AI) conversation",
-    home.includes("Disciplinary") && welcome.includes("not an AI assistant") && welcome.includes("What happened?"),
+  const asked = await page.eval(`document.getElementById("q-incident-narrative").value`);
+  check("JOURNEY-2", "Ask HeroOS is the company's home; the founder's words open a case with a guided (not AI) conversation, the words already its first answer",
+    home.includes("Explain the situation in your own words.") && welcome.includes("not an AI assistant") && welcome.includes("What happened?") && asked === NARRATIVE,
     `${home.slice(0, 200)} | ${welcome.slice(0, 200)}`);
   await shot(page, "journey-03-new-case");
 
   // 4–6. The guided intake, with the jurisdiction confirmed for this case.
   const incidentDay = new Date(Date.now() - 4 * 86_400_000).toISOString().slice(0, 10);
-  await page.type("#q-incident-narrative", NARRATIVE);
   await page.type("#q-incident-date", incidentDay);
   await page.click(radio("incident.history", "raised_before"));
   await page.click(radio("incident.discussed_with_employee", "yes"));
@@ -111,6 +108,7 @@ export async function run(ctx) {
   await openFullCaseDetails(page);
   const jurisdiction = await text();
   await shot(page, "journey-04-jurisdiction");
+  await closeCaseStatus(page);
   await page.clickText("button", "Continue to Incident context");
   await page.waitFor(`Boolean(document.querySelector(${JSON.stringify(radio("context.location", "at_work"))}))`, { message: "context" });
   await page.click(radio("context.location", "at_work"));
@@ -249,6 +247,10 @@ export async function run(ctx) {
       heldDocuments.includes("No template can be previewed at this point of the case."),
     `${held.slice(0, 300)} | ${heldDocuments.slice(0, 200)}`);
   await shot(page, "journey-11-specialist-hold", "#next-steps");
+  // The case status, from the case's name in the header: the need for specialist review is in view there too.
+  await openCaseStatus(page);
+  await shot(page, "journey-11b-case-status");
+  await closeCaseStatus(page);
 
   // 11. The unified history.
   const history = await page.eval(`document.querySelector('section[aria-labelledby="history-heading"]').innerText`);
@@ -262,7 +264,7 @@ export async function run(ctx) {
   // Refresh, sign out and in: everything persisted.
   await page.goto(`${webOrigin}${casePath}`);
   await page.waitForText("Next steps");
-  await page.clickText("button", "Sign out");
+  await signOutFromMenu(page);
   await page.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && location.pathname === "/"`, { message: "signed out" });
   await ctx.signIn(page, admin.subject);
   await page.goto(`${webOrigin}${casePath}`);

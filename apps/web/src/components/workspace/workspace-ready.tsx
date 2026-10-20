@@ -12,10 +12,10 @@ import {
 import {
   ArrowRightIcon,
   BuildingIcon,
-  ChartIcon,
+  ChatIcon,
   CheckIcon,
   ClockIcon,
-  DocumentIcon,
+  StoreIcon,
 } from "@/components/site/icons";
 import { Notice } from "@/components/ui/notice";
 import { StatusBadge } from "@/components/ui/status-badge";
@@ -146,11 +146,11 @@ export function WorkspaceReady({ details, outcome }: { details: WorkspaceDetails
           </h2>
           <ul className="mt-2.5 grid gap-3 md:grid-cols-3">
             <NextAction
-              body="Go to your dashboard and see what's available."
-              cta="Go to workspace"
+              body="Explain an HR situation in your own words."
+              cta="Ask HeroOS"
               href={base}
-              icon={<ChartIcon className="size-6" />}
-              title="Explore your workspace"
+              icon={<ChatIcon className="size-6" />}
+              title="Ask HeroOS"
             />
             <NextAction
               body={canEdit ? "Check or update your company details." : "See your company details."}
@@ -160,11 +160,11 @@ export function WorkspaceReady({ details, outcome }: { details: WorkspaceDetails
               title="Review Company Blueprint"
             />
             <NextAction
-              body="See the HR workflows available to your company."
-              cta="View HR services"
-              href={`${base}/hr-services`}
-              icon={<DocumentIcon className="size-6" />}
-              title="View HR services"
+              body="See your access and your company at a glance."
+              cta="Open Company Space"
+              href={`${base}/space`}
+              icon={<StoreIcon className="size-6" />}
+              title="Company Space"
             />
           </ul>
         </section>

@@ -1,33 +1,23 @@
-import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
-import { CompanyShell } from "@/components/app/company-shell";
 import { LoadingView } from "@/components/app/loading-view";
-import { CasesDashboard } from "@/components/cases/cases-dashboard";
-import { commonStateView } from "@/components/cases/case-states";
-import { loadCases } from "@/lib/server/app-state";
-import { WORKFLOW_DISCIPLINARY } from "@/lib/workflows/model";
 
-export const metadata: Metadata = { title: "Disciplinary cases · HeroOS" };
-
-/** CASES_READY for an administrator (ADMIN_ONLY otherwise); the API authorizes every request. */
-export default function CasesPage({ params }: PageProps<"/workspaces/[companyId]/cases">) {
+/**
+ * Retired (M2-NEW-02): the case list page. Cases are a quiet drawer in Ask
+ * HeroOS now, which this opens.
+ * Kept so saved links still land somewhere useful; the target authorizes the
+ * Company id like every page.
+ */
+export default function RetiredPage({ params }: PageProps<"/workspaces/[companyId]/cases">) {
   return (
-    <Suspense fallback={<LoadingView label="Loading cases…" layout="full" />}>
-      <CasesContent params={params} />
+    <Suspense fallback={<LoadingView layout="full" />}>
+      <ToAsk params={params} />
     </Suspense>
   );
 }
 
-async function CasesContent({ params }: Pick<PageProps<"/workspaces/[companyId]/cases">, "params">) {
+async function ToAsk({ params }: Pick<PageProps<"/workspaces/[companyId]/cases">, "params">): Promise<null> {
   const { companyId } = await params;
-  const state = await loadCases(companyId, WORKFLOW_DISCIPLINARY);
-  const common = commonStateView(state, `/workspaces/${encodeURIComponent(companyId)}/cases`);
-  if (common !== null || state.kind !== "cases_ready") return common;
-  const { company, blueprint } = state.details;
-  return (
-    <CompanyShell current="cases" details={state.details} workspaces={state.workspaces}>
-      <CasesDashboard blueprint={blueprint} cases={state.cases} companyId={company.id} />
-    </CompanyShell>
-  );
+  redirect(`/workspaces/${encodeURIComponent(companyId)}?cases=open`);
 }

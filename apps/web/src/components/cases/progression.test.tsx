@@ -4,13 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import { COMPANY_ID } from "@/test/fixtures";
 import {
   apiProgression,
+  pathwayOptions,
   CASE_ID,
   CHOSEN,
   inStageProgression,
   message,
-  pathwayOptions,
   transition,
   view,
+  workspaceHeader,
 } from "@/test/workflow-fixtures";
 
 import { CaseWorkspace } from "./case-workspace";
@@ -36,8 +37,7 @@ const call = (fetcher: ReturnType<typeof fetcherOf>, index = 0) => {
 const workspace = (progression: Record<string, unknown> | undefined, fetcher?: ReturnType<typeof fetcherOf>, canEdit = true) =>
   render(
     <CaseWorkspace
-      cases={[]}
-      companyId={COMPANY_ID}
+      header={workspaceHeader()}
       fetcher={fetcher as unknown as typeof fetch}
       initialView={view({ company: "uae_federal", revision: 4, canEdit, progression })}
     />,
@@ -156,9 +156,12 @@ describe("Next steps (workflow progression)", () => {
       reply(200, { view: view({ company: "uae_federal", revision: 5, progression: inStageProgression() }) }),
     );
     workspace(inStageProgression(), fetcher);
-    expect(screen.getByTestId("current-stage")).toHaveTextContent(
-      "Next steps: Stage in progress · Test stage 1: Check-in conversation",
+    // The case status names the stage in progress.
+    fireEvent.click(screen.getByRole("button", { name: /Case status$/ }));
+    expect(within(screen.getByRole("dialog")).getByText(/Test stage 1: Check-in conversation/, { selector: "p" })).toHaveTextContent(
+      "Now: Test stage 1: Check-in conversation",
     );
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(nextSteps().getByText("In progress")).toBeInTheDocument();
     expect(nextSteps().getByText("Checklist not complete")).toBeInTheDocument();
     expect(nextSteps().getByText("Employee's view heard (test)", { selector: "li" })).toBeInTheDocument();
@@ -233,8 +236,9 @@ describe("Next steps (workflow progression)", () => {
     expect(nextSteps().getByText(/hasn't contacted anyone/)).toBeInTheDocument();
     // The hold is visible at the top of Next steps and in the case header, not only further down.
     expect(nextSteps().getAllByText("Specialist review needed")[0]).toBeInTheDocument();
-    expect(screen.getByTestId("current-stage")).toHaveTextContent("Specialist review needed");
-    const details = within(screen.getByRole("complementary", { name: "Case details" }));
+    expect(screen.getByRole("button", { name: /Specialist review needed\. Case status$/ })).toHaveTextContent("Specialist review needed");
+    fireEvent.click(screen.getByRole("button", { name: /Case status$/ }));
+    const details = within(document.querySelector("details#case-full-details") as HTMLElement);
     expect(details.getByRole("heading", { name: "Progression history" })).toBeInTheDocument();
     expect(details.getByText("Pathway recorded: Less serious (your decision)")).toBeInTheDocument();
   });

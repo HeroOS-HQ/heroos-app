@@ -14,7 +14,12 @@ import {
   unavailableSummary,
 } from "@/test/document-fixtures";
 import { COMPANY_ID } from "@/test/fixtures";
-import { apiProgression, CASE_ID, view } from "@/test/workflow-fixtures";
+import {
+  apiProgression,
+  CASE_ID,
+  view,
+  workspaceHeader,
+} from "@/test/workflow-fixtures";
 
 import { CaseWorkspace } from "./case-workspace";
 import { DocumentsPanel } from "./documents-panel";
@@ -237,17 +242,15 @@ describe("the Documents section in the case workspace", () => {
   const workspace = (overrides: Parameters<typeof view>[0], documentsFetcher: ReturnType<typeof fetcherOf>) =>
     render(
       <CaseWorkspace
-        cases={[]}
-        companyId={COMPANY_ID}
+        header={workspaceHeader()}
         documentsFetcher={documentsFetcher as unknown as typeof fetch}
         initialView={view({ company: "uae_federal", revision: 5, progression: apiProgression(), ...overrides })}
       />,
     );
 
-  it("appears for administrators, with a link from the header", async () => {
+  it("appears for administrators, as a section of the case page", async () => {
     workspace({}, fetcherOf(documents()));
     expect(await screen.findByRole("region", { name: "Documents" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Documents" }).getAttribute("href")).toBe("#documents");
     await waitFor(() => expect(screen.getByRole("button", { name: /Open.*check-in note/ })).toBeTruthy());
   });
 

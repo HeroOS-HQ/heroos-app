@@ -11,7 +11,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { newFounder, quote } from "./common.mjs";
+import { closeCaseStatus, newFounder, openCaseStatus, quote, signOutFromMenu } from "./common.mjs";
 
 const TITLE = "[SYNTHETIC E2E] Progression journey";
 const NARRATIVE = "[SYNTHETIC E2E] A team member repeatedly missed the shift handover checklist.";
@@ -151,7 +151,7 @@ export async function run(ctx) {
 
   await page.goto(`${webOrigin}${casePath}`);
   await page.waitForText("Next steps");
-  await page.clickText("button", "Sign out");
+  await signOutFromMenu(page);
   await page.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && location.pathname === "/"`, { message: "signed out" });
   await ctx.signIn(page, fed.subject);
   await page.goto(`${webOrigin}${casePath}`);
@@ -159,7 +159,10 @@ export async function run(ctx) {
   // M2-04: progression events are in the unified case history ("Decisions & history").
   await page.waitFor(`Boolean(document.querySelector('section[aria-labelledby="history-heading"]'))`, { message: "case history" });
   const history = await page.eval(`document.querySelector('section[aria-labelledby="history-heading"]').innerText`);
-  const header = await page.eval(`document.querySelector('[data-testid="current-stage"]').innerText`);
+  // The case status says where the case stands (M2-NEW-02: the header's case pill opens it).
+  await openCaseStatus(page);
+  const header = await page.eval(`document.getElementById("case-status").innerText`);
+  await closeCaseStatus(page);
   check("PROG-6", "after a reload and a new sign-in the pathway, the stages and the progression history are all still there",
     history.includes("Pathway recorded: Less serious (your decision)") && history.includes("Stage started: Test stage 1") &&
       history.includes("Stage completed: Test stage 1") && header.includes("Ready for the next stage"),
