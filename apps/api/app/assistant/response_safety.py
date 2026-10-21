@@ -33,6 +33,28 @@ decide for you"), when they are negated ("I can't recommend a written warning",
 depends on..."), or what the user said ("you told me the employee received a
 written warning").
 
+**The Ask HeroOS gateway (M2-NEW-05)** reuses the same machinery with five more
+checks (``gateway_problem``), because HeroOS may now explain an approved option
+as a possibility the employer decides on, so what must never pass is sharper:
+
+- ``authorization``: a sanction or deduction presented as allowed for this
+  employer ("you can dismiss him today", "dismissal without notice is
+  available", "it's fine to deduct the cost");
+- ``review_promise``: a specialist review said to be requested or coming ("I've
+  sent this to a HeroOS Expert", "an expert will reply shortly", "your ticket
+  has been created");
+- ``monitoring_promise``: HeroOS promising to watch, track or remind ("I'll
+  monitor the deadline", "I'll remind you");
+- ``document_claim``: a document said to be prepared ("I've drafted the
+  warning letter", "here is the suspension notice");
+- ``legal_certainty``: the law stated as certain ("the law clearly says...",
+  "by law you must...").
+
+Explaining an approved option stays allowed ("suspension may be one of the
+options the approved process considers after the investigation"; "whether
+termination without notice is available depends on the conditions and
+review"): the same negation, conditional and attribution guards apply.
+
 Limits, stated plainly: these are patterns, not understanding. A reply can be
 unsafe in ways no pattern names, or worded so that a pattern misses it, and an
 unusual safe phrasing can be caught. This is defence in depth behind the
@@ -47,6 +69,10 @@ from typing import Final, Literal
 Check = Literal[
     "action_claim", "sanction_recommendation", "procedural_certainty", "jurisdiction_certainty"
 ]
+GatewayCheck = Literal[
+    "action_claim", "sanction_recommendation", "procedural_certainty", "jurisdiction_certainty",
+    "authorization", "review_promise", "monitoring_promise", "document_claim", "legal_certainty",
+]  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,6 +296,149 @@ PATTERNS: Final[tuple[tuple[Check, re.Pattern[str]], ...]] = tuple(
     (check, re.compile(pattern, re.IGNORECASE)) for check, pattern in _FRAMES
 )
 
+# --- the Ask HeroOS gateway's additional checks -------------------------------------------
+
+DEDUCT = r"(?:deduct(?:s|ing)?|withhold(?:s|ing)?|dock(?:s|ing)?)\b"
+DEDUCTION = r"(?:(?:salary|pay|wage)\s+)?deductions?\b"
+PERMISSION = (
+    r"(?:can|could|may|are\s+(?:allowed|entitled|free|permitted)\s+to|is\s+(?:allowed"
+    r"|entitled|permitted)\s+to|have\s+the\s+right\s+to|has\s+the\s+right\s+to)"
+)
+SPECIALIST = (
+    r"(?:(?:HeroOS\s+)?(?:experts?|specialists?|reviewers?|lawyers?|advisers?|advisors?)"
+    r"|(?:review|expert|legal)\s+team)"
+)
+DEADLINE = r"(?:deadlines?|dates?|timelines?|time\s+limits?|timeframes?|it)"
+DOCUMENT = r"(?:letters?|notices?|documents?|memos?|warnings?|emails?\s+to\s+the\s+employee)"
+
+_GATEWAY_FRAMES: Final[tuple[tuple[GatewayCheck, str], ...]] = (
+    # "I've created the case." / "I've opened a case and added the facts."
+    (
+        "action_claim",
+        r"\bI(?:'ve|\s+have)?(?:\s+(?:just|already|now|also))?\s+(?:created|opened|started"
+        rf"|raised|added|stored|entered|registered)\b{_gap(4)}\s+{TARGET}",
+    ),
+    # "... and sent it to a HeroOS Expert." (the claim's subject earlier in the sentence)
+    (
+        "review_promise",
+        r"\b(?:sent|forwarded|referred|escalated|passed|submitted)\s+(?:it|this|that|the\s+case"
+        r"|your\s+case|the\s+matter|this\s+matter|your\s+question)\s+(?:on\s+)?to\s+(?:an?\s+"
+        rf"|the\s+|our\s+)?{SPECIALIST}",
+    ),
+    # "Yes, you can dismiss her today." / "The company may deduct the repair cost."
+    (
+        "authorization",
+        rf"\b{SUBJECT}\s+{PERMISSION}\s+(?:now\s+|still\s+|legally\s+|safely\s+|lawfully\s+"
+        rf"|lawfully\s+|go\s+ahead\s+and\s+)?(?:{DOES_SANCTION}|{DEDUCT})",
+    ),
+    # "It's fine to deduct the cost." / "You're within your rights to terminate him."
+    (
+        "authorization",
+        r"\b(?:it(?:'s|\s+is|\s+would\s+be|\s+will\s+be)\s+(?:fine|ok(?:ay)?|lawful|legal"
+        r"|acceptable|permissible|allowed|permitted)\s+to|(?:you're|you\s+are)\s+within\s+your"
+        rf"\s+rights\s+to)\s+(?:{DOES_SANCTION}|{DEDUCT})",
+    ),
+    # "Dismissal without notice is available here." / "A deduction is allowed."
+    (
+        "authorization",
+        rf"(?:{SANCTION}|{DEDUCTION}){_gap(4)}\s+(?:is|are|would\s+be|will\s+be)\s+(?:now\s+"
+        r"|clearly\s+|certainly\s+|definitely\s+)?(?:available|allowed|permitted|lawful|legal"
+        r"|permissible|fine|ok(?:ay)?)\b",
+    ),
+    # "I've sent this to a HeroOS Expert." / "I've referred your case to a specialist."
+    (
+        "review_promise",
+        r"\bI(?:'ve|\s+have)?(?:\s+(?:just|already|now|also))?\s+(?:sent|forwarded|referred"
+        rf"|escalated|passed|raised|submitted|flagged){_gap(4)}\s+(?:to|with|for)\s+(?:an?\s+"
+        rf"|the\s+|our\s+)?{SPECIALIST}",
+    ),
+    # "I'll forward this to our review team."
+    (
+        "review_promise",
+        r"\bI(?:'ll|\s+will|'m\s+going\s+to|\s+am\s+going\s+to)\s+(?:send|forward|refer"
+        r"|escalate|pass|raise|submit|flag)\b",
+    ),
+    # "A HeroOS Expert will reply shortly." / "The specialist will be in touch."
+    (
+        "review_promise",
+        rf"\b(?:an?|the|our)\s+{SPECIALIST}\s+(?:will|shall|is\s+going\s+to)\s+(?:now\s+"
+        r"|soon\s+|shortly\s+)?(?:reply|respond|review|contact|get\s+back|be\s+in\s+touch"
+        r"|look|call|reach\s+out|follow\s+up)",
+    ),
+    # "Your support ticket has been created." / "I've raised a request."
+    (
+        "review_promise",
+        r"\b(?:ticket|request|referral|review)\s+(?:has|have)\s+(?:now\s+|just\s+|already\s+)?"
+        r"been\s+(?:created|raised|opened|submitted|logged|sent|requested|booked)\b",
+    ),
+    (
+        "review_promise",
+        r"\bI(?:'ve|\s+have)?\s+(?:created|raised|opened|submitted|logged|booked|requested)\s+"
+        r"(?:an?\s+|the\s+|your\s+)?(?:support\s+|expert\s+|specialist\s+)?(?:ticket|request"
+        r"|referral|review)\b",
+    ),
+    # "I'll monitor the deadline for you." / "I'll remind you before it's due."
+    (
+        "monitoring_promise",
+        r"\b(?:I|we|HeroOS)(?:'ll|\s+will|\s+can|\s+shall)?(?:\s+(?:also|then|now))?\s+"
+        r"(?:monitor|remind\s+you|send\s+you\s+(?:an?\s+)?reminders?|notify\s+you|alert\s+you"
+        rf"|make\s+sure\s+you\s+(?:don't|do\s+not)\s+miss|keep\s+(?:track\s+of|an\s+eye\s+on)"
+        rf"\s+(?:the\s+|your\s+|this\s+)?{DEADLINE})",
+    ),
+    # "I've drafted the warning letter." / "Here is the suspension notice:"
+    (
+        "document_claim",
+        r"\bI(?:'ve|\s+have)?(?:\s+(?:just|already|now|also))?\s+(?:drafted|prepared|created"
+        rf"|written|generated|attached|produced){_gap(4)}\s+{DOCUMENT}",
+    ),
+    (
+        "document_claim",
+        r"\bI(?:'ll|\s+will|'m\s+going\s+to)\s+(?:draft|prepare|generate|write|create|produce)"
+        rf"{_gap(4)}\s+{DOCUMENT}",
+    ),
+    (
+        "document_claim",
+        rf"^here(?:'s|\s+is|\s+are)\s+(?:an?|the|your)\b{_gap(3)}\s+{DOCUMENT}",
+    ),
+    # "The law clearly says..." / "By law, you must..." / "It is definitely unlawful."
+    (
+        "legal_certainty",
+        r"\b(?:the\s+)?(?:law|legislation|regulations?|statute)\s+(?:definitely|clearly|certainly"
+        r"|always|explicitly|expressly)\s+(?:says|requires|states|allows|permits|prohibits|forbids"
+        r"|provides|gives|entitles)\b",
+    ),
+    (
+        "legal_certainty",
+        r"\bit(?:'s|\s+is)\s+(?:definitely|certainly|clearly|always|absolutely)\s+(?:illegal"
+        r"|unlawful|lawful|legal|required\s+by\s+law|against\s+the\s+law)\b",
+    ),
+    (
+        "legal_certainty",
+        r"\b(?:by|under\s+the|according\s+to\s+the)\s+law,?\s+(?:you|employers?|the\s+employer"
+        r"|the\s+company)\s+(?:must|have\s+to|has\s+to|are\s+required|is\s+required|cannot"
+        r"|can't|may\s+not)\b",
+    ),
+    # "Secret recording is illegal." / "You always need the employee's consent."
+    (
+        "legal_certainty",
+        r"\b(?:is|are|would\s+be)\s+(?:always\s+)?(?:illegal|unlawful|against\s+the\s+law)\b",
+    ),
+    (
+        "legal_certainty",
+        r"\b(?:always|in\s+all\s+cases|in\s+every\s+case)\s+(?:need|needs|require|requires"
+        r"|have\s+to|has\s+to|must|get|gets|are\s+entitled|is\s+entitled)\b",
+    ),
+)
+GATEWAY_PATTERNS: Final[tuple[tuple[GatewayCheck, re.Pattern[str]], ...]] = (
+    *PATTERNS,
+    *((check, re.compile(pattern, re.IGNORECASE)) for check, pattern in _GATEWAY_FRAMES),
+)
+# The most misleading first: an action or promise HeroOS can't keep, then an outcome.
+GATEWAY_PRIORITY: Final[tuple[GatewayCheck, ...]] = (
+    "action_claim", "document_claim", "review_promise", "monitoring_promise", "authorization",
+    "sanction_recommendation", "procedural_certainty", "legal_certainty", "jurisdiction_certainty",
+)  # fmt: skip
+
 # A frame is not a problem when it is negated, conditional or open just before it.
 _GUARD = re.compile(
     r"\b(?:not|no|never|nothing|none|neither|nor|cannot|unable|without|whether|if|unless"
@@ -291,6 +460,7 @@ _ATTRIBUTED = re.compile(
     r"|described|noted)|according\s+to\s+you)\b",
     re.IGNORECASE,
 )
+_WITHOUT_NOTICE = re.compile(r"\bwithout\s+(?:prior\s+)?notice\b", re.IGNORECASE)
 _QUOTED = re.compile(r'"[^"\n]{0,400}"')
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 _CLAUSE = re.compile(r"[;:]|\s[-–—]+\s")
@@ -310,13 +480,13 @@ def _guarded(clause: str, match: re.Match[str]) -> bool:
     if _GUARD.search(window):
         return True
     # Words inside the frame, after its first word (the trigger itself is never a blocker).
-    inner = match.group(0).split(None, 1)
+    # "Without notice" names a kind of dismissal, not a negation.
+    inner = _WITHOUT_NOTICE.sub(" ", match.group(0)).split(None, 1)
     return len(inner) == 2 and _BLOCKER.search(inner[1]) is not None
 
 
-def find_problems(text: str) -> set[Check]:
-    """The checks a reply fails (empty: it can be shown as it is)."""
-    found: set[Check] = set()
+def _problems[C: str](text: str, patterns: tuple[tuple[C, re.Pattern[str]], ...]) -> set[C]:
+    found: set[C] = set()
     for sentence in _SENTENCE.split(_QUOTED.sub(" (quoted) ", _normalized(text))):
         sentence = sentence.strip()
         if not sentence or sentence.endswith("?") or _ATTRIBUTED.search(sentence):
@@ -325,12 +495,23 @@ def find_problems(text: str) -> set[Check]:
             clause = _BULLET.sub("", part).strip()
             if not clause:
                 continue
-            for check, pattern in PATTERNS:
+            for check, pattern in patterns:
                 if check in found:
                     continue
                 if any(not _guarded(clause, m) for m in pattern.finditer(clause)):
                     found.add(check)
     return found
+
+
+def find_problems(text: str) -> set[Check]:
+    """The checks a Hannah reply fails (empty: it can be shown as it is)."""
+    return _problems(text, PATTERNS)
+
+
+def gateway_problem(text: str) -> GatewayCheck | None:
+    """The first check an Ask HeroOS reply fails, by priority; None if it can be shown."""
+    problems = _problems(text, GATEWAY_PATTERNS)
+    return next((check for check in GATEWAY_PRIORITY if check in problems), None)
 
 
 def review_reply(text: str) -> ReviewedReply:

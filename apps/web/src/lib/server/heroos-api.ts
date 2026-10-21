@@ -43,6 +43,13 @@ import {
   fromApiAssistantReply,
   fromApiAssistantStatus,
 } from "@/lib/assistant/model";
+import {
+  fromApiGatewayReply,
+  fromApiGatewayStatus,
+  type GatewayReply,
+  type GatewayRequest,
+  type GatewayStatus,
+} from "@/lib/ask/conversation";
 import type { CorrectionPayload, DecisionPayload } from "@/lib/workflows/requests";
 
 import type { AuthConfig } from "./config";
@@ -927,6 +934,87 @@ export async function sendAssistantMessage(
     }
     if (!response.ok) return { ok: false, failure: failureFor(response.status) };
     const data = fromApiAssistantReply(await response.json());
+    return data === null ? { ok: false, failure: "unavailable" } : { ok: true, data };
+  } catch (error) {
+    const name = error instanceof Error ? error.name : "";
+    return { ok: false, failure: name === "TimeoutError" || name === "AbortError" ? "timeout" : "unavailable" };
+  }
+}
+
+// --- Ask HeroOS's AI gateway (M2-NEW-05) ------------------------------------------------
+
+// One founder turn is up to four provider requests inside the API's 40 s budget.
+// It must end before the browser stops waiting (58 s) and within the route's
+// maxDuration (60 s); page reads keep their short timeout.
+export const GATEWAY_TIMEOUT_MS = 50_000;
+
+export type GatewayFailure = ApiFailure | "rate_limited" | "timeout" | "not_configured" | "knowledge_unavailable";
+export type GatewayResult = { ok: true; data: GatewayReply } | { ok: false; failure: GatewayFailure; retryAfter?: number };
+
+function gatewayPath(companyId: string): string | null {
+  return UUID.test(companyId) ? `/companies/${companyId}/assistant` : null;
+}
+
+/** `GET /companies/{id}/assistant`: whether Ask HeroOS's gateway can answer for this administrator. */
+export async function getGatewayStatus(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<GatewayStatus>> {
+  const path = gatewayPath(companyId);
+  if (path === null) return { ok: false, failure: "forbidden" };
+  return apiCall(config, accessToken, fetcher, path, fromApiGatewayStatus);
+}
+
+/**
+ * `POST /companies/{id}/assistant/messages`: one founder message, HeroOS's
+ * reply. Nothing is stored, so a retry is safe. The limits (429), a gateway
+ * that isn't configured or has no approved knowledge (503, with the API's
+ * fixed detail) and a timeout (504, or no answer in time) each get their own code.
+ */
+export async function sendGatewayMessage(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  payload: GatewayRequest,
+  fetcher: Fetch = fetch,
+): Promise<GatewayResult> {
+  const path = gatewayPath(companyId);
+  if (path === null) return { ok: false, failure: "forbidden" };
+  const body = {
+    message: payload.message,
+    history: payload.history,
+    ...(payload.continuation === null ? {} : { continuation: payload.continuation }),
+  };
+  try {
+    const response = await fetcher(`${config.apiBaseUrl}${path}/messages`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+    });
+    if (response.status === 429) {
+      const seconds = Number(response.headers.get("retry-after"));
+      const retryAfter = Number.isInteger(seconds) && seconds > 0 ? Math.min(seconds, 3600) : undefined;
+      return { ok: false, failure: "rate_limited", ...(retryAfter ? { retryAfter } : {}) };
+    }
+    if (response.status === 504) return { ok: false, failure: "timeout" };
+    if (response.status === 503) {
+      let detail: unknown = null;
+      try {
+        detail = ((await response.json()) as { detail?: unknown }).detail;
+      } catch {
+        // A waking or failing host: not the API's own answer.
+      }
+      if (detail === "Not configured") return { ok: false, failure: "not_configured" };
+      if (detail === "Knowledge unavailable") return { ok: false, failure: "knowledge_unavailable" };
+      return { ok: false, failure: "unavailable" };
+    }
+    if (!response.ok) return { ok: false, failure: failureFor(response.status) };
+    const data = fromApiGatewayReply(await response.json());
     return data === null ? { ok: false, failure: "unavailable" } : { ok: true, data };
   } catch (error) {
     const name = error instanceof Error ? error.name : "";

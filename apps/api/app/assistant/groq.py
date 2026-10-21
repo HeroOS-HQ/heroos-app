@@ -1,10 +1,15 @@
-"""GroqCloud chat completions (OpenAI-compatible) for the Hannah demo.
+"""GroqCloud chat completions (OpenAI-compatible) for the Hannah demo and the Ask gateway.
 
 The endpoint is fixed here and the model comes from server configuration only:
 nothing a client sends can choose either. Each request carries no tools (so no
 browsing, code execution or function calls), a low temperature, a bounded
 reply and a timeout, and is never retried. The API key is sent only in the
 ``Authorization`` header to the fixed HTTPS endpoint; redirects are refused.
+
+``complete_json`` (the Ask HeroOS gateway, M2-NEW-05) asks for one JSON object
+(``response_format: json_object``) with the caller's temperature, completion
+budget and timeout, each clamped to fixed bounds here. The object is returned
+as text, unvalidated: the gateway validates it.
 
 Failures map to fixed kinds (``rate_limited``, ``timeout``, ``unavailable``);
 the provider's error bodies are read only up to a limit and then dropped, never
@@ -20,7 +25,7 @@ from typing import Any, Final
 
 from pydantic import SecretStr
 
-from app.assistant.provider import AssistantError, ChatTurn
+from app.assistant.provider import AssistantError, ChatTurn, Completion
 
 GROQ_CHAT_COMPLETIONS_URL: Final = "https://api.groq.com/openai/v1/chat/completions"
 TIMEOUT_SECONDS: Final = 30.0
@@ -31,6 +36,11 @@ MAX_COMPLETION_TOKENS: Final = 1024
 MAX_RESPONSE_BYTES: Final = 256 * 1024
 MAX_REPLY_CHARS: Final = 6000
 USER_AGENT: Final = "HeroOS-API (Hannah demo)"
+# Bounds on what the gateway may ask for (whatever it passes).
+MAX_JSON_TEMPERATURE: Final = 0.3
+MAX_JSON_COMPLETION_TOKENS: Final = 2048
+MAX_JSON_TIMEOUT_SECONDS: Final = 30.0
+MAX_JSON_CHARS: Final = 12_000
 
 # (status, headers, body) of one HTTP exchange; raises TimeoutError or OSError.
 Send = Callable[[str, Mapping[str, str], bytes, float], tuple[int, Mapping[str, str], bytes]]
@@ -74,7 +84,8 @@ def _retry_after(headers: Mapping[str, str]) -> int | None:
     return None
 
 
-def _reply_text(body: bytes) -> str:
+def _content(body: bytes) -> tuple[str, Any]:
+    """The first choice's text and the parsed body; ``unavailable`` for anything else."""
     if len(body) > MAX_RESPONSE_BYTES:
         raise AssistantError("unavailable")
     try:
@@ -84,11 +95,21 @@ def _reply_text(body: bytes) -> str:
         raise AssistantError("unavailable") from None
     if not isinstance(content, str) or not content.strip():
         raise AssistantError("unavailable")
-    return content.strip()[:MAX_REPLY_CHARS]
+    return content.strip(), data
+
+
+def _reply_text(body: bytes) -> str:
+    return _content(body)[0][:MAX_REPLY_CHARS]
+
+
+def _tokens(data: Any, name: str) -> int | None:
+    usage = data.get("usage") if isinstance(data, dict) else None
+    value = usage.get(name) if isinstance(usage, dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
 class GroqChatProvider:
-    """The Hannah demo's chat model on GroqCloud."""
+    """The chat model on GroqCloud (the Hannah demo and the Ask HeroOS gateway)."""
 
     def __init__(self, api_key: SecretStr, model: str, *, send: Send = _send) -> None:
         self._api_key = api_key
@@ -117,17 +138,59 @@ class GroqChatProvider:
             "stream": False,
         }
 
+    def json_payload(
+        self,
+        system: str,
+        turns: Sequence[ChatTurn],
+        *,
+        temperature: float,
+        max_completion_tokens: int,
+    ) -> dict[str, Any]:
+        payload = self.payload(system, turns)
+        payload["temperature"] = min(max(temperature, 0.0), MAX_JSON_TEMPERATURE)
+        payload["max_completion_tokens"] = min(
+            max(max_completion_tokens, 1), MAX_JSON_COMPLETION_TOKENS
+        )
+        payload["response_format"] = {"type": "json_object"}
+        return payload
+
     def reply(self, system: str, turns: Sequence[ChatTurn]) -> str:
+        return _reply_text(self._post(self.payload(system, turns), TIMEOUT_SECONDS))
+
+    def complete_json(
+        self,
+        system: str,
+        turns: Sequence[ChatTurn],
+        *,
+        temperature: float,
+        max_completion_tokens: int,
+        timeout: float,
+    ) -> Completion:
+        payload = self.json_payload(
+            system, turns, temperature=temperature, max_completion_tokens=max_completion_tokens
+        )
+        body = self._post(payload, min(max(timeout, 1.0), MAX_JSON_TIMEOUT_SECONDS))
+        text, data = _content(body)
+        if len(text) > MAX_JSON_CHARS:
+            raise AssistantError("unavailable")
+        return Completion(
+            text=text,
+            prompt_tokens=_tokens(data, "prompt_tokens"),
+            completion_tokens=_tokens(data, "completion_tokens"),
+        )
+
+    def _post(self, payload: dict[str, Any], timeout: float) -> bytes:
+        """One request to the fixed endpoint; the response body, or a fixed failure kind."""
         headers = {
             "Authorization": f"Bearer {self._api_key.get_secret_value()}",
             "Content-Type": "application/json",
             "Accept": "application/json",
             "User-Agent": USER_AGENT,
         }
-        body = json.dumps(self.payload(system, turns)).encode("utf-8")
+        body = json.dumps(payload).encode("utf-8")
         try:
             status, response_headers, response_body = self._send(
-                GROQ_CHAT_COMPLETIONS_URL, headers, body, TIMEOUT_SECONDS
+                GROQ_CHAT_COMPLETIONS_URL, headers, body, timeout
             )
         except TimeoutError:
             raise AssistantError("timeout") from None
@@ -141,4 +204,4 @@ class GroqChatProvider:
             raise AssistantError("rate_limited", retry_after=_retry_after(response_headers))
         if status != 200:
             raise AssistantError("unavailable")
-        return _reply_text(response_body)
+        return response_body

@@ -14,6 +14,10 @@
 - The Hannah AI demo's message POST writes nothing either: administrator-only,
   a read-only transaction, the demo switch, and the assistant package
   can't reach the database or the workflow engine.
+- So does Ask HeroOS's AI gateway (M2-NEW-05) at Company level: the same
+  administrator chain in a read-only transaction; the gateway package can't
+  reach the database, the workflow engine or the network (only the provider
+  adapter talks to its fixed endpoint), and no route serves the knowledge.
 - Founder self-registration is the only route an authenticated identity that
   HeroOS has not provisioned can reach; every other API route resolves an
   active HeroOS User first.
@@ -89,6 +93,9 @@ ASSISTANT_ROUTES = {
     ("GET", "/companies/{company_id}/cases/{case_id}/assistant"),
     ASSISTANT_MESSAGE,
 }
+# Ask HeroOS's AI gateway (M2-NEW-05): Company level, no Case, nothing written.
+GATEWAY_MESSAGE = ("POST", "/companies/{company_id}/assistant/messages")
+GATEWAY_ROUTES = {("GET", "/companies/{company_id}/assistant"), GATEWAY_MESSAGE}
 
 
 def _imports(path: Path) -> set[str]:
@@ -157,7 +164,7 @@ def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() ->
         for route in _app_routes()
         for method in route.methods or set()
         if method not in ("GET", "HEAD")
-        and (method, route.path) not in (DOCUMENT_PREVIEW, ASSISTANT_MESSAGE)
+        and (method, route.path) not in (DOCUMENT_PREVIEW, ASSISTANT_MESSAGE, GATEWAY_MESSAGE)
     }
     assert set(mutating) == MUTATING_ROUTES
 
@@ -200,13 +207,15 @@ def test_assistant_routes_are_admin_only_switched_and_cannot_write() -> None:
         (method, route.path): route for route in _app_routes() for method in route.methods or set()
     }
     found = {key for key in routes if "/assistant" in key[1]}
-    assert found == ASSISTANT_ROUTES
-    for key in ASSISTANT_ROUTES:
+    assert found == ASSISTANT_ROUTES | GATEWAY_ROUTES
+    for key in ASSISTANT_ROUTES | GATEWAY_ROUTES:
         calls = _dependency_calls(routes[key].dependant)
         assert require_company_admin in calls, key
         assert get_company_admin_read_scope in calls, key
         assert get_company_admin_scope in calls, key
     assert require_hannah_demo in _dependency_calls(routes[ASSISTANT_MESSAGE].dependant)
+    # The gateway is not the demo: its own switch and prerequisites, never the demo's.
+    assert require_hannah_demo not in _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
 
 
 def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
@@ -221,6 +230,34 @@ def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
         name.startswith(("app.workflows", "app.api.workflows", "app.api.decisions", "app.db"))
         for name in imported
     )
+    # The gateway's route doesn't even look a Case up: Company context only.
+    imported = _imports(APP / "api" / "gateway.py")
+    assert not any(
+        name.startswith(
+            ("app.workflows", "app.api.workflows", "app.api.decisions", "app.db",
+             "app.repositories", "app.knowledge")
+        )
+        for name in imported
+    )  # fmt: skip
+
+
+def test_the_gateway_never_reaches_the_web_or_source_documents() -> None:
+    """M2-NEW-05: no open-web research, URL fetching, browsing or raw-source reading.
+
+    Only the provider adapter (``app.assistant.groq``) opens a connection, to
+    its fixed endpoint. The gateway itself imports no network, document or
+    evaluation machinery, and its instructions name no tool.
+    """
+    forbidden = (
+        "urllib", "httpx", "requests", "socket", "http.client", "aiohttp", "ssl", "scripts",
+        "zipfile", "xml", "openpyxl", "docx", "subprocess", "app.assistant.groq",
+    )  # fmt: skip
+    for path in (APP / "assistant" / "gateway").rglob("*.py"):
+        imported = _imports(path)
+        assert not any(name.startswith(forbidden) for name in imported), path
+        source = path.read_text(encoding="utf-8")
+        assert "eval(" not in source and "exec(" not in source, path
+        assert '"tools"' not in source and "tool_choice" not in source, path
 
 
 def test_documents_never_read_employer_decision_records() -> None:
@@ -278,6 +315,8 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/cases/{case_id}/documents/{template_key}/preview",
         "/companies/{company_id}/cases/{case_id}/assistant",
         "/companies/{company_id}/cases/{case_id}/assistant/messages",
+        "/companies/{company_id}/assistant",
+        "/companies/{company_id}/assistant/messages",
     }
 
 
@@ -340,7 +379,12 @@ def test_the_knowledge_runtime_is_pure_and_offline() -> None:
 
 
 def test_no_route_or_api_module_serves_the_knowledge_runtime() -> None:
-    """The knowledge is server-side only: no route reads it (M2-NEW-05 will compose it)."""
+    """The knowledge is server-side only: no route serves it.
+
+    The AI gateway (M2-NEW-05) composes it inside ``app.assistant.gateway``; no
+    API module imports it, and the gateway's responses carry none of it
+    (tests/auth/test_gateway_api.py).
+    """
     assert not any("knowledge" in route.path for route in _app_routes())
     for path in (APP / "api").rglob("*.py"):
         assert not any(name.startswith("app.knowledge") for name in _imports(path)), path

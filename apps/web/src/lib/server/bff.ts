@@ -1,6 +1,7 @@
 import "server-only";
 
 import { ASK_QUESTION, ASK_STEP, ASK_WORKFLOW } from "@/lib/ask/model";
+import { parseGatewayRequest } from "@/lib/ask/conversation";
 import { parseAssistantRequest } from "@/lib/assistant/model";
 import { TEMPLATE_KEY } from "@/lib/documents/model";
 import { parsePreviewRequest } from "@/lib/documents/requests";
@@ -35,6 +36,7 @@ import {
   saveStepAnswers,
   selectPathway,
   sendAssistantMessage,
+  sendGatewayMessage,
   updateBlueprint,
   UUID,
 } from "./heroos-api";
@@ -75,11 +77,13 @@ export type BffError =
   | "unavailable"
   | "rate_limited"
   | "timeout"
-  | "not_configured";
+  | "not_configured"
+  | "knowledge_unavailable";
 
 export const MAX_BODY_BYTES = 16 * 1024;
 export const MAX_PREVIEW_BYTES = 32 * 1024;
-// A Hannah message with its bounded recent history (lib/assistant/model.ts).
+// A Hannah message, or an Ask HeroOS message, with its bounded recent history
+// (lib/assistant/model.ts, lib/ask/conversation.ts).
 export const MAX_ASSISTANT_BYTES = 48 * 1024;
 
 function json(status: number, body: unknown): Response {
@@ -586,6 +590,50 @@ export async function handleAssistantMessage(
       return error(504, "timeout");
     case "not_configured":
       return error(503, "not_configured");
+    default:
+      return workflowFailure(result.failure, []);
+  }
+}
+
+// --- Ask HeroOS's AI gateway (M2-NEW-05) ------------------------------------------------
+
+/**
+ * POST /bff/companies/{id}/assistant/messages →
+ * `POST /companies/{id}/assistant/messages`: the founder's message, the
+ * recent conversation and the last continuation; HeroOS's reply.
+ *
+ * 200 `{reply, safeNextStep, conversationState, continuation}` and nothing
+ * else. No Case is needed and nothing is stored or logged here, so the
+ * browser may retry. 429 `rate_limited` (with `Retry-After`), 504 `timeout`,
+ * 503 `not_configured` / `knowledge_unavailable` / `unavailable`; never the
+ * API's or the provider's own text. The API decides who may ask (Company
+ * administrators) and what HeroOS knows; nothing here chooses either.
+ */
+export async function handleGatewayMessage(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps, MAX_ASSISTANT_BYTES);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  const parsed = parseGatewayRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await sendGatewayMessage(guarded.accessToken, config, companyId, parsed.value, deps.fetch);
+  if (result.ok) return json(200, result.data);
+  switch (result.failure) {
+    case "rate_limited": {
+      const response = error(429, "rate_limited");
+      response.headers.set("Retry-After", String(result.retryAfter ?? 60));
+      return response;
+    }
+    case "timeout":
+      return error(504, "timeout");
+    case "not_configured":
+    case "knowledge_unavailable":
+      return error(503, result.failure);
     default:
       return workflowFailure(result.failure, []);
   }

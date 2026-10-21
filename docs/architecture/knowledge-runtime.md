@@ -386,7 +386,9 @@ production-approved).
 
 ## 15. The M2-NEW-05 contract
 
-The AI gateway will compose, server-side: the user's message, the
+Implemented by Ask HeroOS's controlled AI gateway
+([ai-gateway.md](ai-gateway.md)); case facts and history join it with
+M2-NEW-06/07. The AI gateway composes, server-side: the user's message, the
 `CompanyBlueprintContext`, authorized case facts and history, and one or more
 `KnowledgeContext` results. It must:
 

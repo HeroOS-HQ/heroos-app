@@ -1,12 +1,14 @@
 import "server-only";
 
 import { readAuthConfig, type AuthConfig } from "./config";
+import type { GatewayStatus } from "@/lib/ask/conversation";
 import type { CaseSummary as WorkflowCaseSummary, WorkflowView } from "@/lib/workflows/model";
 
 import {
   type ApiResult,
   discoverWorkspaces,
   getCaseWorkflow,
+  getGatewayStatus,
   getWorkspaceDetails,
   listWorkflowCases,
   type Workspace,
@@ -223,4 +225,22 @@ export async function loadCase(companyId: string, workflowKey: string, caseId: s
     getCaseWorkflow(gate.accessToken, gate.config, companyId, caseId),
   ]);
   return caseState(details, workspaces, cases, view);
+}
+
+
+/**
+ * Ask HeroOS's AI gateway for this Company (M2-NEW-05), when it can answer:
+ * the API says so for this administrator. Anything else (switched off, not
+ * configured, no approved knowledge, a member, an API from before the
+ * gateway, an unreachable API) is `null`, and Ask keeps opening a case
+ * through its seam exactly as before (docs/architecture/signed-in-workspace.md).
+ */
+export function askGateway(status: ApiResult<GatewayStatus>): GatewayStatus | null {
+  return status.ok && status.data.available ? status.data : null;
+}
+
+export async function loadAskGateway(companyId: string): Promise<GatewayStatus | null> {
+  const gate = await sessionGate();
+  if (gate.kind !== "ok") return null;
+  return askGateway(await getGatewayStatus(gate.accessToken, gate.config, companyId));
 }

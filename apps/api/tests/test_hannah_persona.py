@@ -133,17 +133,20 @@ def test_no_web_page_shows_hannah_beside_a_tab_she_names() -> None:
 
     M2-NEW-02 removed her chat (and the tabs) from the case page: HeroOS now
     speaks with its own mark, and no page shows Hannah's replies, so her words
-    can't send anyone to a tab that isn't there. M2-NEW-05 rewrites this
-    instruction for the controlled conversation gateway. Until then, no web
-    component may send chat messages to the demo.
+    can't send anyone to a tab that isn't there. M2-NEW-05 built Ask HeroOS's
+    controlled gateway at Company level (``/companies/{id}/assistant/messages``,
+    its own instruction, docs/architecture/ai-gateway.md); this demo
+    instruction is legacy. No web component may send chat messages to the
+    case-scoped demo.
     """
     assert "Guided case workflow" in FLAT
     components = Path(__file__).resolve().parents[3] / "apps/web/src/components"
     if not components.exists():
         pytest.skip("the web app isn't part of this checkout")
+    case_scoped = re.compile(r"cases/[^\s\"'`]*/assistant")
     senders = [
         str(path.relative_to(components))
         for path in components.rglob("*.tsx")
-        if "assistant/messages" in path.read_text(encoding="utf-8")
+        if case_scoped.search(path.read_text(encoding="utf-8"))
     ]
     assert senders == []

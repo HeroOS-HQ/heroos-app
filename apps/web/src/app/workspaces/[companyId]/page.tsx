@@ -12,7 +12,7 @@ import {
 } from "@/components/app/state-views";
 import { type AskMode, AskWorkspace } from "@/components/ask/ask-workspace";
 import { ASK_WORKFLOW } from "@/lib/ask/model";
-import { loadCases } from "@/lib/server/app-state";
+import { loadAskGateway, loadCases } from "@/lib/server/app-state";
 
 export const metadata: Metadata = { title: "Ask HeroOS · HeroOS" };
 
@@ -20,6 +20,8 @@ export const metadata: Metadata = { title: "Ask HeroOS · HeroOS" };
  * Ask HeroOS, the signed-in home of one Company (approved Oct 20 design,
  * Page 1). The URL id is only a resource identifier: the API authorizes every
  * request. `?cases=open` opens the Cases drawer (the old case-list URLs lead here).
+ * When the API says its AI gateway can answer here (M2-NEW-05), Ask is a
+ * conversation with HeroOS; otherwise it opens a case, as before.
  */
 export default function AskPage({ params, searchParams }: PageProps<"/workspaces/[companyId]">) {
   return (
@@ -31,7 +33,7 @@ export default function AskPage({ params, searchParams }: PageProps<"/workspaces
 
 async function AskContent({ params, searchParams }: Pick<PageProps<"/workspaces/[companyId]">, "params" | "searchParams">) {
   const [{ companyId }, query] = await Promise.all([params, searchParams]);
-  const state = await loadCases(companyId, ASK_WORKFLOW);
+  const [state, gateway] = await Promise.all([loadCases(companyId, ASK_WORKFLOW), loadAskGateway(companyId)]);
   switch (state.kind) {
     case "not_configured":
       return <NotConfiguredView />;
@@ -57,7 +59,12 @@ async function AskContent({ params, searchParams }: Pick<PageProps<"/workspaces/
       quiet={false}
       workspaces={state.workspaces}
     >
-      <AskWorkspace companyId={state.details.company.id} mode={mode} returning={(cases?.length ?? 0) > 0} />
+      <AskWorkspace
+        companyId={state.details.company.id}
+        conversation={mode === "ready" ? gateway : null}
+        mode={mode}
+        returning={(cases?.length ?? 0) > 0}
+      />
     </CompanyShell>
   );
 }

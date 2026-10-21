@@ -57,9 +57,20 @@ CSS, so it outranks Tailwind utilities: such a field needs
 `components/ask/ask-workspace.tsx`: "What can HR do for you today?" and one
 box. There is no workflow, category, stage or title to choose.
 
-There is no AI behind it yet (M2-NEW-05/06). Sending goes through one seam,
-`POST /bff/companies/{id}/ask` (`handleAskStart` in `lib/server/bff.ts`,
-`lib/ask/model.ts`), which those issues repoint at the AI gateway. Today it:
+It answers in one of two ways, decided by the API (`GET
+/companies/{id}/assistant`, read server-side by `loadAskGateway`):
+
+- **The AI conversation (M2-NEW-05)**, when Ask HeroOS's controlled gateway
+  can answer for this administrator: Send starts a conversation with HeroOS
+  through `POST /bff/companies/{id}/assistant/messages`
+  (`ask-conversation.tsx`, `lib/ask/conversation.ts`). No case is opened;
+  HeroOS answers from the approved knowledge runtime only and its turns carry
+  no outcome label or colour. See [ai-gateway.md](ai-gateway.md).
+- **Otherwise** (the gateway is off by default, or not configured, or has no
+  approved knowledge, or the API predates it): sending goes through the Ask
+  seam, `POST /bff/companies/{id}/ask` (`handleAskStart` in
+  `lib/server/bff.ts`, `lib/ask/model.ts`). M2-NEW-06/07 connect the
+  conversation to cases. Today the seam:
 
 1. opens a case of the reference workflow (Disciplinary, the only one HeroOS
    runs) through the existing API, with a neutral title made in the founder's
