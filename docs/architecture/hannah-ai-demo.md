@@ -1,5 +1,13 @@
 # Hannah AI demo (conversational, synthetic scenarios only)
 
+> **Status (M2-NEW-05): legacy.** Ask HeroOS's controlled AI conversation
+> gateway ([ai-gateway.md](ai-gateway.md)) supersedes this demo's behavior: it
+> speaks as HeroOS at Company level, answers only from the approved knowledge
+> runtime and may explain approved options. It reuses this demo's provider
+> adapter (extended with a JSON request), usage limits, reply check and error
+> handling. This demo's routes, switch and instruction are unchanged and no
+> page calls them.
+>
 > **Status (M2-NEW-02, 2026-10-21): the chat is no longer on the case page.**
 > JJ's approved signed-in design has HeroOS speak with its own mark and no
 > mascot in active HR advice, so the "Chat with Hannah" tab was removed from

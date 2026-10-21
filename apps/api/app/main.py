@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api import assistant, companies, documents, onboarding, workflows
+from app.api import assistant, companies, documents, gateway, onboarding, workflows
 from app.api.assistant import HannahDemo
+from app.assistant.gateway.service import AiGateway
 from app.assistant.groq import GroqChatProvider
 from app.assistant.limits import UsageLimits
 from app.auth.dependencies import get_authentication_provider
@@ -147,6 +148,56 @@ def load_hannah_demo(config: Settings) -> HannahDemo:
     )
 
 
+def load_ai_gateway(config: Settings, knowledge: KnowledgeBundle | None) -> AiGateway:
+    """Ask HeroOS's controlled AI gateway (docs/architecture/ai-gateway.md).
+
+    Off unless enabled. Enabled, it answers only when every prerequisite holds
+    (provider, model, key, approval reference, approved knowledge or explicitly
+    allowed development knowledge); otherwise it stays unavailable and the
+    log names what is missing, never a key or a value.
+    """
+    key = config.groq_api_key
+    provider = (
+        GroqChatProvider(key, config.heroos_ai_gateway_model)
+        if config.heroos_ai_gateway_provider == "groq"
+        and config.heroos_ai_gateway_model is not None
+        and key is not None
+        and key.get_secret_value().strip()
+        else None
+    )
+    ai = AiGateway(
+        enabled=config.heroos_ai_gateway_enabled,
+        provider=provider,
+        bundle=knowledge,
+        approval=config.heroos_ai_gateway_approval,
+        allow_development_knowledge=config.heroos_ai_gateway_allow_development_knowledge,
+        limits=UsageLimits(
+            account_limit=config.heroos_ai_gateway_account_limit,
+            global_per_minute=config.heroos_ai_gateway_global_limit_per_minute,
+            global_per_day=config.heroos_ai_gateway_global_limit_per_day,
+        ),
+    )
+    if not ai.enabled:
+        logger.info("AI gateway disabled")
+    elif ai.reason is None:
+        logger.info(
+            "AI gateway enabled (provider=%s, model=%s, approval=%s, development_knowledge=%s, "
+            "account_limit=%d/5min, global_limit=%d/min %d/day)",
+            config.heroos_ai_gateway_provider,
+            config.heroos_ai_gateway_model,
+            config.heroos_ai_gateway_approval,
+            ai.development_knowledge,
+            config.heroos_ai_gateway_account_limit,
+            config.heroos_ai_gateway_global_limit_per_minute,
+            config.heroos_ai_gateway_global_limit_per_day,
+        )
+    else:
+        logger.warning(
+            "AI gateway enabled but unavailable (missing=%s)", ",".join(ai.missing) or "none"
+        )
+    return ai
+
+
 async def health() -> dict[str, str]:
     return {"status": "ok"}
 
@@ -179,12 +230,15 @@ def create_app(config: Settings) -> FastAPI:
     application.state.knowledge_bundle = load_knowledge(config)
     # The Hannah AI demo: off unless enabled, then for every Company administrator.
     application.state.hannah_demo = load_hannah_demo(config)
+    # Ask HeroOS's AI gateway: off unless enabled and every prerequisite holds.
+    application.state.ai_gateway = load_ai_gateway(config, application.state.knowledge_bundle)
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)
     application.include_router(onboarding.router)
     application.include_router(workflows.router)
     application.include_router(documents.router)
     application.include_router(assistant.router)
+    application.include_router(gateway.router)
     return application
 
 

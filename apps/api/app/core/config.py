@@ -32,6 +32,12 @@ SensitiveScreening = Literal["disabled", "synthetic_demo"]
 HANNAH_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
 DEFAULT_HANNAH_MODEL = "openai/gpt-oss-120b"
 
+# The Ask HeroOS gateway's provider (server configuration only; one adapter today).
+AiGatewayProvider = Literal["groq"]
+# A reference to HeroOS's approval of this deployment's AI configuration (for
+# example a privacy decision id): a short identifier, never free text.
+AI_GATEWAY_APPROVAL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$")
+
 # The pinned SHA-256 of the rule bundle (or template bundle) file (lowercase hex).
 RULE_BUNDLE_PIN = re.compile(r"^[0-9a-f]{64}$")
 
@@ -202,6 +208,42 @@ class Settings(DatabaseSettings):
     heroos_hannah_global_limit_per_day: Annotated[int, Field(ge=1, le=1_000_000)] = 900
     # The GroqCloud API key (server-side only). Unset: the demo answers 503.
     groq_api_key: SecretStr | None = None
+
+    # Ask HeroOS's controlled AI conversation gateway (M2-NEW-05). Off unless
+    # explicitly enabled. Enabled, it is active only when every prerequisite
+    # holds: a provider and model chosen here (never by a client), the
+    # provider's key, a valid approved-knowledge bundle, and the reference of
+    # HeroOS's approval of this deployment's AI configuration (provider, data
+    # protection terms, environment). A bundle that is still development or
+    # synthetic content also needs ALLOW_DEVELOPMENT_KNOWLEDGE, which
+    # production refuses. Anything missing: the gateway stays unavailable
+    # (fail closed) and everything else works (docs/architecture/ai-gateway.md).
+    heroos_ai_gateway_enabled: bool = False
+    heroos_ai_gateway_provider: AiGatewayProvider | None = None
+    heroos_ai_gateway_model: str | None = None
+    heroos_ai_gateway_approval: str | None = None
+    heroos_ai_gateway_allow_development_knowledge: bool = False
+    # Founder turns (each up to four provider requests) in this API process's
+    # memory: per account per 5 minutes, and for the whole service per minute
+    # and per day. Technical abuse ceilings, not a commercial allowance.
+    heroos_ai_gateway_account_limit: Annotated[int, Field(ge=1, le=1000)] = 10
+    heroos_ai_gateway_global_limit_per_minute: Annotated[int, Field(ge=1, le=10_000)] = 6
+    heroos_ai_gateway_global_limit_per_day: Annotated[int, Field(ge=1, le=1_000_000)] = 300
+
+    @model_validator(mode="after")
+    def _validate_ai_gateway(self) -> Self:
+        model = self.heroos_ai_gateway_model
+        if model is not None and not HANNAH_MODEL_ID.fullmatch(model):
+            raise ValueError("HEROOS_AI_GATEWAY_MODEL must be a model identifier")
+        approval = self.heroos_ai_gateway_approval
+        if approval is not None and not AI_GATEWAY_APPROVAL.fullmatch(approval):
+            raise ValueError("HEROOS_AI_GATEWAY_APPROVAL must be a short reference identifier")
+        if self.heroos_env == "production" and self.heroos_ai_gateway_allow_development_knowledge:
+            raise ValueError(
+                "HEROOS_AI_GATEWAY_ALLOW_DEVELOPMENT_KNOWLEDGE must be false when "
+                "HEROOS_ENV=production (only approved knowledge serves customers)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_hannah_demo(self) -> Self:

@@ -1,18 +1,29 @@
 "use client";
 
-import { type FormEvent, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { AdviserMark, PersonAvatar } from "@/components/app/workspace-chrome";
-import { SendIcon } from "@/components/site/icons";
+import type { GatewayStatus } from "@/lib/ask/conversation";
 import { ASK_TEXT_MAX, parseAskStarted, provisionalCaseTitle } from "@/lib/ask/model";
+
+import { AskConversation } from "./ask-conversation";
+import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
 
 /**
  * Page 1, Ask HeroOS (approved Oct 20 design): one question, one box. The
  * founder explains the situation in their own words; there is no workflow,
- * category, stage or title to choose. Sending opens a real case through the
- * Ask seam (`/bff/companies/{id}/ask`, lib/ask/model.ts) and takes the founder
- * there. Nothing here pretends to be AI: until M2-NEW-05/06 the case follows
- * HeroOS's guided Disciplinary workflow.
+ * category, stage or title to choose.
+ *
+ * Two ways it answers, decided by the API, never by this page:
+ *
+ * - **HeroOS's AI conversation** (M2-NEW-05, `conversation`): when the API says
+ *   its controlled gateway can answer for this administrator, Send starts a
+ *   conversation with HeroOS (`ask-conversation.tsx`). No case is opened.
+ * - **Otherwise** (the gateway is switched off, not configured or has no
+ *   approved knowledge): Send opens a real case through the Ask seam
+ *   (`/bff/companies/{id}/ask`, lib/ask/model.ts) and takes the founder there.
+ *   Nothing pretends to be AI: the case follows HeroOS's guided Disciplinary
+ *   workflow.
  */
 
 /** Who may ask: administrators open cases; for everyone else the box says why it can't. */
@@ -62,12 +73,35 @@ export function AskWorkspace({
   companyId,
   mode,
   returning,
+  conversation = null,
   fetcher,
   navigate,
 }: {
   companyId: string;
   mode: AskMode;
   /** The founder has cases already ("Welcome back"). */
+  returning: boolean;
+  /** HeroOS's AI gateway, when the API says it can answer here (M2-NEW-05). */
+  conversation?: GatewayStatus | null;
+  fetcher?: typeof fetch;
+  navigate?: (href: string) => void;
+}) {
+  if (mode === "ready" && conversation?.available) {
+    return <AskConversation companyId={companyId} fetcher={fetcher} notice={conversation.notice} returning={returning} />;
+  }
+  return <AskCaseOpening companyId={companyId} fetcher={fetcher} mode={mode} navigate={navigate} returning={returning} />;
+}
+
+/** Ask without the AI gateway: Send opens a real case (M2-NEW-02). */
+function AskCaseOpening({
+  companyId,
+  mode,
+  returning,
+  fetcher,
+  navigate,
+}: {
+  companyId: string;
+  mode: AskMode;
   returning: boolean;
   fetcher?: typeof fetch;
   navigate?: (href: string) => void;
@@ -82,8 +116,7 @@ export function AskWorkspace({
   const value = text.trim();
   const canSend = mode === "ready" && value.length > 0 && status.kind !== "opening";
 
-  async function send(event?: FormEvent) {
-    event?.preventDefault();
+  async function send() {
     if (!canSend || inFlight.current) return;
     if (attempt.current?.text !== value) {
       attempt.current = {
@@ -128,97 +161,39 @@ export function AskWorkspace({
   if (status.kind === "opening") return <Opening at={status.at} text={status.text} />;
 
   return (
-    <div className="flex flex-1 flex-col px-4 pb-4 sm:items-center sm:justify-center sm:px-6 sm:pb-[12vh]">
-      <div className="flex flex-1 flex-col items-center justify-center text-center sm:flex-none">
-        <span className="ws-rise">
-          <AdviserMark size="hero" />
-        </span>
-        <p className="ws-rise mt-6 text-[0.9375rem] font-semibold text-hero-muted sm:text-base">
-          {returning ? "Welcome back." : "Welcome."}
-        </p>
-        <h1 className="ws-rise mt-2 text-[2.375rem] font-extrabold leading-[1.04] tracking-[-0.04em] text-hero-navy sm:text-[3.5rem]">
-          What can HR do for you today?
-        </h1>
-        <p className="ws-rise-late mt-4 text-[1.0625rem] text-hero-muted sm:text-xl">Explain the situation in your own words.</p>
-      </div>
-      <div className="w-full sm:mt-11 sm:max-w-[46rem]">
-        <form noValidate onSubmit={(event) => void send(event)}>
-          <div
-            className={`rounded-[1.75rem] border border-hero-navy/[0.12] bg-white shadow-[0_1px_2px_rgb(14_30_61/0.05),0_28px_60px_-30px_rgb(14_30_61/0.45)] transition-[border-color,box-shadow] duration-200 focus-within:border-hero-blue focus-within:shadow-[0_0_0_4px_rgb(61_107_196/0.12),0_28px_60px_-30px_rgb(14_30_61/0.45)] ${
-              mode === "ready" ? "" : "opacity-70"
-            }`}
-          >
-            <label className="sr-only" htmlFor="ask-heroos">
-              Explain the situation in your own words
-            </label>
-            {/* The composer's rounded border shows focus (focus-within); the field draws no
-                rectangle of its own. `!`: the global :focus-visible outline is unlayered, so it
-                outranks utilities. In forced-colors mode the field keeps an outline. */}
-            <textarea
-              aria-describedby={status.kind === "idle" ? undefined : "ask-status"}
-              className="block min-h-[7rem] w-full resize-none bg-transparent px-6 pt-5 text-[1.0625rem] leading-relaxed text-hero-navy placeholder:text-hero-muted/80 focus-visible:outline-hidden! disabled:cursor-not-allowed sm:min-h-[7.75rem] sm:text-lg"
-              disabled={mode !== "ready"}
-              id="ask-heroos"
-              maxLength={ASK_TEXT_MAX}
-              onChange={(event) => {
-                setText(event.target.value);
-                if (status.kind === "failed") setStatus({ kind: "idle" });
-              }}
-              onKeyDown={(event) => {
-                // Enter adds a line; Ctrl+Enter (⌘+Enter) sends.
-                if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send();
-              }}
-              placeholder={PLACEHOLDER[mode]}
-              rows={3}
-              value={text}
-            />
-            <div className="flex items-center gap-2 px-3 pb-3">
-              <button
-                aria-label="Send"
-                className={`ml-auto inline-flex size-12 shrink-0 items-center justify-center rounded-full text-white transition-[background-color,transform] duration-150 ${
-                  canSend
-                    ? "bg-hero-navy shadow-[0_10px_20px_-10px_rgb(14_30_61/0.9)] hover:-translate-y-px hover:bg-[#182c55]"
-                    : "cursor-not-allowed bg-[#c5ccd9]"
-                }`}
-                disabled={!canSend}
-                type="submit"
-              >
-                <SendIcon className="size-5" />
-              </button>
-            </div>
-          </div>
-        </form>
-        {status.kind === "failed" || status.kind === "partial" ? (
-          <div
-            className="ws-rise mt-3 rounded-2xl border border-[#f1c2c6] bg-[#fff3f3] px-4 py-3 text-left text-[0.9375rem] text-hero-navy"
-            id="ask-status"
-            role="alert"
-          >
-            {status.kind === "partial" ? (
-              <>
-                HeroOS opened the case but couldn&apos;t save your description.{" "}
-                <a className="font-bold text-hero-blue-ink underline" href={status.caseHref}>
-                  Open the case
-                </a>{" "}
-                and add it there; your text is still in the box above.
-              </>
-            ) : (
-              <>
-                {FAILURES[status.reason]}
-                {status.reason === "session_expired" ? (
-                  <>
-                    {" "}
-                    <a className="font-bold text-hero-blue-ink underline" href="/auth/login">
-                      Sign in again
-                    </a>
-                  </>
-                ) : null}
-              </>
-            )}
-          </div>
-        ) : null}
-      </div>
-    </div>
+    <AskLanding returning={returning}>
+      <Composer
+        canSend={canSend}
+        describedBy={status.kind === "idle" ? undefined : "ask-status"}
+        disabled={mode !== "ready"}
+        maxLength={ASK_TEXT_MAX}
+        onChange={(value) => {
+          setText(value);
+          if (status.kind === "failed") setStatus({ kind: "idle" });
+        }}
+        onSend={() => void send()}
+        placeholder={PLACEHOLDER[mode]}
+        value={text}
+      />
+      {status.kind === "failed" || status.kind === "partial" ? (
+        <AskAlert>
+          {status.kind === "partial" ? (
+            <>
+              HeroOS opened the case but couldn&apos;t save your description.{" "}
+              <a className="font-bold text-hero-blue-ink underline" href={status.caseHref}>
+                Open the case
+              </a>{" "}
+              and add it there; your text is still in the box above.
+            </>
+          ) : (
+            <>
+              {FAILURES[status.reason]}
+              {status.reason === "session_expired" ? <SignInAgain /> : null}
+            </>
+          )}
+        </AskAlert>
+      ) : null}
+    </AskLanding>
   );
 }
 
