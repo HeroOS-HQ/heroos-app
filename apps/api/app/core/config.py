@@ -230,6 +230,16 @@ class Settings(DatabaseSettings):
     heroos_ai_gateway_global_limit_per_minute: Annotated[int, Field(ge=1, le=10_000)] = 6
     heroos_ai_gateway_global_limit_per_day: Annotated[int, Field(ge=1, le=1_000_000)] = 300
 
+    # Real external AI calls (the gateway and the Hannah demo). Never from an
+    # automated test run (pytest, or a harness that sets HEROOS_AUTOMATED_TEST)
+    # or local development, whatever gateway, demo or key settings it was given:
+    # those processes get an offline provider that fails every request without a
+    # network call. A deliberate local live smoke test sets
+    # HEROOS_AI_LIVE_SMOKE_ENABLED=true; production refuses it
+    # (app/assistant/live.py, docs/architecture/ai-gateway.md).
+    heroos_automated_test: bool = False
+    heroos_ai_live_smoke_enabled: bool = False
+
     @model_validator(mode="after")
     def _validate_ai_gateway(self) -> Self:
         model = self.heroos_ai_gateway_model
@@ -242,6 +252,11 @@ class Settings(DatabaseSettings):
             raise ValueError(
                 "HEROOS_AI_GATEWAY_ALLOW_DEVELOPMENT_KNOWLEDGE must be false when "
                 "HEROOS_ENV=production (only approved knowledge serves customers)"
+            )
+        if self.heroos_env == "production" and self.heroos_ai_live_smoke_enabled:
+            raise ValueError(
+                "HEROOS_AI_LIVE_SMOKE_ENABLED must be false when HEROOS_ENV=production "
+                "(a local smoke-test switch, never a deployment setting)"
             )
         return self
 

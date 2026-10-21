@@ -121,6 +121,8 @@ def test_enabled_needs_only_the_switch_and_a_key() -> None:
     demo = load_hannah_demo(settings(heroos_hannah_demo_enabled=True, groq_api_key=KEY))
     assert demo.enabled is True
     assert demo.provider is not None and demo.provider.model == DEFAULT_HANNAH_MODEL
+    # A test run gets an offline stand-in, never the real provider (app.assistant.live).
+    assert demo.provider.name == "offline"
     assert load_hannah_demo(settings(heroos_hannah_demo_enabled=True)).provider is None
 
 

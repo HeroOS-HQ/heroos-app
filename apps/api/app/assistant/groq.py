@@ -14,9 +14,13 @@ as text, unvalidated: the gateway validates it.
 Failures map to fixed kinds (``rate_limited``, ``timeout``, ``unavailable``);
 the provider's error bodies are read only up to a limit and then dropped, never
 logged or returned.
+
+The transport refuses every request in an automated test run unless a live
+smoke test opted in (``app.assistant.live``): no test reaches GroqCloud.
 """
 
 import json
+import logging
 import ssl
 import urllib.error
 import urllib.request
@@ -25,7 +29,10 @@ from typing import Any, Final
 
 from pydantic import SecretStr
 
+from app.assistant.live import transport_permitted
 from app.assistant.provider import AssistantError, ChatTurn, Completion
+
+logger = logging.getLogger(__name__)
 
 GROQ_CHAT_COMPLETIONS_URL: Final = "https://api.groq.com/openai/v1/chat/completions"
 TIMEOUT_SECONDS: Final = 30.0
@@ -61,6 +68,10 @@ def _tls_context() -> ssl.SSLContext:
 def _send(
     url: str, headers: Mapping[str, str], body: bytes, timeout: float
 ) -> tuple[int, Mapping[str, str], bytes]:
+    if not transport_permitted():
+        # An automated test run never reaches the provider (app.assistant.live).
+        logger.warning("External AI request blocked (automated test run)")
+        raise ConnectionRefusedError("external AI requests are blocked in automated tests")
     opener = urllib.request.build_opener(
         _RefuseRedirects(), urllib.request.HTTPSHandler(context=_tls_context())
     )

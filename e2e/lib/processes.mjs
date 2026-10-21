@@ -125,6 +125,11 @@ export function createApi({ repoRoot, runDir, port, tls, issuer, audience, clien
             // Trust only this run's CA for the OIDC discovery and JWKS fetches.
             SSL_CERT_FILE: tls.ca,
             ...extraEnv,
+            // Last, so no suite can undo them: this API is an automated test run,
+            // so it never calls a real AI provider whatever gateway, demo or key
+            // settings a suite passes (apps/api/app/assistant/live.py).
+            HEROOS_AUTOMATED_TEST: "true",
+            HEROOS_AI_LIVE_SMOKE_ENABLED: "false",
           },
         },
       );

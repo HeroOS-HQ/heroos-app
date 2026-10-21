@@ -89,7 +89,7 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     });
   });
 
-  it("shows HeroOS answering while it waits, with the words held in the box", async () => {
+  it("shows the founder's message once while HeroOS answers: in the conversation, not in the box", async () => {
     let release: (response: Response) => void = () => undefined;
     const slow = new Promise<Response>((resolve) => {
       release = resolve;
@@ -97,11 +97,47 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     setup(null, slow);
     await ask(WORDS);
     expect(await screen.findByRole("status", { name: "HeroOS is answering" })).toBeInTheDocument();
-    expect(send()).toBeDisabled();
+    // Exactly once on the page: the founder's turn. The box is empty and waits.
+    expect(screen.getAllByText(WORDS)).toHaveLength(1);
+    expect(screen.getByRole("group", { name: "You" })).toHaveTextContent(WORDS);
+    expect(box()).toHaveValue("");
     expect(box()).toHaveAttribute("readonly");
+    expect(box()).toHaveAttribute("placeholder", "HeroOS is answering…");
+    expect(send()).toBeDisabled();
     await act(async () => release(answer()));
     expect(await screen.findByText(REPLY)).toBeInTheDocument();
     expect(screen.queryByRole("status", { name: "HeroOS is answering" })).toBeNull();
+    // Ready for the next message, and still shown once.
+    expect(screen.getAllByText(WORDS)).toHaveLength(1);
+    expect(box()).toHaveValue("");
+    expect(box()).not.toHaveAttribute("readonly");
+    expect(box()).toHaveAttribute("placeholder", "Reply in your own words.");
+    await waitFor(() => expect(box()).toHaveFocus());
+  });
+
+  it("puts a later message back in the box, and only there, when it fails", async () => {
+    let release: (response: Response) => void = () => undefined;
+    const slow = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    const { fetcher } = setup(null, answer(), slow, answer("Thanks, that helps."));
+    const SECOND = "[SYNTHETIC] Yes, I explained it to him last week.";
+    await ask(WORDS);
+    await screen.findByText(REPLY);
+    await ask(SECOND);
+    expect(screen.getAllByText(SECOND)).toHaveLength(1);
+    expect(box()).toHaveValue("");
+    await act(async () => release(reply(503, { error: "unavailable" })));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/couldn.t answer just now/);
+    // Not in the conversation (it wasn't answered), back in the box to send again.
+    expect(screen.queryByRole("group", { name: "You", description: SECOND })).toBeNull();
+    expect(screen.getAllByRole("group", { name: "You" })).toHaveLength(1);
+    expect(box()).toHaveValue(SECOND);
+    expect(box()).not.toHaveAttribute("readonly");
+    fireEvent.click(send());
+    expect(await screen.findByText("Thanks, that helps.")).toBeInTheDocument();
+    expect(bodyOf(fetcher, 2).message).toBe(SECOND);
+    expect(screen.getAllByText(SECOND)).toHaveLength(1);
   });
 
   it.each([
@@ -119,6 +155,8 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     await ask(WORDS);
     expect(await screen.findByRole("alert")).toHaveTextContent(copy);
     expect(box()).toHaveValue(WORDS);
+    expect(screen.getAllByText(WORDS)).toHaveLength(1);
+    await waitFor(() => expect(box()).toHaveFocus());
     expect(send()).toBeEnabled();
     // Sending again works, with the same words.
     fireEvent.click(send());
@@ -150,6 +188,26 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
     await waitFor(() => expect(screen.queryByText(REPLY)).toBeNull());
     expect(screen.getByRole("heading", { level: 1, name: "What can HR do for you today?" })).toBeInTheDocument();
+  });
+
+  it("scrolls to below the docked box, so the newest turn is never left under it", async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      setup(null, answer(REPLY, { safeNextStep: "Write down the dates." }));
+      await ask(WORDS);
+      await screen.findByText("Write down the dates.");
+      const target = scrolled.at(-1);
+      expect(target).toBeDefined();
+      // After the box and the not-saved note, not inside the conversation list.
+      expect(box().compareDocumentPosition(target!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByRole("list", { name: "Conversation with HeroOS" }).contains(target!)).toBe(false);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 
   it("sends with Ctrl+Enter and adds a line with Enter", async () => {
