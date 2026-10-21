@@ -144,16 +144,19 @@ export function AskWorkspace({
       <div className="w-full sm:mt-11 sm:max-w-[46rem]">
         <form noValidate onSubmit={(event) => void send(event)}>
           <div
-            className={`rounded-[1.75rem] border border-hero-navy/[0.12] bg-white shadow-[0_1px_2px_rgb(14_30_61/0.05),0_28px_60px_-30px_rgb(14_30_61/0.45)] transition-[border-color,box-shadow] duration-200 focus-within:border-hero-blue/70 focus-within:shadow-[0_0_0_4px_rgb(61_107_196/0.12),0_28px_60px_-30px_rgb(14_30_61/0.45)] ${
+            className={`rounded-[1.75rem] border border-hero-navy/[0.12] bg-white shadow-[0_1px_2px_rgb(14_30_61/0.05),0_28px_60px_-30px_rgb(14_30_61/0.45)] transition-[border-color,box-shadow] duration-200 focus-within:border-hero-blue focus-within:shadow-[0_0_0_4px_rgb(61_107_196/0.12),0_28px_60px_-30px_rgb(14_30_61/0.45)] ${
               mode === "ready" ? "" : "opacity-70"
             }`}
           >
             <label className="sr-only" htmlFor="ask-heroos">
               Explain the situation in your own words
             </label>
+            {/* The composer's rounded border shows focus (focus-within); the field draws no
+                rectangle of its own. `!`: the global :focus-visible outline is unlayered, so it
+                outranks utilities. In forced-colors mode the field keeps an outline. */}
             <textarea
               aria-describedby={status.kind === "idle" ? undefined : "ask-status"}
-              className="block min-h-[7rem] w-full resize-none bg-transparent px-6 pt-5 text-[1.0625rem] leading-relaxed text-hero-navy placeholder:text-hero-muted/80 focus-visible:outline-none disabled:cursor-not-allowed sm:min-h-[7.75rem] sm:text-lg"
+              className="block min-h-[7rem] w-full resize-none bg-transparent px-6 pt-5 text-[1.0625rem] leading-relaxed text-hero-navy placeholder:text-hero-muted/80 focus-visible:outline-hidden! disabled:cursor-not-allowed sm:min-h-[7.75rem] sm:text-lg"
               disabled={mode !== "ready"}
               id="ask-heroos"
               maxLength={ASK_TEXT_MAX}

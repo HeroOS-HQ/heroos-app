@@ -95,12 +95,14 @@ export function CasesPanel({
             <PlusIcon className="size-5" />
             New question
           </a>
-          <label className="flex min-h-11 items-center gap-2 rounded-xl border border-hero-border bg-white px-3 text-[0.9375rem] text-hero-navy focus-within:border-hero-blue">
+          {/* Focus follows the field's rounded border (focus-within), as in the Ask composer: the
+              input draws no rectangle of its own (`!` outranks the unlayered global outline). */}
+          <label className="flex min-h-11 items-center gap-2 rounded-xl border border-hero-border bg-white px-3 text-[0.9375rem] text-hero-navy transition-[border-color,box-shadow] duration-150 focus-within:border-hero-blue focus-within:shadow-[0_0_0_4px_rgb(61_107_196/0.12)]">
             <SearchIcon className="size-4 shrink-0 text-hero-muted" />
             <span className="sr-only">Search your cases</span>
             <input
               autoComplete="off"
-              className="min-w-0 flex-1 bg-transparent placeholder:text-hero-muted focus-visible:outline-none"
+              className="min-w-0 flex-1 bg-transparent placeholder:text-hero-muted focus-visible:outline-hidden!"
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search cases"
               type="search"

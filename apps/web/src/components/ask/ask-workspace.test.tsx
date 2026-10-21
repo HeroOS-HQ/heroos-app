@@ -126,6 +126,14 @@ describe("AskWorkspace (Ask HeroOS)", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
+  it("shows focus on the rounded composer, never as a rectangle on the field", () => {
+    setup();
+    // The global :focus-visible outline is unlayered CSS: only an important utility turns it off
+    // (the real cascade is checked in a browser, e2e A11Y-12).
+    expect(box()).toHaveClass("focus-visible:outline-hidden!");
+    expect(box().parentElement).toHaveClass("rounded-[1.75rem]", "focus-within:border-hero-blue");
+  });
+
   it("welcomes a founder back once there are cases", () => {
     render(<AskWorkspace companyId={COMPANY_ID} mode="ready" returning />);
     expect(screen.getByText("Welcome back.")).toBeInTheDocument();

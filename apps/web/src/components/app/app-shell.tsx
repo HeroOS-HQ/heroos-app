@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 
-import { BrandMark } from "@/components/site/brand-mark";
+import { WorkspaceBrandMark } from "@/components/site/brand-mark";
 import { DemoNotice } from "@/components/site/demo-notice";
 
 import { BackForwardCacheGuard } from "./back-forward-cache-guard";
@@ -56,7 +56,7 @@ export function AppShell({ children, context, signedIn = true, homeHref = "/work
               className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg"
               href={homeHref}
             >
-              <BrandMark />
+              <WorkspaceBrandMark />
             </a>
             {context ? (
               <>
