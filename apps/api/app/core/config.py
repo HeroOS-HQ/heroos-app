@@ -177,6 +177,17 @@ class Settings(DatabaseSettings):
     heroos_template_bundle_path: Path | None = None
     heroos_template_bundle_sha256: str | None = None
 
+    # Approved knowledge (M2-NEW-04): the private knowledge bundle compiled
+    # offline from HeroOS's approved sources, a JSON file in server-side storage
+    # only this service can read, and the SHA-256 the file must have (set both
+    # or neither). Unset: the knowledge runtime answers "bundle unavailable"
+    # (fail closed) and everything else works. Set: the bundle is read and
+    # verified once at startup (pin, schema, both digests, safety invariants);
+    # a missing, changed or invalid file stops startup, and production refuses
+    # synthetic or development content (docs/architecture/knowledge-runtime.md).
+    heroos_knowledge_bundle_path: Path | None = None
+    heroos_knowledge_bundle_sha256: str | None = None
+
     # Hannah AI demo (conversational, GroqCloud). Off unless explicitly enabled;
     # then any Company administrator can use it in their own Company's Cases.
     # Production refuses it. The chat never changes a Case and receives no
@@ -230,6 +241,20 @@ class Settings(DatabaseSettings):
         if path is not None and self.heroos_rule_bundle_path is None:
             # Templates are bound to the rule bundle's stages: never without it.
             raise ValueError("HEROOS_TEMPLATE_BUNDLE_PATH requires HEROOS_RULE_BUNDLE_PATH")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_knowledge_bundle(self) -> Self:
+        path, pin = self.heroos_knowledge_bundle_path, self.heroos_knowledge_bundle_sha256
+        if (path is None) != (pin is None):
+            raise ValueError(
+                "HEROOS_KNOWLEDGE_BUNDLE_PATH and HEROOS_KNOWLEDGE_BUNDLE_SHA256 must be set "
+                "together"
+            )
+        if path is not None and not path.is_absolute():
+            raise ValueError("HEROOS_KNOWLEDGE_BUNDLE_PATH must be an absolute path")
+        if pin is not None and not RULE_BUNDLE_PIN.fullmatch(pin):
+            raise ValueError("HEROOS_KNOWLEDGE_BUNDLE_SHA256 must be 64 lowercase hex characters")
         return self
 
     @model_validator(mode="after")

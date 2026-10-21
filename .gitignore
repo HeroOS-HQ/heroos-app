@@ -78,3 +78,16 @@ template-review-packs/
 *.dotx
 *.dotm
 *.doc
+
+# Private approved knowledge (M2-NEW-04): compiled knowledge bundles, the
+# compile mappings, validation reports and the source workbooks. None of them
+# may ever be committed (the repository is public); this is a second guard
+# (docs/architecture/knowledge-runtime.md). Name private bundles
+# *.private-knowledge.json and mappings *.private-knowledge-mapping.json.
+*.private-knowledge.json
+*.private-knowledge-mapping.json
+private-knowledge-bundles/
+knowledge-reports/
+*.xlsx
+*.xlsm
+*.xls

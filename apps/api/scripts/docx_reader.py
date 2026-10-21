@@ -248,8 +248,14 @@ def _style(paragraph: ElementTree.Element) -> tuple[bool, bool]:
     return heading, props.find(f"{W}numPr") is not None
 
 
-def read_docx(path: Path) -> Document:
-    """The document's text and structure, or ``DocxRefused``. Never writes or runs anything."""
+def read_docx(path: Path, *, nested_tables: bool = False) -> Document:
+    """The document's text and structure, or ``DocxRefused``. Never writes or runs anything.
+
+    A table inside a table cell is refused (a template's layout must be flat),
+    unless ``nested_tables``: the knowledge compiler reads guidance laid out in
+    nested boxes, and then the inner paragraphs belong to the outer cell, in
+    document order.
+    """
     try:
         content = path.read_bytes()
     except OSError as error:
@@ -300,6 +306,23 @@ def read_docx(path: Path) -> Document:
         chars = _paragraph_chars(element, f"paragraph {index}", flags)
         return Paragraph(index, tuple(chars), heading, list_item, cell)
 
+    def cell_paragraphs(
+        cell: ElementTree.Element, where: tuple[int, int, int], depth: int
+    ) -> list[Paragraph]:
+        if depth > MAX_DEPTH:
+            raise DocxRefused("nesting_too_deep", f"table {where[0]}")
+        found: list[Paragraph] = []
+        for nested in cell:
+            if nested.tag == f"{W}p":
+                found.append(paragraph(nested, where))
+            elif nested.tag == f"{W}tbl":
+                if not nested_tables:
+                    raise DocxRefused("nested_tables", f"table {where[0]}")
+                for row in nested.findall(f"{W}tr"):
+                    for inner in row.findall(f"{W}tc"):
+                        found += cell_paragraphs(inner, where, depth + 1)
+        return found
+
     def visit(element: ElementTree.Element, depth: int = 0) -> None:
         if depth > MAX_DEPTH:
             raise DocxRefused("nesting_too_deep", "body")
@@ -313,10 +336,7 @@ def read_docx(path: Path) -> Document:
                 for r, row in enumerate(child.findall(f"{W}tr")):
                     cells = []
                     for c, cell in enumerate(row.findall(f"{W}tc")):
-                        for nested in cell:
-                            if nested.tag == f"{W}tbl":
-                                raise DocxRefused("nested_tables", f"table {t}")
-                        cells.append(tuple(paragraph(p, (t, r, c)) for p in cell.findall(f"{W}p")))
+                        cells.append(tuple(cell_paragraphs(cell, (t, r, c), depth + 1)))
                     rows.append(tuple(cells))
                 items.append(Table(t, tuple(rows)))
             elif child.tag in (f"{W}sdt", f"{W}sdtContent", f"{W}customXml"):
