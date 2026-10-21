@@ -23,7 +23,13 @@ for Company administrators only: a member's list leaves them out and a member
 reading one gets the same 404 as for a missing record.
 
 Only ``PATCH /blueprint`` commits; every other request's transaction is rolled
-back when the session closes. Founder self-registration is
+back when the session closes.
+
+The Blueprint read model is ``app.companies.blueprint``'s canonical company
+context (M2-NEW-03): the Company's display name (``companies.name``, read
+only), its business profile and company context, its jurisdiction exactly as
+the workflows see it, the primary contact and the people with access (no
+names or emails: HeroOS keeps none), and what still needs attention. Founder self-registration is
 ``app.api.onboarding``; role assignment has no HTTP route (trusted operator
 operation, docs/operations/company-registration.md).
 """
@@ -38,23 +44,39 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    Strict,
+    StrictStr,
     StringConstraints,
     model_validator,
 )
 
-from app.auth.dependencies import CompanyContext
+from app.auth.dependencies import CompanyContext, forbidden
+from app.auth.exceptions import AuthorizationError
+from app.auth.models import AuthenticatedCompanyContext
+from app.companies.blueprint import (
+    CompanyBlueprintView,
+    CompanyPerson,
+    InvalidPrimaryContact,
+    load_company_blueprint,
+    normalize_website_url,
+    plain_text,
+    save_blueprint_changes,
+)
 from app.companies.jurisdiction import (
     JurisdictionAssessment,
     JurisdictionReadiness,
     ReadinessReason,
-    assess_jurisdiction,
 )
-from app.db.models import CompanyBlueprint
-from app.db.models.company_blueprint import MAX_LICENSING_AUTHORITY_LENGTH
+from app.db.models.company_blueprint import (
+    MAX_COMPANY_SUMMARY_LENGTH,
+    MAX_HR_SUPPORT_NOTES_LENGTH,
+    MAX_LICENSING_AUTHORITY_LENGTH,
+    MAX_POLICY_CONTEXT_LENGTH,
+)
 from app.db.models.membership import ROLE_COMPANY_ADMIN
 from app.repositories import cases, companies
-from app.repositories.company_blueprints import get_company_blueprint, update_company_blueprint
 from app.tenancy.dependencies import CompanyAdminDb, CompanyDb
+from app.tenancy.scope import CompanyScope
 from app.workflows.access import hidden_case_types, may_access_case_type
 
 router = APIRouter(prefix="/companies/{company_id}", tags=["companies"])
@@ -82,6 +104,19 @@ class CaseOut(BaseModel):
 Role = Literal["member", "company_admin"]
 LicensingLocation = Literal["difc", "other", "not_sure"]
 EmploymentJurisdiction = Literal["uae_federal", "difc", "adgm", "other"]
+PoliciesExist = Literal["yes", "no", "not_sure"]
+HrSupport = Literal["none", "internal", "external", "mixed", "other"]
+# app.companies.blueprint.BLUEPRINT_DETAILS
+BlueprintDetail = Literal[
+    "legal_name",
+    "industry",
+    "employee_count",
+    "company_summary",
+    "jurisdiction",
+    "policies",
+    "hr_support",
+    "primary_contact",
+]
 
 
 class MembershipOut(BaseModel):
@@ -107,13 +142,40 @@ class JurisdictionOut(BaseModel):
     guidance_allowed: bool
 
 
+class PersonOut(BaseModel):
+    """Someone with access to the Company. HeroOS keeps no names or email addresses."""
+
+    membership_id: UUID
+    role: Role
+    member_since: datetime
+    is_current_user: bool
+    is_primary_contact: bool
+
+
+class CompletenessOut(BaseModel):
+    complete: bool
+    missing: list[BlueprintDetail]
+
+
 class BlueprintOut(BaseModel):
     company_id: UUID
+    # companies.name: the workspace's display name, read only here.
+    company_name: str
     legal_name: str | None
     industry: str | None
     employee_count: int | None
+    website_url: str | None
+    company_summary: str | None
     licensing: LicensingOut
     jurisdiction: JurisdictionOut
+    policies_exist: PoliciesExist | None
+    policy_context: str | None
+    hr_support: HrSupport | None
+    hr_support_notes: str | None
+    primary_contact: PersonOut | None
+    # Everyone with active access, oldest first (the primary contact's choices).
+    people: list[PersonOut]
+    completeness: CompletenessOut
     updated_at: datetime | None
 
 
@@ -134,6 +196,28 @@ LicensingAuthority = Annotated[
     str,
     StringConstraints(min_length=1, max_length=MAX_LICENSING_AUTHORITY_LENGTH),
     AfterValidator(refuse_untidy_text),
+]
+# Normalized (app.companies.blueprint.normalize_website_url): the response
+# returns the stored form. The input bound only limits the work done.
+WebsiteUrl = Annotated[
+    StrictStr,
+    StringConstraints(min_length=1, max_length=600),
+    AfterValidator(normalize_website_url),
+]
+CompanySummary = Annotated[
+    StrictStr,
+    StringConstraints(min_length=1, max_length=MAX_COMPANY_SUMMARY_LENGTH),
+    AfterValidator(plain_text),
+]
+PolicyContext = Annotated[
+    StrictStr,
+    StringConstraints(min_length=1, max_length=MAX_POLICY_CONTEXT_LENGTH),
+    AfterValidator(plain_text),
+]
+HrSupportNotes = Annotated[
+    StrictStr,
+    StringConstraints(min_length=1, max_length=MAX_HR_SUPPORT_NOTES_LENGTH),
+    AfterValidator(plain_text),
 ]
 
 
@@ -158,11 +242,13 @@ class LicensingIn(BaseModel):
         return self
 
 
-class BlueprintUpdate(BaseModel):
-    """Administrator changes. Only the fields sent are changed; ``null`` clears.
+class BlueprintFields(BaseModel):
+    """The company's own answers, validated once for every write path.
 
-    Unknown fields are refused (``extra="forbid"``): role, Company and the
-    jurisdiction confirmation can never be mass-assigned.
+    Founder registration takes exactly these (``app.api.onboarding``); the
+    administrator update adds the primary contact. Only the fields sent are
+    changed; ``null`` clears. Unknown fields are refused (``extra="forbid"``):
+    role, Company and the jurisdiction confirmation can never be mass-assigned.
     """
 
     model_config = ConfigDict(extra="forbid", strict=True)
@@ -171,6 +257,24 @@ class BlueprintUpdate(BaseModel):
     industry: Industry | None = None
     employee_count: Annotated[int, Field(ge=0, le=10_000_000)] | None = None
     licensing: LicensingIn | None = None
+    website_url: WebsiteUrl | None = None
+    company_summary: CompanySummary | None = None
+    policies_exist: PoliciesExist | None = None
+    policy_context: PolicyContext | None = None
+    hr_support: HrSupport | None = None
+    hr_support_notes: HrSupportNotes | None = None
+
+
+class BlueprintUpdate(BlueprintFields):
+    """Administrator changes, including the primary contact.
+
+    ``primary_contact_membership_id`` must be an active Membership of this
+    Company (checked in the write transaction; the same 422 for anything else,
+    another Company's Membership included).
+    """
+
+    # JSON has no UUID type: the id arrives as a string.
+    primary_contact_membership_id: Annotated[UUID, Strict(False)] | None = None
 
 
 def _not_found() -> HTTPException:
@@ -188,31 +292,61 @@ def jurisdiction_out(assessment: JurisdictionAssessment) -> JurisdictionOut:
     )
 
 
-def _blueprint_out(company_id: UUID, blueprint: CompanyBlueprint | None) -> BlueprintOut:
-    """Every authorized Company has a Blueprint view; a missing row reads as empty."""
-    jurisdiction = jurisdiction_out(assess_jurisdiction(blueprint))
-    if blueprint is None:
-        return BlueprintOut(
-            company_id=company_id,
-            legal_name=None,
-            industry=None,
-            employee_count=None,
-            licensing=LicensingOut(location=None, authority=None),
-            jurisdiction=jurisdiction,
-            updated_at=None,
-        )
-    return BlueprintOut(
-        company_id=blueprint.company_id,
-        legal_name=blueprint.legal_name,
-        industry=blueprint.industry,
-        employee_count=blueprint.employee_count,
-        licensing=LicensingOut(
-            location=blueprint.licensing_location,  # type: ignore[arg-type]
-            authority=blueprint.licensing_authority,
-        ),
-        jurisdiction=jurisdiction,
-        updated_at=blueprint.updated_at,
+def _person_out(person: CompanyPerson) -> PersonOut:
+    return PersonOut(
+        membership_id=person.membership_id,
+        role=person.role,  # type: ignore[arg-type]
+        member_since=person.member_since,
+        is_current_user=person.is_current_user,
+        is_primary_contact=person.is_primary_contact,
     )
+
+
+def blueprint_out(view: CompanyBlueprintView) -> BlueprintOut:
+    """The API view of the canonical context. A missing Blueprint row reads as empty."""
+    context = view.context
+    jurisdiction = context.jurisdiction
+    return BlueprintOut(
+        company_id=context.company_id,
+        company_name=context.company_display_name,
+        legal_name=context.legal_name,
+        industry=context.industry,
+        employee_count=context.employee_count,
+        website_url=context.website_url,
+        company_summary=context.company_summary,
+        licensing=LicensingOut(
+            location=jurisdiction.licensing_location,  # type: ignore[arg-type]
+            authority=jurisdiction.licensing_authority,
+        ),
+        jurisdiction=JurisdictionOut(
+            readiness=JurisdictionReadiness(jurisdiction.readiness),
+            reason=ReadinessReason(jurisdiction.reason),
+            employment_jurisdiction=jurisdiction.employment_jurisdiction,  # type: ignore[arg-type]
+            confirmed_at=jurisdiction.confirmed_at,
+            guidance_allowed=jurisdiction.guidance_allowed,
+        ),
+        policies_exist=context.policies_exist,  # type: ignore[arg-type]
+        policy_context=context.policy_context,
+        hr_support=context.hr_support,  # type: ignore[arg-type]
+        hr_support_notes=context.hr_support_notes,
+        primary_contact=None
+        if context.primary_contact is None
+        else _person_out(context.primary_contact),
+        people=[_person_out(person) for person in view.people],
+        completeness=CompletenessOut(
+            complete=context.complete,
+            missing=list(context.missing),  # type: ignore[arg-type]
+        ),
+        updated_at=context.updated_at,
+    )
+
+
+def _read_blueprint(scope: CompanyScope, context: AuthenticatedCompanyContext) -> BlueprintOut:
+    try:
+        return blueprint_out(load_company_blueprint(scope, context))
+    except AuthorizationError:
+        # The caller's own Membership ended after authorization.
+        raise forbidden() from None
 
 
 @router.get("", response_model=CompanyOut)
@@ -236,17 +370,21 @@ def get_own_membership(context: CompanyContext) -> MembershipOut:
 
 
 @router.get("/blueprint", response_model=BlueprintOut)
-def get_blueprint(scope: CompanyDb) -> BlueprintOut:
-    return _blueprint_out(scope.company_id, get_company_blueprint(scope))
+def get_blueprint(scope: CompanyDb, context: CompanyContext) -> BlueprintOut:
+    return _read_blueprint(scope, context)
 
 
-def blueprint_changes(update: BlueprintUpdate) -> dict[str, object]:
-    """Repository changes for the fields actually sent (``null`` clears)."""
+def blueprint_changes(update: BlueprintFields) -> dict[str, object]:
+    """Repository changes for the fields actually sent (``null`` clears).
+
+    Every field maps to the column of the same name, except the licensing
+    answer (one object, two columns).
+    """
     sent = update.model_fields_set
     changes: dict[str, object] = {
         field: getattr(update, field)
-        for field in ("legal_name", "industry", "employee_count")
-        if field in sent
+        for field in type(update).model_fields
+        if field in sent and field != "licensing"
     }
     if "licensing" in sent:
         licensing = update.licensing
@@ -255,11 +393,31 @@ def blueprint_changes(update: BlueprintUpdate) -> dict[str, object]:
     return changes
 
 
+def invalid_primary_contact() -> HTTPException:
+    """The 422 for a primary contact outside the Company (never says why)."""
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail=[
+            {
+                "type": "value_error",
+                "loc": ["body", "primary_contact_membership_id"],
+                "msg": "invalid",
+            }
+        ],
+    )
+
+
 @router.patch("/blueprint", response_model=BlueprintOut)
-def update_blueprint(update: BlueprintUpdate, scope: CompanyAdminDb) -> BlueprintOut:
-    blueprint = update_company_blueprint(scope, blueprint_changes(update))
+def update_blueprint(
+    update: BlueprintUpdate, scope: CompanyAdminDb, context: CompanyContext
+) -> BlueprintOut:
+    try:
+        save_blueprint_changes(scope, blueprint_changes(update))
+    except InvalidPrimaryContact:
+        scope.rollback()
+        raise invalid_primary_contact() from None
     scope.commit()
-    return _blueprint_out(scope.company_id, blueprint)
+    return _read_blueprint(scope, context)
 
 
 @router.get("/cases", response_model=list[CaseOut])

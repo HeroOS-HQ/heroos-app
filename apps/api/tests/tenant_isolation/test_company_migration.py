@@ -8,7 +8,7 @@ Compatibility matrix (M1-10C acceptance; deployment order B1a -> M1-10B API ->
 B1b -> C1 -> current API):
 
     M1-10B API + C1 -> works      current API + B1b -> refuses to start
-    current API + C1 -> works     (test_identity_migration.py)
+    current API + legacy data at head -> works  (test_identity_migration.py)
 """
 
 import uuid
@@ -101,10 +101,14 @@ def test_m110b_api_keeps_working_on_c1(legacy_db: LegacyDatabase) -> None:
     assert m110b_api_status(legacy_db, "stranger", legacy_db.company_a) == 403
 
 
-def test_current_api_on_c1_sees_legacy_data_as_unconfirmed_member_data(
+def test_current_api_sees_legacy_data_as_unconfirmed_member_data(
     legacy_db: LegacyDatabase,
 ) -> None:
+    # Legacy data migrated through C1 and on to the current schema (the
+    # current API refuses to start below contract 8, test_identity_migration):
+    # nothing legacy becomes a confirmation or an administrator on the way.
     to_c1(legacy_db)
+    upgrade(legacy_db, "head")
 
     with current_api(legacy_db) as client:
         base = f"/companies/{legacy_db.company_a}"

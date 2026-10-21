@@ -1,13 +1,17 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-import { attentionOf, buildPatch, jurisdictionDisplay } from "@/lib/blueprint/model";
-import type { Blueprint } from "@/lib/server/heroos-api";
+import { attentionOf, type BlueprintForm, buildPatch, formFrom, jurisdictionDisplay } from "@/lib/blueprint/model";
+import type { Blueprint, BlueprintPerson } from "@/lib/server/heroos-api";
 
 import { BlueprintPage } from "./blueprint-page";
 
 const COMPANY_ID = "d3e0a000-0000-4000-8000-000000000001";
 
+const ME = "d3e0a000-0000-4000-8000-00000000a001";
+const COLLEAGUE = "d3e0a000-0000-4000-8000-00000000a002";
+
+/** A Blueprint from an API before M2-NEW-03: profile and jurisdiction only. */
 const BLUEPRINT: Blueprint = {
   companyId: COMPANY_ID,
   legalName: "Gamma Trading FZ-LLC",
@@ -22,6 +26,48 @@ const BLUEPRINT: Blueprint = {
     guidanceAllowed: true,
   },
   updatedAt: "2026-10-14T09:00:00Z",
+  version: "legacy",
+  websiteUrl: null,
+  companySummary: null,
+  policiesExist: null,
+  policyContext: null,
+  hrSupport: null,
+  hrSupportNotes: null,
+  primaryContact: null,
+  people: [],
+  missing: null,
+};
+
+const YOU: BlueprintPerson = {
+  membershipId: ME,
+  role: "company_admin",
+  memberSince: "2026-10-13T08:00:00Z",
+  isCurrentUser: true,
+  isPrimaryContact: true,
+};
+const OTHER: BlueprintPerson = {
+  membershipId: COLLEAGUE,
+  role: "member",
+  memberSince: "2026-10-19T08:00:00Z",
+  isCurrentUser: false,
+  isPrimaryContact: false,
+};
+
+/** The full company context (M2-NEW-03). */
+const CONTEXT: Blueprint = {
+  ...BLUEPRINT,
+  industry: "Retail",
+  version: "context",
+  websiteUrl: "https://gamma.example",
+  companySummary: "Two shops in Dubai.\n\nA store manager leads eight staff.",
+  policiesExist: "yes",
+  policyContext: "Employee handbook",
+  hrSupport: "external",
+  hrSupportNotes: null,
+  primaryContact: YOU,
+  people: [YOU, OTHER],
+  missing: [],
+  updatedAt: "2026-10-21T10:05:00Z",
 };
 
 const reply = (status: number, body: unknown) =>
@@ -53,13 +99,7 @@ const textbox = (name: RegExp) => screen.getByRole("textbox", { name });
 const save = () => fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
 
 describe("buildPatch", () => {
-  const form = {
-    legalName: "Gamma Trading FZ-LLC",
-    industry: "",
-    employeeCount: "12",
-    licensingLocation: "difc" as const,
-    licensingAuthority: "",
-  };
+  const form: BlueprintForm = formFrom(BLUEPRINT);
 
   it("is empty when nothing changed", () => {
     expect(buildPatch(form, BLUEPRINT)).toEqual({ patch: {}, errors: {} });
@@ -75,6 +115,52 @@ describe("buildPatch", () => {
   it("sends the licensing answer as a whole when it changes", () => {
     expect(buildPatch({ ...form, licensingLocation: "other", licensingAuthority: "X" }, BLUEPRINT).patch).toEqual({
       licensing: { location: "other", authority: "X" },
+    });
+  });
+
+  it("never sends company context to an API that doesn't keep it", () => {
+    expect(buildPatch({ ...form, websiteUrl: "gamma.example", hrSupport: "none" }, BLUEPRINT).patch).toEqual({});
+  });
+
+  it("sends the context exactly as the API stores it: the website normalized, pasted text tidied", () => {
+    const context = formFrom(CONTEXT);
+    expect(
+      buildPatch(
+        {
+          ...context,
+          websiteUrl: " WWW.Gamma.example/ ",
+          companySummary: "Two shops.\r\n\r\nEight\u00a0staff. ",
+          policiesExist: "not_sure",
+          hrSupport: "mixed",
+          hrSupportNotes: "A consultant helps us.",
+          primaryContact: COLLEAGUE,
+        },
+        CONTEXT,
+      ),
+    ).toEqual({
+      errors: {},
+      patch: {
+        website_url: "https://www.gamma.example",
+        company_summary: "Two shops.\n\nEight staff.",
+        policies_exist: "not_sure",
+        hr_support: "mixed",
+        hr_support_notes: "A consultant helps us.",
+        primary_contact_membership_id: COLLEAGUE,
+      },
+    });
+  });
+
+  it("refuses unsafe websites and overlong text before anything is sent", () => {
+    const context = formFrom(CONTEXT);
+    expect(buildPatch({ ...context, websiteUrl: "javascript:alert(1)" }, CONTEXT).errors).toEqual({
+      websiteUrl: "Use a web address that starts with https:// or http://.",
+    });
+    expect(buildPatch({ ...context, companySummary: "x".repeat(2001) }, CONTEXT).errors).toEqual({
+      companySummary: "Use 2,000 characters or fewer.",
+    });
+    expect(buildPatch({ ...context, policyContext: "x".repeat(1001), hrSupportNotes: "y".repeat(501) }, CONTEXT).errors).toEqual({
+      policyContext: "Use 1,000 characters or fewer.",
+      hrSupportNotes: "Use 500 characters or fewer.",
     });
   });
 });
@@ -93,14 +179,31 @@ describe("the jurisdiction as the Blueprint shows it", () => {
     expect(jurisdictionDisplay({ ...BLUEPRINT, licensing: { location: "not_sure", authority: null } }).kind).toBe("missing");
   });
 
-  it("counts only the details HeroOS keeps as needing attention", () => {
+  it("uses the API's completeness when it has one, in the page's words", () => {
+    expect(attentionOf(CONTEXT)).toEqual([]);
+    const incomplete: Blueprint = {
+      ...CONTEXT,
+      licensing: { location: "other", authority: null },
+      missing: ["company_summary", "jurisdiction", "policies", "hr_support", "primary_contact"],
+    };
+    expect(attentionOf(incomplete)).toEqual([
+      { field: "companySummary", label: "Company summary" },
+      // "Another jurisdiction" without its authority: the authority is what's missing.
+      { field: "licensingAuthority", label: "Licensing authority" },
+      { field: "policiesExist", label: "HR policies" },
+      { field: "hrSupport", label: "HR support" },
+      { field: "primaryContact", label: "Primary contact" },
+    ]);
+  });
+
+  it("counts only the details a legacy API keeps as needing attention", () => {
     expect(attentionOf(BLUEPRINT).map((item) => item.label)).toEqual(["Industry"]);
     const empty: Blueprint = { ...BLUEPRINT, legalName: null, employeeCount: null, licensing: { location: null, authority: null } };
     expect(attentionOf(empty).map((item) => item.label)).toEqual(["Legal company name", "Industry", "Number of employees", "Jurisdiction"]);
   });
 });
 
-describe("BlueprintPage", () => {
+describe("BlueprintPage against an API without the company context", () => {
   it("reads first: the company's details from the API, the jurisdiction without a 'confirmed' badge", () => {
     setup();
     expect(screen.getByRole("heading", { level: 1, name: "Company Blueprint" })).toBeInTheDocument();
@@ -116,7 +219,7 @@ describe("BlueprintPage", () => {
     expect(document.body.textContent).not.toMatch(/Confirmed|verified|compliant/);
     // Completeness is one quiet line, never a score.
     expect(screen.getByText("1 detail needs attention")).toBeInTheDocument();
-    expect(screen.getByText(/Last updated/)).toHaveTextContent("Last updated 14 Oct 2026");
+    expect(screen.getByText(/Last updated/)).toHaveTextContent("Last updated 14 Oct 2026, 09:00 UTC");
     // No fields the API doesn't keep yet, and no form until Edit.
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.queryByText(/policies added|HR support:|Primary contact/i)).toBeNull();
@@ -232,5 +335,119 @@ describe("BlueprintPage", () => {
     expect(attention.getByText("Industry")).toBeInTheDocument();
     // No roles or permissions on this page.
     expect(document.body.textContent).not.toMatch(/administrator|permission/i);
+  });
+});
+
+describe("BlueprintPage with the company context (M2-NEW-03)", () => {
+  const contextReply = (changes: Partial<Blueprint>) => reply(200, { blueprint: { ...CONTEXT, ...changes } });
+  const region = (name: string) => within(screen.getByRole("region", { name }));
+
+  it("shows every detail the API keeps, quietly, with nothing it doesn't", () => {
+    setup({ initial: CONTEXT });
+    const basics = region("Company basics");
+    const link = basics.getByRole("link", { name: "https://gamma.example" });
+    expect(link).toHaveAttribute("href", "https://gamma.example");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer nofollow");
+    // Paragraph breaks kept, rendered as text (never HTML).
+    const summary = basics.getByText(/Two shops in Dubai\./);
+    expect(summary.textContent).toBe("Two shops in Dubai.\n\nA store manager leads eight staff.");
+    expect(summary).toHaveClass("whitespace-pre-line");
+    expect(region("Policies").getByText("Yes, the company has HR policies")).toBeInTheDocument();
+    expect(region("Policies").getByText("Employee handbook")).toBeInTheDocument();
+    expect(region("Policies").getByText("Uploading policy documents isn't available yet.")).toBeInTheDocument();
+    expect(region("HR support").getByText("An outside provider")).toBeInTheDocument();
+    const people = region("People");
+    expect(people.getByText("Primary contact").nextElementSibling).toHaveTextContent(/^You$/);
+    expect(people.getByText("Others with access").nextElementSibling).toHaveTextContent("Another person · joined 19 Oct 2026");
+    expect(screen.getByText("Blueprint complete")).toBeInTheDocument();
+    expect(screen.getByText(/Last updated/)).toHaveTextContent("Last updated 21 Oct 2026, 10:05 UTC");
+    expect(screen.queryByText(/Coming next/)).toBeNull();
+    expect(document.body.textContent).not.toMatch(/administrator|permission|Confirmed|compliant/i);
+  });
+
+  it("never renders text as HTML", () => {
+    setup({ initial: { ...CONTEXT, companySummary: "<img src=x onerror=alert(1)> <b>bold</b>" } });
+    expect(document.querySelector("img")).toBeNull();
+    expect(document.querySelector("b")).toBeNull();
+    expect(region("Company basics").getByText("<img src=x onerror=alert(1)> <b>bold</b>")).toBeInTheDocument();
+  });
+
+  it("tells the primary contact and the person signed in apart", () => {
+    setup({ initial: { ...CONTEXT, primaryContact: { ...OTHER, isPrimaryContact: true }, people: [{ ...YOU, isPrimaryContact: false }, { ...OTHER, isPrimaryContact: true }] } });
+    const people = region("People");
+    expect(people.getByText("Primary contact").nextElementSibling).toHaveTextContent("Another person · joined 19 Oct 2026");
+    expect(people.getByText("Signed in as").nextElementSibling).toHaveTextContent(/^You$/);
+  });
+
+  it("edits the context with the summary's guidance and saves exactly the changes", async () => {
+    const saved = {
+      companySummary: "We run two shops.",
+      websiteUrl: "https://www.gamma.example",
+      hrSupport: "mixed" as const,
+      primaryContact: { ...OTHER, isPrimaryContact: true },
+      people: [{ ...YOU, isPrimaryContact: false }, { ...OTHER, isPrimaryContact: true }],
+    };
+    const { fetcher } = setup({ initial: CONTEXT, response: contextReply(saved) });
+    edit();
+    expect(
+      screen.getByText(
+        "Briefly describe what your company does and how your team is structured. You can paste or adapt content from your website or About page.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("HeroOS keeps the address only. It doesn't visit or read your website.")).toBeInTheDocument();
+    fireEvent.change(textbox(/^Company website/), { target: { value: "www.Gamma.example" } });
+    fireEvent.change(textbox(/^Company summary/), { target: { value: "We run two shops. " } });
+    fireEvent.click(screen.getByRole("radio", { name: /^Both/ }));
+    const contact = screen.getByRole("combobox", { name: /^Primary contact/ });
+    expect([...(contact as HTMLSelectElement).options].map((option) => option.text)).toEqual(["You", "Another person · joined 19 Oct 2026"]);
+    fireEvent.change(contact, { target: { value: COLLEAGUE } });
+    const bar = within(screen.getByRole("region", { name: "Unsaved changes" }));
+    expect(bar.getByText("4 unsaved changes")).toBeInTheDocument();
+    save();
+
+    const confirmation = await screen.findByRole("status");
+    expect(confirmation).toHaveTextContent("Company Blueprint updated");
+    expect(confirmation).toHaveTextContent("Company website, Company summary, HR support, Primary contact saved.");
+    const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      website_url: "https://www.gamma.example",
+      company_summary: "We run two shops.",
+      hr_support: "mixed",
+      primary_contact_membership_id: COLLEAGUE,
+    });
+    expect(region("Company basics").getByText("We run two shops.")).toBeInTheDocument();
+    expect(region("People").getByText("Primary contact").nextElementSibling).toHaveTextContent("Another person");
+  });
+
+  it("refuses an unsafe website next to the field without sending anything", async () => {
+    const { fetcher } = setup({ initial: CONTEXT });
+    edit();
+    fireEvent.change(textbox(/^Company website/), { target: { value: "javascript:alert(1)" } });
+    save();
+    await waitFor(() => expect(textbox(/^Company website/)).toHaveAttribute("aria-invalid", "true"));
+    expect(screen.getByText("Use a web address that starts with https:// or http://.")).toBeInTheDocument();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("names what needs attention and opens the editor at it", async () => {
+    setup({
+      initial: { ...CONTEXT, companySummary: null, hrSupport: null, primaryContact: null, missing: ["company_summary", "hr_support", "primary_contact"] },
+    });
+    expect(screen.getByText("3 details need attention")).toBeInTheDocument();
+    expect(region("People").getByText("Not chosen yet")).toBeInTheDocument();
+    const attention = within(screen.getByRole("navigation", { name: "Details that need attention" }));
+    expect(attention.getAllByRole("button").map((button) => button.textContent)).toEqual(["Company summary", "HR support", "Primary contact"]);
+    fireEvent.click(attention.getByRole("button", { name: /Primary contact/ }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: /^Primary contact/ })).toHaveFocus());
+    expect(screen.getByRole("option", { name: "Choose the primary contact" })).toBeDisabled();
+  });
+
+  it("shows the API's refusal of a primary contact next to it", async () => {
+    setup({ initial: CONTEXT, response: reply(422, { error: "invalid", fields: ["primaryContact"] }) });
+    edit();
+    fireEvent.change(screen.getByRole("combobox", { name: /^Primary contact/ }), { target: { value: COLLEAGUE } });
+    save();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Check the highlighted details");
+    expect(screen.getByRole("combobox", { name: /^Primary contact/ })).toHaveAttribute("aria-invalid", "true");
   });
 });

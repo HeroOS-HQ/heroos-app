@@ -8,10 +8,24 @@ from app.db.models import CompanyBlueprint
 from app.tenancy.scope import CompanyScope
 
 # Blueprint fields a Company administrator may change through the API
-# (M1-10C). The jurisdiction confirmation is not among them: the API role has
-# no privilege on those columns, and the legacy primary_jurisdiction is frozen.
+# (M1-10C; the company context since M2-NEW-03). The jurisdiction confirmation
+# is not among them: the API role has no privilege on those columns, and the
+# legacy primary_jurisdiction is frozen.
 CUSTOMER_FIELDS: Final = frozenset(
-    {"legal_name", "industry", "employee_count", "licensing_location", "licensing_authority"}
+    {
+        "legal_name",
+        "industry",
+        "employee_count",
+        "licensing_location",
+        "licensing_authority",
+        "website_url",
+        "company_summary",
+        "policies_exist",
+        "policy_context",
+        "hr_support",
+        "hr_support_notes",
+        "primary_contact_membership_id",
+    }
 )
 
 
@@ -51,8 +65,10 @@ def update_company_blueprint(
 
     Only ``CUSTOMER_FIELDS``; anything else raises ``ValueError`` before any
     SQL. Creates the Blueprint if the Company has none. Values must already be
-    validated (``app.api.companies.BlueprintUpdate``); the database CHECK
-    constraints enforce the licensing rules again.
+    validated (``app.api.companies.BlueprintUpdate``) and go through
+    ``app.companies.blueprint.save_blueprint_changes`` (the primary contact's
+    Company); the database CHECK and foreign-key constraints enforce the rules
+    again.
     """
     unexpected = set(changes) - CUSTOMER_FIELDS
     if unexpected:

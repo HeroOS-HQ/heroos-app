@@ -83,6 +83,13 @@ EXPECTED_CONSTRAINTS=(
   ck_company_blueprints_licensing_authority
   ck_company_blueprints_employment_jurisdiction
   ck_company_blueprints_jurisdiction_confirmation
+  ck_company_blueprints_website_url
+  ck_company_blueprints_company_summary
+  ck_company_blueprints_policies_exist
+  ck_company_blueprints_policy_context
+  ck_company_blueprints_hr_support
+  ck_company_blueprints_hr_support_notes
+  fk_company_blueprints_company_id_primary_contact_membership_id
   case_subjects_pkey
   case_subjects_company_id_fkey
   uq_case_subjects_company_id_id
@@ -382,9 +389,28 @@ assert_schema() {
       OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE, DELETE, TRUNCATE')
       OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE')
       OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_decision_records', 'SELECT, INSERT, UPDATE')
-      OR heroos_schema_contract() <> 7;")" != "f" ]]; then
+      OR heroos_schema_contract() <> 8;")" != "f" ]]; then
     echo "Workflow tables: unexpected privileges or schema contract." >&2
     return 1
   fi
-  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 7)"
+  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 8)"
+
+  # M2-NEW-03 (D5): the Company Blueprint context is written by the API role
+  # only (column-level INSERT and UPDATE); the operator neither reads nor
+  # writes it.
+  if [[ "$(psql_db "${db}" "SELECT count(*) FROM unnest(ARRAY['website_url', 'company_summary',
+        'policies_exist', 'policy_context', 'hr_support', 'hr_support_notes',
+        'primary_contact_membership_id']) AS c(name)
+      WHERE NOT has_column_privilege('${RUNTIME_ROLE}', 'public.company_blueprints', c.name,
+                                     'SELECT')
+         OR NOT has_column_privilege('${RUNTIME_ROLE}', 'public.company_blueprints', c.name,
+                                     'INSERT')
+         OR NOT has_column_privilege('${RUNTIME_ROLE}', 'public.company_blueprints', c.name,
+                                     'UPDATE')
+         OR has_column_privilege('${OPERATOR_ROLE}', 'public.company_blueprints', c.name,
+                                 'SELECT, INSERT, UPDATE');")" != "0" ]]; then
+    echo "Company Blueprint context: unexpected privileges." >&2
+    return 1
+  fi
+  echo "Company Blueprint context OK (written by ${RUNTIME_ROLE} only, invisible to ${OPERATOR_ROLE})"
 }

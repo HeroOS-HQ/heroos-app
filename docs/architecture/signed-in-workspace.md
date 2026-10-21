@@ -1,6 +1,7 @@
 # Signed-in Workspace: Ask HeroOS, Company Blueprint, Company Space (M2-NEW-02)
 
-**Status:** Implemented (M2-NEW-02). No API, schema or configuration change\
+**Status:** Implemented (M2-NEW-02; the Company Blueprint completed by M2-NEW-03, see
+[Company Blueprint](company-blueprint.md))\
 **Owner:** Technical Lead\
 **Milestone:** [M2 — Reliable AI HR Workflow Platform](../milestones/m2-reliable-ai-hr-workflow-platform.md)\
 **Visual source:** JJ's approved Oct 20 design package, frozen in
@@ -114,36 +115,43 @@ Conditions engine decided for an AI turn into the same `AdviserTurn`.
 ## 5. Company Blueprint
 
 `components/blueprint/blueprint-page.tsx` and `lib/blueprint/model.ts` work on
-the Blueprint the API keeps. Saves go through the existing
+the Blueprint the API keeps, the canonical company context
+([Company Blueprint](company-blueprint.md)). Saves go through
 `PATCH /bff/companies/{id}/blueprint`:
 
-- **Fields:** the company name (read-only), legal name, industry, number of
-  employees, and the jurisdiction (DIFC / another, with its authority / not
-  sure).
+- **Sections:** Company basics (the company name, read-only; legal name,
+  industry, number of employees, website, company summary), Jurisdiction
+  (DIFC / another, with its authority / not sure), Policies (do HR policies
+  exist, policy details; document upload isn't available), HR support (how HR
+  is handled, notes) and People (the primary contact, who is signed in, who
+  else has access: by "You" and joining date, since HeroOS keeps no names).
 - **Jurisdiction display:** the confirmed name, or the founder's answer while
   unconfirmed. It is shown plainly with the API's readiness in its own words,
   never as a "confirmed" badge.
 - **Editing:** read first; one "Edit Blueprint" for everything; a save bar
   only once something changed; "Edited" and "Updated" markers; a calm
   confirmation.
-- **Completeness:** counts only the fields HeroOS keeps.
+- **Completeness:** the API's (`completeness.missing`); website and notes
+  never need attention.
+- **Last updated:** the row's update time, with the time of day (UTC).
 - **Who edits:** read-only for anyone the API doesn't let update it. The page
   carries no role or permission wording.
 
-**Not stored by the API yet (M2-NEW-03), so not on the page:** the company
-website, summary, policies, HR support, primary contact and people. The page
-says these are coming next. No client-side storage stands in for them.
+Against an API without the company context (before migration D5 and the
+M2-NEW-03 API are deployed) the page reads the Blueprint as `legacy`: it shows
+and saves only the profile and jurisdiction and says the rest is coming next.
 
 ## 6. Company Space
 
 `components/space/space-page.tsx`: a reference page, not a dashboard.
 It shows the company's identity, the account's access from its role (what it
-can use, in words), the Blueprint's completeness and who is signed in.
+can use, in words), the Blueprint's completeness (the API's, so it reflects
+the full company context) and last update, who is signed in and how many
+other people have access (no names: HeroOS keeps none).
 
 There are no plans, prices, limits, quotas, analytics or case lists. HeroOS
 has no entitlements yet (M2-NEW-10). Expert Review is shown as "To be
-confirmed". The API offers no list of a Company's people, so the page says it
-can't list them yet.
+confirmed". People's names and access management are M2-NEW-10.
 
 ## 7. Differences from the frozen mockups
 
@@ -152,7 +160,7 @@ can't list them yet.
 | No first name ("Welcome." / "Welcome back.") and a neutral avatar | The web app has no user name or email (the session holds an access token only) |
 | No visible "Stop · HeroOS can't proceed" label on a block (stop sign + panel; "Stop" for screen readers) | JJ, 21 Oct |
 | "Edit Blueprint" is yellow; "Number of employees" | JJ, 21 Oct |
-| Blueprint without summary, policies, HR support or people; Space without plan names and other people | Not in the API (M2-NEW-03, M2-NEW-10); nothing is invented |
+| Blueprint people without names, emails, avatars or job titles; no policy documents; Space without plan names | HeroOS keeps no names or emails (M2-NEW-10); document retention is undecided (PRIV-004); nothing is invented |
 | No free-text reply box on a case; no quick-reply chips | Nothing can answer free text until the AI conversation (M2-NEW-05/06); the question groups are the reply. Chips weren't approved by JJ |
 | Account menu without "Account settings" | No such page exists |
 | A one-line environment notice at the foot of each page | Synthetic-data demonstration environment |
@@ -161,9 +169,11 @@ can't list them yet.
 
 ## 8. Hannah
 
-There is no Hannah in the three pages, following the frozen mockups. Her chat
-tab was removed from the case page; the demo's API and BFF remain
-([Hannah AI demo](hannah-ai-demo.md)).
+There is no Hannah in the three pages, following the frozen mockups. JJ
+(21 Oct) would like her back, small, on the Blueprint and Company Space (for
+example taking notes); that needs an approved pose asset first, and no new art
+or animation is added meanwhile. Her chat tab was removed from the case page;
+the demo's API and BFF remain ([Hannah AI demo](hannah-ai-demo.md)).
 
 ## 9. Tests
 

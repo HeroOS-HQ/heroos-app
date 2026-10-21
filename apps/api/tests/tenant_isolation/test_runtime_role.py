@@ -218,6 +218,14 @@ RUNTIME_BLUEPRINT_COLUMNS = {
     "licensing_authority",
     "created_at",
     "updated_at",
+    # M2-NEW-03 (D5): the company context.
+    "website_url",
+    "company_summary",
+    "policies_exist",
+    "policy_context",
+    "hr_support",
+    "hr_support_notes",
+    "primary_contact_membership_id",
 }
 CONFIRMATION_COLUMNS = {
     "employment_jurisdiction",

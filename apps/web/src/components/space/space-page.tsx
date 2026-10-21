@@ -133,6 +133,8 @@ export function SpacePage({ details }: { details: WorkspaceDetails }) {
   const role = roleLabel(membership?.role ?? null);
   const jurisdiction = blueprint ? jurisdictionDisplay(blueprint) : null;
   const attention = blueprint ? attentionOf(blueprint) : [];
+  // Counted from the Blueprint's people (M2-NEW-03); names come with People & access (M2-NEW-10).
+  const others = blueprint?.version === "context" ? blueprint.people.filter((person) => !person.isCurrentUser).length : null;
 
   return (
     <div className="mx-auto w-full max-w-[64rem] px-4 pb-14 pt-3 sm:px-8 sm:pt-6">
@@ -247,7 +249,13 @@ export function SpacePage({ details }: { details: WorkspaceDetails }) {
             </div>
           </div>
           <h3 className="mt-5 text-[0.75rem] font-bold uppercase tracking-[0.1em] text-hero-muted">Other people using HeroOS</h3>
-          <p className="mt-1.5 text-[0.9375rem] text-hero-muted">HeroOS can&apos;t list the other people in your company here yet.</p>
+          <p className="mt-1.5 text-[0.9375rem] text-hero-muted">
+            {others === null
+              ? "HeroOS can't list the other people in your company here yet."
+              : others === 0
+                ? "No one else has access yet."
+                : `${others === 1 ? "1 other person has" : `${others} other people have`} access. HeroOS doesn't keep their names yet.`}
+          </p>
         </Section>
       </div>
 

@@ -8,7 +8,7 @@ import { HannahOnboardingScene } from "./onboarding-scene";
 /**
  * The founder setup journey's own frame (JJ design review, screens 01–05),
  * used by /onboarding and the ready page only: a full-width canvas below the
- * app header, the five-stage progress, a white card on the left, Hannah's
+ * app header, the six-stage progress, a white card on the left, Hannah's
  * scene with a guidance card on the right, and an action bar along the bottom
  * (sticky on wide screens). Smaller screens stack: card, actions, guidance.
  */
@@ -74,7 +74,7 @@ export function AccentTitle({
   );
 }
 
-/** The white card of a stage: "STEP N OF 5", the heading, an introduction, then the stage's content. */
+/** The white card of a stage: "STEP N OF 6", the heading, an introduction, then the stage's content. */
 export function StageCard({
   stage,
   lead,

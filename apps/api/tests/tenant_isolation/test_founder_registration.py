@@ -345,7 +345,7 @@ def test_a_failed_initial_blueprint_leaves_no_registration_behind(
     def fail(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("simulated failure after the registration function")
 
-    monkeypatch.setattr("app.api.onboarding.update_company_blueprint", fail)
+    monkeypatch.setattr("app.api.onboarding.save_blueprint_changes", fail)
     failing = TestClient(client.app, raise_server_exceptions=False)
     response = failing.post(
         URL,

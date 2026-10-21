@@ -7,11 +7,14 @@ import {
   AlertIcon,
   ArrowLeftIcon,
   ArrowRightIcon,
+  BookIcon,
+  BriefcaseIcon,
   BuildingIcon,
   CheckCircleIcon,
   CheckIcon,
   CloseIcon,
   InfoIcon,
+  PeopleIcon,
   ScaleIcon,
 } from "@/components/site/icons";
 import {
@@ -19,24 +22,36 @@ import {
   type BlueprintForm,
   buildPatch,
   changedLabels,
+  contactChoices,
   type EditableField,
   editedFields,
   FIELD_IDS,
-  FIELD_ORDER,
+  fieldsOf,
   formFrom,
+  HR_SUPPORT_OPTIONS,
+  hrSupportLabel,
   jurisdictionDisplay,
+  personLabel,
+  POLICIES_OPTIONS,
+  policiesLabel,
+  SUMMARY_HELP,
 } from "@/lib/blueprint/model";
 import { type FieldErrors, LIMITS } from "@/lib/onboarding/model";
-import type { Blueprint } from "@/lib/server/heroos-api";
-import { formatDay } from "@/lib/workflows/copy";
+import type { Blueprint, BlueprintPerson } from "@/lib/server/heroos-api";
+import { formatDayTime } from "@/lib/workflows/copy";
 
 /**
  * Page 2, Company Blueprint (approved Oct 20 design): the company context
- * HeroOS uses. Read first: one sheet. One "Edit Blueprint" makes everything
- * editable; a save bar appears only once something has changed, and nothing
- * is saved until "Save changes". It edits the Blueprint the API keeps
+ * HeroOS uses (M2-NEW-03). Read first: one sheet. One "Edit Blueprint" makes
+ * everything editable; a save bar appears only once something has changed, and
+ * nothing is saved until "Save changes". It edits the Blueprint the API keeps
  * (`PATCH /bff/companies/{id}/blueprint`); the API enforces the administrator
  * role on every save, whatever this page shows.
+ *
+ * Everything shown is what the API keeps. People are told apart by "You",
+ * role and joining date: HeroOS keeps no names or email addresses. Policy
+ * documents can't be uploaded (their retention is undecided, PRIV-004), and
+ * the website is only an address HeroOS stores.
  */
 
 type Failure = "session_expired" | "forbidden" | "invalid" | "unavailable";
@@ -55,6 +70,7 @@ const fieldLabel = "flex items-center gap-2 text-[0.875rem] font-bold text-hero-
 const fieldHint = "mt-1 text-[0.8125rem] leading-relaxed text-hero-muted";
 const input =
   "mt-1.5 block min-h-12 w-full rounded-xl border border-hero-navy/15 bg-white px-4 text-base text-hero-navy shadow-[inset_0_1px_2px_rgb(14_30_61/0.04)] transition-[border-color,box-shadow] duration-150 placeholder:text-hero-muted/80 focus:border-hero-blue focus:shadow-[0_0_0_4px_rgb(61_107_196/0.12)] focus-visible:outline-none aria-[invalid=true]:border-hero-danger";
+const textarea = `${input} min-h-28 resize-y py-3 leading-relaxed`;
 const editedInput = "border-hero-blue/60 bg-[#fbfdff]";
 const editButton =
   "inline-flex min-h-11 items-center justify-center gap-2 rounded-full bg-hero-yellow px-5 text-[0.9375rem] font-bold text-hero-navy shadow-[0_8px_20px_-12px_rgb(255_212_1/0.95)] transition-colors duration-150 hover:bg-[#f6cb00]";
@@ -158,12 +174,31 @@ const notAdded = <span className="font-normal text-hero-muted">Not added</span>;
 
 /* ------------------------------------------------------------ read view */
 
+function Person({ person }: { person: BlueprintPerson }) {
+  const { name, detail } = personLabel(person);
+  return (
+    <>
+      {name}
+      {detail ? <span className="font-normal text-hero-muted"> · {detail}</span> : null}
+    </>
+  );
+}
+
 function ReadSheet({ companyName, blueprint, updated }: { companyName: string; blueprint: Blueprint; updated: Set<string> }) {
   const missing = new Set(attentionOf(blueprint).map((item) => item.field));
   const jurisdiction = jurisdictionDisplay(blueprint);
+  const context = blueprint.version === "context";
+  const current = blueprint.people.find((person) => person.isCurrentUser) ?? null;
+  const others = blueprint.people.length - (current ? 1 : 0);
   return (
     <div>
-      <Section icon={<BuildingIcon className="size-5" />} id="basics" line="Who you are and what you do." title="Company basics">
+      <Section
+        attention={missing.has("companySummary")}
+        icon={<BuildingIcon className="size-5" />}
+        id="basics"
+        line="Who you are and what you do."
+        title="Company basics"
+      >
         <dl className="divide-y divide-hero-border">
           <Row label="Company name">{companyName}</Row>
           <Row label="Legal company name" updated={updated.has("Legal company name")}>
@@ -175,6 +210,34 @@ function ReadSheet({ companyName, blueprint, updated }: { companyName: string; b
           <Row label="Number of employees" updated={updated.has("Number of employees")}>
             {blueprint.employeeCount ?? notAdded}
           </Row>
+          {context ? (
+            <>
+              <Row label="Company website" updated={updated.has("Company website")}>
+                {blueprint.websiteUrl ? (
+                  // The founder's own address, shown as a link; HeroOS never opens or reads it.
+                  <a
+                    className="break-all text-hero-blue-ink underline decoration-hero-blue/30 underline-offset-4 hover:decoration-hero-blue"
+                    href={blueprint.websiteUrl}
+                    rel="noopener noreferrer nofollow"
+                    target="_blank"
+                  >
+                    {blueprint.websiteUrl}
+                  </a>
+                ) : (
+                  notAdded
+                )}
+              </Row>
+              <Row label="Company summary" updated={updated.has("Company summary")}>
+                {blueprint.companySummary ? (
+                  <span className="block whitespace-pre-line font-normal" id="bp-summary-text">
+                    {blueprint.companySummary}
+                  </span>
+                ) : (
+                  <Missing />
+                )}
+              </Row>
+            </>
+          ) : null}
         </dl>
       </Section>
 
@@ -209,6 +272,90 @@ function ReadSheet({ companyName, blueprint, updated }: { companyName: string; b
           </>
         )}
       </Section>
+
+      {context ? (
+        <>
+          <Section
+            attention={missing.has("policiesExist")}
+            icon={<BookIcon className="size-5" />}
+            id="policies"
+            line="Your handbook and HR policies."
+            title="Policies"
+          >
+            <dl className="divide-y divide-hero-border">
+              <Row label="HR policies" updated={updated.has("HR policies")}>
+                {policiesLabel(blueprint.policiesExist) ?? <Missing />}
+              </Row>
+              <Row label="Policy details" updated={updated.has("Policy details")}>
+                {blueprint.policyContext ? (
+                  <span className="block whitespace-pre-line font-normal">{blueprint.policyContext}</span>
+                ) : (
+                  notAdded
+                )}
+              </Row>
+            </dl>
+            <p className="mt-2 flex gap-2 text-[0.8125rem] leading-relaxed text-hero-muted">
+              <InfoIcon className="mt-0.5 size-4 shrink-0" />
+              Uploading policy documents isn&apos;t available yet.
+            </p>
+          </Section>
+
+          <Section
+            attention={missing.has("hrSupport")}
+            icon={<BriefcaseIcon className="size-5" />}
+            id="hr"
+            line="Who handles HR around the company."
+            title="HR support"
+          >
+            <dl className="divide-y divide-hero-border">
+              <Row label="HR support" updated={updated.has("HR support")}>
+                {hrSupportLabel(blueprint.hrSupport) ?? <Missing />}
+              </Row>
+              <Row label="Notes" updated={updated.has("HR support notes")}>
+                {blueprint.hrSupportNotes ? (
+                  <span className="block whitespace-pre-line font-normal">{blueprint.hrSupportNotes}</span>
+                ) : (
+                  notAdded
+                )}
+              </Row>
+            </dl>
+          </Section>
+
+          <Section
+            attention={missing.has("primaryContact")}
+            icon={<PeopleIcon className="size-5" />}
+            id="people"
+            line="Who HeroOS talks to."
+            title="People"
+          >
+            <dl className="divide-y divide-hero-border">
+              <Row label="Primary contact" updated={updated.has("Primary contact")}>
+                {blueprint.primaryContact ? <Person person={blueprint.primaryContact} /> : <Missing>Not chosen yet</Missing>}
+              </Row>
+              <Row label="Signed in as">{current ? <Person person={current} /> : "You"}</Row>
+              <Row label="Others with access">
+                {others === 0 ? (
+                  <span className="font-normal text-hero-muted">No one else yet</span>
+                ) : (
+                  <ul className="flex flex-col gap-1">
+                    {blueprint.people
+                      .filter((person) => !person.isCurrentUser)
+                      .map((person) => (
+                        <li key={person.membershipId}>
+                          <Person person={person} />
+                        </li>
+                      ))}
+                  </ul>
+                )}
+              </Row>
+            </dl>
+            <p className="mt-2 flex gap-2 text-[0.8125rem] leading-relaxed text-hero-muted">
+              <InfoIcon className="mt-0.5 size-4 shrink-0" />
+              HeroOS doesn&apos;t keep people&apos;s names or email addresses yet.
+            </p>
+          </Section>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -262,6 +409,7 @@ function describedBy(id: string, hint: boolean, error: string | undefined): stri
 
 function Choice({
   id,
+  name = "bp-jurisdiction",
   value,
   checked,
   title,
@@ -270,6 +418,7 @@ function Choice({
   children,
 }: {
   id: string;
+  name?: string;
   value: string;
   checked: boolean;
   title: string;
@@ -284,7 +433,7 @@ function Choice({
           checked={checked}
           className="mt-1 size-4 shrink-0 accent-hero-navy focus-visible:outline-none"
           id={id}
-          name="bp-jurisdiction"
+          name={name}
           onChange={onChoose}
           type="radio"
           value={value}
@@ -299,19 +448,62 @@ function Choice({
   );
 }
 
+function TextArea({
+  field,
+  label,
+  hint,
+  max,
+  form,
+  edited,
+  errors,
+  update,
+  placeholder,
+}: {
+  field: "companySummary" | "policyContext" | "hrSupportNotes";
+  label: string;
+  hint?: string;
+  max: number;
+  form: BlueprintForm;
+  edited: Set<EditableField>;
+  errors: FieldErrors;
+  update: <K extends keyof BlueprintForm>(key: K, value: BlueprintForm[K]) => void;
+  placeholder?: string;
+}) {
+  const id = FIELD_IDS[field];
+  return (
+    <Field edited={edited.has(field)} error={errors[field]} hint={hint} id={id} label={label}>
+      <textarea
+        aria-describedby={describedBy(id, Boolean(hint), errors[field])}
+        aria-invalid={errors[field] ? true : undefined}
+        className={`${textarea} ${edited.has(field) ? editedInput : ""}`}
+        id={id}
+        maxLength={max + 200}
+        onChange={(event) => update(field, event.target.value)}
+        placeholder={placeholder}
+        rows={field === "companySummary" ? 5 : 3}
+        value={form[field]}
+      />
+    </Field>
+  );
+}
+
 function EditSheet({
   companyName,
+  blueprint,
   form,
   edited,
   errors,
   update,
 }: {
   companyName: string;
+  blueprint: Blueprint;
   form: BlueprintForm;
   edited: Set<EditableField>;
   errors: FieldErrors;
   update: <K extends keyof BlueprintForm>(key: K, value: BlueprintForm[K]) => void;
 }) {
+  const context = blueprint.version === "context";
+  const shared = { form, edited, errors, update };
   return (
     <div>
       <Section icon={<BuildingIcon className="size-5" />} id="basics" line="Who you are and what you do." title="Company basics">
@@ -370,7 +562,37 @@ function EditSheet({
               value={form.employeeCount}
             />
           </Field>
+          {context ? (
+            <Field
+              edited={edited.has("websiteUrl")}
+              error={errors.websiteUrl}
+              hint="HeroOS keeps the address only. It doesn't visit or read your website."
+              id={FIELD_IDS.websiteUrl}
+              label="Company website"
+            >
+              <input
+                aria-describedby={describedBy(FIELD_IDS.websiteUrl, true, errors.websiteUrl)}
+                aria-invalid={errors.websiteUrl ? true : undefined}
+                autoCapitalize="none"
+                autoComplete="url"
+                className={`${input} ${edited.has("websiteUrl") ? editedInput : ""}`}
+                id={FIELD_IDS.websiteUrl}
+                inputMode="url"
+                maxLength={LIMITS.websiteUrl + 20}
+                onChange={(event) => update("websiteUrl", event.target.value)}
+                placeholder="www.example.com"
+                spellCheck={false}
+                type="text"
+                value={form.websiteUrl}
+              />
+            </Field>
+          ) : null}
         </div>
+        {context ? (
+          <div className="mt-4">
+            <TextArea field="companySummary" hint={SUMMARY_HELP} label="Company summary" max={LIMITS.companySummary} {...shared} />
+          </div>
+        ) : null}
       </Section>
 
       <Section icon={<ScaleIcon className="size-5" />} id="jurisdiction" line="Which employment rules apply to you." title="Jurisdiction">
@@ -430,6 +652,109 @@ function EditSheet({
           If you change it, jurisdiction-specific guidance may be unavailable until the new setting is in place.
         </p>
       </Section>
+
+      {context ? (
+        <>
+          <Section icon={<BookIcon className="size-5" />} id="policies" line="Your handbook and HR policies." title="Policies">
+            <fieldset className="scroll-mt-24">
+              <legend className={fieldLabel}>
+                Does your company already have HR policies?
+                {edited.has("policiesExist") ? <Edited /> : null}
+              </legend>
+              <div className="mt-2 grid gap-2.5 sm:grid-cols-3">
+                {POLICIES_OPTIONS.map((option) => (
+                  <Choice
+                    checked={form.policiesExist === option.value}
+                    hint={option.hint}
+                    id={`bp-policies-${option.value.replace("_", "-")}`}
+                    key={option.value}
+                    name="bp-policies"
+                    onChoose={() => update("policiesExist", option.value)}
+                    title={option.title}
+                    value={option.value}
+                  />
+                ))}
+              </div>
+            </fieldset>
+            <div className="mt-4">
+              <TextArea
+                field="policyContext"
+                hint="Optional. Name your policies, such as an employee handbook, a disciplinary policy or a leave policy."
+                label="Policy details"
+                max={LIMITS.policyContext}
+                {...shared}
+              />
+            </div>
+            <p className="mt-3 flex gap-2 text-[0.8125rem] leading-relaxed text-hero-muted">
+              <InfoIcon className="mt-0.5 size-4 shrink-0" />
+              Uploading policy documents isn&apos;t available yet.
+            </p>
+          </Section>
+
+          <Section icon={<BriefcaseIcon className="size-5" />} id="hr" line="Who handles HR around the company." title="HR support">
+            <fieldset className="scroll-mt-24">
+              <legend className={fieldLabel}>
+                How does your company handle HR today?
+                {edited.has("hrSupport") ? <Edited /> : null}
+              </legend>
+              <div className="mt-2 grid gap-2.5 sm:grid-cols-2">
+                {HR_SUPPORT_OPTIONS.map((option) => (
+                  <Choice
+                    checked={form.hrSupport === option.value}
+                    hint={option.hint}
+                    id={`bp-hr-${option.value}`}
+                    key={option.value}
+                    name="bp-hr"
+                    onChoose={() => update("hrSupport", option.value)}
+                    title={option.title}
+                    value={option.value}
+                  />
+                ))}
+              </div>
+            </fieldset>
+            <div className="mt-4">
+              <TextArea field="hrSupportNotes" hint="Optional." label="HR support notes" max={LIMITS.hrSupportNotes} {...shared} />
+            </div>
+          </Section>
+
+          <Section icon={<PeopleIcon className="size-5" />} id="people" line="Who HeroOS talks to." title="People">
+            <Field
+              edited={edited.has("primaryContact")}
+              error={errors.primaryContact}
+              hint="The main person HeroOS should know about. It can be someone other than you."
+              id={FIELD_IDS.primaryContact}
+              label="Primary contact"
+            >
+              <select
+                aria-describedby={describedBy(FIELD_IDS.primaryContact, true, errors.primaryContact)}
+                aria-invalid={errors.primaryContact ? true : undefined}
+                className={`${input} ${edited.has("primaryContact") ? editedInput : ""}`}
+                id={FIELD_IDS.primaryContact}
+                onChange={(event) => update("primaryContact", event.target.value)}
+                value={form.primaryContact}
+              >
+                {form.primaryContact === "" ? (
+                  <option disabled value="">
+                    Choose the primary contact
+                  </option>
+                ) : null}
+                {contactChoices(blueprint).map((person) => {
+                  const { name, detail } = personLabel(person);
+                  return (
+                    <option key={person.membershipId} value={person.membershipId}>
+                      {detail ? `${name} · ${detail}` : name}
+                    </option>
+                  );
+                })}
+              </select>
+            </Field>
+            <p className="mt-3 flex gap-2 text-[0.8125rem] leading-relaxed text-hero-muted">
+              <InfoIcon className="mt-0.5 size-4 shrink-0" />
+              HeroOS doesn&apos;t keep people&apos;s names or email addresses yet.
+            </p>
+          </Section>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -514,7 +839,7 @@ export function BlueprintPage({
     const { patch, errors: found } = buildPatch(form, saved);
     setErrors(found);
     if (Object.keys(found).length > 0) {
-      const first = FIELD_ORDER.find((field) => found[field]);
+      const first = fieldsOf(saved).find((field) => found[field]);
       if (first) requestAnimationFrame(() => document.getElementById(FIELD_IDS[first])?.focus());
       setStatus({ kind: "failed", reason: "invalid" });
       return;
@@ -550,7 +875,9 @@ export function BlueprintPage({
         const fields = Array.isArray(body?.fields) ? (body.fields as string[]) : [];
         setErrors(
           Object.fromEntries(
-            fields.filter((field): field is EditableField => (FIELD_ORDER as string[]).includes(field)).map((field) => [field, SERVER_FIELD_MESSAGE]),
+            fields
+              .filter((field): field is EditableField => (fieldsOf(saved) as string[]).includes(field))
+              .map((field) => [field, SERVER_FIELD_MESSAGE]),
           ),
         );
         setStatus({ kind: "failed", reason: "invalid" });
@@ -632,7 +959,7 @@ export function BlueprintPage({
                   ·
                 </span>
                 <span className="max-sm:basis-full">
-                  Last updated <time dateTime={saved.updatedAt}>{formatDay(saved.updatedAt)}</time>
+                  Last updated <time dateTime={saved.updatedAt}>{formatDayTime(saved.updatedAt)}</time>
                 </span>
               </>
             ) : null}
@@ -706,16 +1033,18 @@ export function BlueprintPage({
 
         <div className={`mt-6 ${sheet}`}>
           {editing ? (
-            <EditSheet companyName={companyName} edited={edited} errors={errors} form={form} update={update} />
+            <EditSheet blueprint={saved} companyName={companyName} edited={edited} errors={errors} form={form} update={update} />
           ) : (
             <ReadSheet blueprint={saved} companyName={companyName} updated={new Set(justSaved ?? [])} />
           )}
         </div>
 
-        <p className="mt-5 flex gap-2 text-[0.875rem] leading-relaxed text-hero-muted">
-          <InfoIcon className="mt-0.5 size-4 shrink-0" />
-          Coming next to the Blueprint: your company&apos;s website and summary, policies, HR support and the people who use HeroOS.
-        </p>
+        {saved.version === "legacy" ? (
+          <p className="mt-5 flex gap-2 text-[0.875rem] leading-relaxed text-hero-muted">
+            <InfoIcon className="mt-0.5 size-4 shrink-0" />
+            Coming next to the Blueprint: your company&apos;s website and summary, policies, HR support and the people who use HeroOS.
+          </p>
+        ) : null}
       </div>
 
       {dirty ? (

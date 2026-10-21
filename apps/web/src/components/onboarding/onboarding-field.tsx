@@ -100,3 +100,48 @@ export function OnboardingTextField({ id, label, value, onChange, icon, hint, er
     </IconRow>
   );
 }
+
+/**
+ * Labelled multi-line text in an icon row (the company summary): like
+ * `OnboardingTextField`, with line breaks kept.
+ */
+export function OnboardingTextArea({
+  id,
+  label,
+  value,
+  onChange,
+  icon,
+  hint,
+  error,
+  placeholder,
+  maxLength,
+}: Omit<Props, "required" | "autoComplete" | "inputMode" | "disabled"> & { maxLength?: number }) {
+  const hintId = hint ? `${id}-hint` : undefined;
+  const errorId = error ? `${id}-error` : undefined;
+  const describedBy = [errorId, hintId].filter(Boolean).join(" ") || undefined;
+  return (
+    <IconRow icon={icon}>
+      <label className="block text-base font-bold text-hero-navy" htmlFor={id}>
+        {label}
+        <RequirementTag />
+      </label>
+      <textarea
+        aria-describedby={describedBy}
+        aria-invalid={error ? true : undefined}
+        className={`${onboardingInput} min-h-28 resize-y py-2.5 leading-relaxed`}
+        id={id}
+        maxLength={maxLength}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        rows={4}
+        value={value}
+      />
+      {error && errorId ? <FieldError id={errorId}>{error}</FieldError> : null}
+      {hint ? (
+        <span className="mt-1.5 block text-sm leading-relaxed text-hero-muted" id={hintId}>
+          {hint}
+        </span>
+      ) : null}
+    </IconRow>
+  );
+}

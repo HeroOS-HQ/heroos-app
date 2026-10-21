@@ -13,9 +13,11 @@ runtime role, so it can provision identities but cannot read HR data.
 cannot read ``alembic_version``): 1 after migration B1a, 2 after B1b, 3 after
 C1 (M1-10C: Company roles, registration and jurisdiction readiness), 4 after D1
 (M2-01: workflow instances, submissions and facts), 5 after D2 (M2-02: intake
-evaluations), 6 after D3 (M2-03: workflow progress events). The API needs at
-least 6; the operator needs exactly 6 (its own grants are unchanged by D1 to
-D3, but it refuses any schema it was not written against).
+evaluations), 6 after D3 (M2-03: workflow progress events), 7 after D4 (M2-04:
+employer decision records), 8 after D5 (M2-NEW-03: the Company Blueprint
+context). The API needs at least 8; the operator needs exactly 8 (its own
+grants are unchanged by D1 to D5, but it refuses any schema it was not written
+against).
 """
 
 from typing import Final
@@ -26,13 +28,13 @@ from sqlalchemy.exc import DBAPIError
 RUNTIME_GROUP_ROLE: Final = "heroos_app_runtime"
 OPERATOR_GROUP_ROLE: Final = "heroos_identity_operator"
 
-# Schema the API needs (D4: employer decision records, on top of D3 progress
-# events, D2 intake evaluations, D1 workflow Cases and facts, C1 roles and
-# jurisdiction readiness and B1a/B1b identities and lifecycle).
-API_MINIMUM_SCHEMA_CONTRACT: Final = 7
+# Schema the API needs (D5: the Company Blueprint context, on top of D4 decision
+# records, D3 progress events, D2 intake evaluations, D1 workflow Cases and
+# facts, C1 roles and jurisdiction readiness and B1a/B1b identities and lifecycle).
+API_MINIMUM_SCHEMA_CONTRACT: Final = 8
 # Schema the operator CLI needs exactly (C1 registration, role and jurisdiction
-# confirmation grants on top of B1b provisioning; D1 to D4 add nothing for it).
-OPERATOR_SCHEMA_CONTRACT: Final = 7
+# confirmation grants on top of B1b provisioning; D1 to D5 add nothing for it).
+OPERATOR_SCHEMA_CONTRACT: Final = 8
 
 
 class UnsafeDatabaseRoleError(RuntimeError):

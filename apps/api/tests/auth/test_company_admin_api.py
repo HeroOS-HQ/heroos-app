@@ -109,11 +109,16 @@ def test_a_missing_blueprint_reads_as_empty_and_unconfirmed(
     response = client.get(f"/companies/{seed.company_a}/blueprint", headers=alice)
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    people = body.pop("people")
+    assert body == {
         "company_id": str(seed.company_a),
+        "company_name": "Company A",
         "legal_name": None,
         "industry": None,
         "employee_count": None,
+        "website_url": None,
+        "company_summary": None,
         "licensing": {"location": None, "authority": None},
         "jurisdiction": {
             "readiness": "unconfirmed",
@@ -122,8 +127,31 @@ def test_a_missing_blueprint_reads_as_empty_and_unconfirmed(
             "confirmed_at": None,
             "guidance_allowed": False,
         },
+        "policies_exist": None,
+        "policy_context": None,
+        "hr_support": None,
+        "hr_support_notes": None,
+        "primary_contact": None,
+        "completeness": {
+            "complete": False,
+            "missing": [
+                "legal_name",
+                "industry",
+                "employee_count",
+                "company_summary",
+                "jurisdiction",
+                "policies",
+                "hr_support",
+                "primary_contact",
+            ],
+        },
         "updated_at": None,
     }
+    # alice is the only person with access, and nobody is the primary contact yet.
+    assert [
+        (p["membership_id"], p["role"], p["is_current_user"], p["is_primary_contact"])
+        for p in people
+    ] == [(str(seed.alice_membership_a), "member", True, False)]
 
 
 def test_admin_updates_only_the_fields_sent(

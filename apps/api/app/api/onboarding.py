@@ -11,6 +11,11 @@ The only routes reachable before HeroOS knows a person:
   returning founder finds their workspace. Unknown identities get the generic
   403, like every Company route.
 
+A new Company's Blueprint gets the onboarding answers through the same
+validation and write path as the Blueprint page (``BlueprintFields``,
+``save_blueprint_changes``), and the founder's own Membership as its first
+primary contact (set here from the registration, never from the request).
+
 Responses: 201 a Company was created (role ``company_admin``); 200 this
 identity's earlier registration (a retry or a concurrent submission; the
 request body is then ignored), with the role the person holds there now; 401 no
@@ -27,10 +32,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import AfterValidator, BaseModel, ConfigDict, StringConstraints
 from sqlalchemy.orm import Session
 
-from app.api.companies import BlueprintUpdate, blueprint_changes, refuse_untidy_text
+from app.api.companies import BlueprintFields, blueprint_changes, refuse_untidy_text
 from app.auth.dependencies import forbidden, get_current_user, get_verified_identity
 from app.auth.exceptions import AuthorizationError
 from app.auth.models import ResolvedUser, VerifiedIdentity
+from app.companies.blueprint import save_blueprint_changes
 from app.companies.registration import (
     InvalidRegistration,
     list_identity_companies,
@@ -38,7 +44,6 @@ from app.companies.registration import (
 )
 from app.db.session import get_db
 from app.observability.context import record_authorized_company
-from app.repositories.company_blueprints import update_company_blueprint
 from app.tenancy.scope import open_company_scope
 
 logger = logging.getLogger(__name__)
@@ -51,14 +56,16 @@ CompanyName = Annotated[
 
 
 class CompanyRegistrationIn(BaseModel):
-    """The onboarding form. ``blueprint`` takes the same fields as the
-    administrator update (for example the licensing answer) and is applied in
-    the same transaction as the registration."""
+    """The onboarding form. ``blueprint`` takes the company's own answers
+    exactly as the Blueprint page does (``BlueprintFields``: the profile, the
+    licensing answer, website, summary, policies, HR support) and is applied in
+    the same transaction as the registration. The primary contact is not
+    accepted: it is the founder, from the registration itself."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
     company_name: CompanyName
-    blueprint: BlueprintUpdate | None = None
+    blueprint: BlueprintFields | None = None
 
 
 class CompanyRegistrationOut(BaseModel):
@@ -107,9 +114,11 @@ def register_company(
 
     record_authorized_company(result.context)
     if result.created:
-        if registration.blueprint is not None:
-            scope = open_company_scope(db, result.context)
-            update_company_blueprint(scope, blueprint_changes(registration.blueprint))
+        answers = registration.blueprint
+        changes = {} if answers is None else blueprint_changes(answers)
+        # The founder is the new Company's only member: its first primary contact.
+        changes["primary_contact_membership_id"] = result.membership_id
+        save_blueprint_changes(open_company_scope(db, result.context), changes)
         db.commit()
         logger.info("Company registered (company_id=%s)", result.company_id)
     else:

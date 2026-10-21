@@ -18,12 +18,12 @@ import { AccentTitle, OnboardingCanvas } from "./onboarding-frame";
 const MILESTONES: { title: string; body: string; icon: ReactNode }[] = [
   {
     title: "Company Basics",
-    body: "Tell us your company's name and, if you like, a few more details.",
+    body: "Tell us your company's name and, if you like, a little about how it works.",
     icon: <BuildingIcon className="size-12 stroke-[1.5] sm:size-14" />,
   },
   {
-    title: "Business Licence & Jurisdiction",
-    body: "Tell us where your business licence was issued. Jurisdiction is confirmed separately.",
+    title: "Jurisdiction",
+    body: "Tell us where your business licence was issued. Your jurisdiction is confirmed separately.",
     icon: <CertificateIcon className="size-12 stroke-[1.5] sm:size-14" />,
   },
   {
@@ -45,7 +45,7 @@ const NEXT: { title: string; body: string; icon: ReactNode }[] = [
     icon: <UserIcon className="size-8 sm:size-9" />,
   },
   {
-    title: "Record your licensing",
+    title: "Set your jurisdiction",
     body: "Your answer is kept as you give it. Jurisdiction is confirmed separately.",
     icon: <DocumentIcon className="size-8 sm:size-9" />,
   },
