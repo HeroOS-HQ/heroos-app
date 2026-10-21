@@ -19,10 +19,14 @@ Routes:
   recent conversation (browser memory only) and the opaque ``continuation``
   of the previous reply in; HeroOS's reply out: ``reply``, an optional
   ``safe_next_step``, a ``conversation_state`` (``responded``, ``clarifying``
-  or ``outside_approved_guidance``: how the turn was handled, never a
-  Guidance, Warning, Block or Expert Review outcome) and the next
-  ``continuation``. Nothing else: no understanding, knowledge, Condition,
-  source, digest, provider body or prompt reaches the browser.
+  or ``outside_approved_guidance``: how the turn was handled), the
+  ``outcome`` HeroOS's deterministic checks decided (M2-NEW-06: Guidance,
+  Warning, Block or Expert Review with a title, a message and one line per
+  requested step, or ``unavailable`` when the checks can't run; null when
+  there is none) and the next ``continuation`` (encrypted, opaque). Nothing
+  else: no understanding, knowledge, Condition, rule, binding, profile,
+  evaluation trace, source, digest, provider body or prompt reaches the
+  browser, and nothing the browser sends can choose or change the outcome.
 
 Nothing is stored: not the conversation, its facts, a Case or a decision.
 
@@ -35,13 +39,12 @@ stayed invalid after one repair).
 """
 
 import logging
-from typing import Annotated, Final
+from typing import Annotated, Final, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, StringConstraints, field_validator
 
 from app.api.assistant import MAX_HISTORY_TURNS, MAX_MESSAGE_CHARS, TurnIn, _plain_text
-from app.assistant.gateway.continuation import MAX_TOKEN_CHARS
 from app.assistant.gateway.service import (
     AiGateway,
     ConversationState,
@@ -53,13 +56,16 @@ from app.assistant.provider import ChatTurn
 from app.auth.dependencies import CompanyAdminContext, forbidden
 from app.auth.exceptions import AuthorizationError
 from app.companies.blueprint import load_company_blueprint_context
+from app.evaluation.continuation import MAX_TOKEN_CHARS
 from app.tenancy.dependencies import CompanyAdminReadOnlyDb
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/companies/{company_id}", tags=["assistant"])
 
-CONTINUATION_PATTERN: Final = r"^[A-Za-z0-9_-]{1,400}\.[A-Za-z0-9_-]{1,100}$"
+# An opaque token's shape only: the current encrypted form, or an earlier signed one, which
+# the codec rejects as lost state (re-confirmed), so a deploy never breaks a conversation.
+CONTINUATION_PATTERN: Final = r"^[A-Za-z0-9_-]{1,40}(?:\.[A-Za-z0-9_-]{1,2380}){1,2}$"
 
 
 def ai_gateway(request: Request) -> AiGateway:
@@ -94,10 +100,25 @@ class GatewayStatusOut(BaseModel):
     notice: str | None
 
 
+class OutcomeItemOut(BaseModel):
+    kind: Literal["guidance", "warning", "block", "expert_review"]
+    text: str
+
+
+class OutcomeOut(BaseModel):
+    """The deterministic outcome, in the server's words (never a rule, Condition or trace)."""
+
+    kind: Literal["guidance", "warning", "block", "expert_review", "unavailable"]
+    title: str
+    message: str
+    items: list[OutcomeItemOut]
+
+
 class GatewayReplyOut(BaseModel):
     reply: str
     safe_next_step: str | None
     conversation_state: ConversationState
+    outcome: OutcomeOut | None
     continuation: str
 
 
@@ -153,9 +174,18 @@ def send_gateway_message(
             else None
         )
         raise HTTPException(status_code=code, detail=detail, headers=headers) from None
+    card = result.outcome
     return GatewayReplyOut(
         reply=result.reply,
         safe_next_step=result.safe_next_step,
         conversation_state=result.state,
+        outcome=None
+        if card is None
+        else OutcomeOut(
+            kind=card.kind,
+            title=card.title,
+            message=card.message,
+            items=[OutcomeItemOut(kind=i.kind, text=i.text) for i in card.items],
+        ),
         continuation=result.continuation,
     )

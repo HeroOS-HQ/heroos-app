@@ -120,6 +120,15 @@ JSON document (schema `heroos.rule-bundle/1`, documented in `bundle.py`):
 - `version`, `serves_versions` (earlier versions whose Cases it may continue)
   and `definition_versions` (the question definitions it was written for).
 
+**Conversation rules** (M2-NEW-06, optional `conversation` section): typed
+facts no definition question owns, and per jurisdiction the rules an
+execution profile may bind to a knowledge Condition, and each employer
+decision's mandatory-prerequisite rules. They may compare whole numbers
+(`{"compare": key, "op": "gt", "value": n}` or `"field": other`) and carry a
+`follow_up` (`employer_insists`: a two-state caution; `condition_specific`:
+its own predicate). They never read a sensitive answer or a stage. A stage
+rule can't compare numbers. See [conversation-evaluation.md](conversation-evaluation.md).
+
 **Validation** (strict; the API refuses to start on any failure): exact fields
 only, no duplicate JSON keys, no NaN/Infinity, bounded sizes and text, known
 pathways, an acyclic stage graph with every stage reachable from an entry,

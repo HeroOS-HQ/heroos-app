@@ -384,7 +384,13 @@ production-approved).
   `KNOWLEDGE_SOURCE_DIR=… KNOWLEDGE_MAPPING=… uv run pytest tests/knowledge/test_real_sources.py`
   (skipped in CI: the sources are never there).
 
-## 15. The M2-NEW-05 contract
+## 15. The M2-NEW-05 contract (and M2-NEW-06)
+
+M2-NEW-06 ([conversation-evaluation.md](conversation-evaluation.md)) executes
+Conditions only through explicit bindings an execution profile approves
+against this runtime's exact digest; the engine links here are reused, never
+restated, and `not_enforced` or quarantined Conditions are never bound.
+
 
 Implemented by Ask HeroOS's controlled AI gateway
 ([ai-gateway.md](ai-gateway.md)); case facts and history join it with

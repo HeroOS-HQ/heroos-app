@@ -360,6 +360,44 @@ def test_the_api_never_reads_word_documents() -> None:
         ), path
 
 
+def test_the_conversation_evaluation_is_pure_and_writes_nothing() -> None:
+    """M2-NEW-06: the deterministic evaluation reads no database, calls no model and writes nothing.
+
+    It may read the pure workflow definitions and rule machinery (conditions,
+    definitions, predicates, the rule bundle) and the knowledge runtime, never a
+    workflow write path, a repository, a route or a provider; and nothing in
+    it executes text.
+    """
+    forbidden = (
+        "app.db", "app.repositories", "app.tenancy", "app.api", "app.assistant", "app.auth",
+        "app.documents", "app.storage", "sqlalchemy", "fastapi", "pydantic", "httpx", "urllib",
+        "socket", "requests", "scripts", "openai", "groq", "anthropic", "subprocess",
+    )  # fmt: skip
+    allowed_workflows = {
+        "app.workflows", "app.workflows.conditions", "app.workflows.definition",
+        "app.workflows.progression", "app.workflows.progression.predicates",
+        "app.workflows.progression.bundle", "app.workflows.progression.spec",
+    }  # fmt: skip
+    for path in (APP / "evaluation").rglob("*.py"):
+        imported = _imports(path)
+        assert not any(name.startswith(forbidden) for name in imported), path
+        workflows = {n.rsplit(".", 1)[0] if n.count(".") > 2 else n for n in imported
+                     if n.startswith("app.workflows")}  # fmt: skip
+        assert workflows <= allowed_workflows | {n.rsplit(".", 1)[0] for n in allowed_workflows}, (
+            path,
+            workflows,
+        )
+        source = path.read_text(encoding="utf-8").replace("evaluate(", "").replace(
+            "evaluate_conversation(", ""
+        )  # fmt: skip
+        assert "eval(" not in source and "exec(" not in source, path
+    # The routes use only its token bound (no evaluation, rule or profile reaches an API module).
+    for path in (APP / "api").rglob("*.py"):
+        evaluation = {n for n in _imports(path) if n.startswith("app.evaluation")}
+        assert evaluation <= {"app.evaluation.continuation",
+                              "app.evaluation.continuation.MAX_TOKEN_CHARS"}, path  # fmt: skip
+
+
 def test_the_knowledge_runtime_is_pure_and_offline() -> None:
     """M2-NEW-04: the runtime describes approved knowledge; it never acts or reaches out.
 

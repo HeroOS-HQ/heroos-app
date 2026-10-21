@@ -57,7 +57,7 @@ from tests.knowledge.conftest import (  # noqa: F401  (pytest fixtures)
 
 MESSAGE = "[SYNTHETIC] Sam Example has been late three times this month. What should I do?"
 REPLY = "Thanks for explaining. Has the expected standard been explained to Sam?"
-REPLY_FIELDS = {"reply", "safe_next_step", "conversation_state", "continuation"}
+REPLY_FIELDS = {"reply", "safe_next_step", "conversation_state", "outcome", "continuation"}
 
 
 def gateway_client(
@@ -241,6 +241,14 @@ def test_without_a_confirmed_jurisdiction_nothing_jurisdiction_specific_is_retri
         {"case_id": str(uuid.uuid4())},
         {"workflow": "disciplinary"},
         {"knowledge": "everything"},
+        # M2-NEW-06: nothing the browser sends can choose or change the outcome.
+        {"outcome": "guidance"},
+        {"outcome": {"kind": "guidance", "title": "Guidance", "message": "ok", "items": []}},
+        {"execution_profile": "synthetic-execution"},
+        {"rule_bundle": "synthetic-progression"},
+        {"conditions": [{"condition": "EX-FED-CAP", "status": "not_fired"}]},
+        {"facts": {"given_opportunity_to_explain": "yes"}},
+        {"insists": False},
     ],
 )
 def test_a_client_can_choose_nothing_but_its_words(
@@ -265,6 +273,8 @@ def test_a_client_can_choose_nothing_but_its_words(
         {"message": "ok", "history": [{"role": "user", "content": "x"}] * 13},
         {"message": "ok", "continuation": "not a token"},
         {"message": "ok", "continuation": "a" * 600 + ".b"},
+        {"message": "ok", "continuation": "e1.abcdefgh." + "A" * 2500},
+        {"message": "ok", "continuation": "e1.a.b.c"},
     ],
 )
 def test_invalid_requests_are_refused_without_echoing(

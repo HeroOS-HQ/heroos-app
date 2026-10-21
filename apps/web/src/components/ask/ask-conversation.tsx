@@ -4,9 +4,10 @@ import { useEffect, useRef, useState } from "react";
 
 import { AdviserMark, PersonAvatar } from "@/components/app/workspace-chrome";
 import type { ChatTurn } from "@/lib/assistant/model";
-import { gatewayRequest, MAX_MESSAGE_CHARS, parseGatewayReply } from "@/lib/ask/conversation";
+import { gatewayRequest, MAX_MESSAGE_CHARS, type Outcome, parseGatewayReply, type StepKind } from "@/lib/ask/conversation";
 
 import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
+import { AdviserTurn, type Outcome as Tone, OutcomeLabel } from "./response-tone";
 
 /**
  * Ask HeroOS as a conversation (M2-NEW-05). The founder explains the situation
@@ -15,10 +16,14 @@ import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
  * it needs next. Nothing to choose: no workflow, pathway, stage, title or
  * jurisdiction. Free text is always the way to answer.
  *
- * Deliberately not here: an outcome. HeroOS's turns are shown in one neutral
- * style (no Guidance, Warning, Stop or Expert Review label or colour): those
- * come from the deterministic engine, never from a model (M2-NEW-06). No case
- * is opened, and the conversation lives in this page only: reloading clears it.
+ * The outcome (M2-NEW-06) is the API's deterministic result, never the
+ * model's: Guidance, Warning, Block or Expert Review, in JJ's approved tones
+ * with words and an icon (never colour alone), a line per requested step and
+ * the server's safe next step. A Block holds one step, never the conversation,
+ * and Expert Review is a requirement, not a ticket: the box stays free to type
+ * in, whatever the outcome. When the checks can't run, a neutral note says so
+ * (never an HR outcome). No case is opened, and the conversation lives in this
+ * page only: reloading clears it.
  */
 
 type Failure =
@@ -44,7 +49,10 @@ const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digi
 
 type Turn =
   | { id: number; role: "founder"; text: string; at: Date }
-  | { id: number; role: "heroos"; text: string; safeNextStep: string | null; at: Date };
+  | { id: number; role: "heroos"; text: string; safeNextStep: string | null; outcome: Outcome | null; at: Date };
+
+// The API's outcome kinds as the approved tones (response-tone.tsx).
+const TONES: Record<StepKind, Tone> = { guidance: "guidance", warning: "warning", block: "block", expert_review: "expert" };
 
 async function failureOf(response: Response): Promise<Failure> {
   switch (response.status) {
@@ -145,7 +153,7 @@ export function AskConversation({
       setTurns((current) => [
         ...current,
         { id: nextId.current++, role: "founder", text: message, at },
-        { id: nextId.current++, role: "heroos", text: reply.reply, safeNextStep: reply.safeNextStep, at: new Date() },
+        { id: nextId.current++, role: "heroos", text: reply.reply, safeNextStep: reply.safeNextStep, outcome: reply.outcome, at: new Date() },
       ]);
     } catch {
       setFailure("unavailable");
@@ -225,7 +233,7 @@ export function AskConversation({
             </li>
           ) : (
             <li key={turn.id}>
-              <HeroTurn at={turn.at} safeNextStep={turn.safeNextStep} text={turn.text} />
+              <HeroTurn at={turn.at} id={turn.id} outcome={turn.outcome} safeNextStep={turn.safeNextStep} text={turn.text} />
             </li>
           ),
         )}
@@ -268,8 +276,60 @@ function FounderTurn({ text, at }: { text: string; at: Date }) {
   );
 }
 
-/** One of HeroOS's replies: always the same neutral style (no outcome is decided here). */
-function HeroTurn({ text, safeNextStep, at }: { text: string; safeNextStep: string | null; at: Date }) {
+function SafeNextStep({ text }: { text: string }) {
+  return (
+    <div className="rounded-2xl border border-hero-navy/[0.1] bg-white px-4 py-3">
+      <p className="text-[0.75rem] font-bold uppercase tracking-[0.1em] text-hero-muted">Safe next step</p>
+      <p className="mt-1 whitespace-pre-wrap break-words">{text}</p>
+    </div>
+  );
+}
+
+/**
+ * One of HeroOS's replies. With a deterministic outcome: the approved outcome turn
+ * (its label, the server's own words, a line per requested step, the reply, the safe
+ * next step). Without one: the neutral style, and a note when the checks can't run.
+ */
+function HeroTurn({
+  id,
+  text,
+  safeNextStep,
+  outcome,
+  at,
+}: {
+  id: number;
+  text: string;
+  safeNextStep: string | null;
+  outcome: Outcome | null;
+  at: Date;
+}) {
+  if (outcome !== null && outcome.kind !== "unavailable") {
+    return (
+      <AdviserTurn
+        id={`ask-${id}`}
+        outcome={TONES[outcome.kind]}
+        time={<time className="tabular-nums">{TIME.format(at)}</time>}
+        // A panel headline only where it says more than its label (e.g. "Not yet: Written warning").
+        title={outcome.kind === "block" ? outcome.title : undefined}
+      >
+        {outcome.kind === "guidance" ? null : <p className="font-semibold">{outcome.message}</p>}
+        {outcome.items.length > 0 ? (
+          <ul aria-label="Each step you asked about" className="space-y-2">
+            {outcome.items.map((item) => (
+              <li className="flex items-start gap-2 text-[0.9375rem]" key={item.text}>
+                <span className="shrink-0">
+                  <OutcomeLabel outcome={TONES[item.kind]} />
+                </span>
+                <span className="min-w-0 flex-1 pt-0.5">{item.text}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        <p className="whitespace-pre-wrap break-words">{text}</p>
+        {safeNextStep ? <SafeNextStep text={safeNextStep} /> : null}
+      </AdviserTurn>
+    );
+  }
   return (
     <div aria-label="HeroOS" role="group">
       <div className="flex items-center gap-3">
@@ -280,13 +340,13 @@ function HeroTurn({ text, safeNextStep, at }: { text: string; safeNextStep: stri
         </p>
       </div>
       <div className="mt-2 space-y-3 border-l-2 border-hero-navy/[0.12] pl-4 text-base leading-[1.65] text-hero-navy sm:ml-[0.9375rem] sm:pl-[1.6875rem]">
-        <p className="whitespace-pre-wrap break-words">{text}</p>
-        {safeNextStep ? (
-          <div className="rounded-2xl border border-hero-navy/[0.1] bg-white px-4 py-3">
-            <p className="text-[0.75rem] font-bold uppercase tracking-[0.1em] text-hero-muted">Safe next step</p>
-            <p className="mt-1 whitespace-pre-wrap break-words">{safeNextStep}</p>
-          </div>
+        {outcome?.kind === "unavailable" ? (
+          <p className="text-[0.875rem] text-hero-muted" role="note">
+            <span className="font-bold text-hero-navy">{outcome.title}.</span> {outcome.message}
+          </p>
         ) : null}
+        <p className="whitespace-pre-wrap break-words">{text}</p>
+        {safeNextStep ? <SafeNextStep text={safeNextStep} /> : null}
       </div>
     </div>
   );

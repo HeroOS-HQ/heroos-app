@@ -1,8 +1,10 @@
 """The routing catalog: what the understanding phase may name, built from the installed bundle.
 
 The model never sees the knowledge itself to classify a message, only this
-small closed catalog: the workflows the bundle publishes, their pathways and
-topics (keys and titles), and the facts a founder may state (keys and labels).
+small closed catalog: the workflows the bundle publishes, their pathways,
+topics and employer decisions (keys and titles), and the facts a founder may
+state (keys and labels). A decision's key is its stable option id, never its
+title (M2-NEW-06 binds execution to the id).
 Anything outside it is refused by the server. Nothing here is hard-coded: a
 workflow that isn't in the bundle (probation, recruitment, performance) is
 simply not in the catalog.
@@ -38,12 +40,17 @@ class CatalogWorkflow:
     title: str
     pathways: tuple[CatalogItem, ...]
     topics: tuple[CatalogItem, ...]
+    # The employer decisions the approved content covers (option id and title).
+    actions: tuple[CatalogItem, ...] = ()
 
     def has_pathway(self, key: str) -> bool:
         return any(p.key == key for p in self.pathways)
 
     def has_topic(self, key: str) -> bool:
         return any(t.key == key for t in self.topics)
+
+    def has_action(self, key: str) -> bool:
+        return any(a.key == key for a in self.actions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +71,7 @@ class RoutingCatalog:
                     "title": w.title,
                     "pathways": [{"key": p.key, "title": p.title} for p in w.pathways],
                     "topics": [{"key": t.key, "title": t.title} for t in w.topics],
+                    "actions": [{"key": a.key, "title": a.title} for a in w.actions],
                 }
                 for w in self.workflows
             ],
@@ -88,6 +96,9 @@ def routing_catalog(bundle: KnowledgeBundle) -> RoutingCatalog:
             title=w.title,
             pathways=tuple(CatalogItem(p.key, p.title) for p in w.pathways),
             topics=tuple(CatalogItem(t.key, t.title) for t in bundle.topics if t.workflow == w.key),
+            actions=tuple(
+                CatalogItem(o.id, o.title) for o in bundle.options if o.workflow == w.key
+            ),
         )
         for w in bundle.workflows
     )

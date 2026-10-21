@@ -88,6 +88,14 @@ template-review-packs/
 *.private-knowledge-mapping.json
 private-knowledge-bundles/
 knowledge-reports/
+
+# Private execution profiles (M2-NEW-06): they bind private Condition ids to
+# rules and never belong in this public repository
+# (docs/architecture/conversation-evaluation.md). Name them
+# *.private-execution-profile.json; coverage audits stay with them.
+*.private-execution-profile.json
+private-execution-profiles/
+execution-coverage-audit*.json
 *.xlsx
 *.xlsm
 *.xls
