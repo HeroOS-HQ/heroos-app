@@ -13,10 +13,11 @@ import re
 
 import pytest
 
-from app.assistant.gateway.continuation import Continuations
 from app.assistant.gateway.grounding import check_grounding, internal_labels
 from app.assistant.gateway.prompts import RESPONSE_INSTRUCTION
 from app.assistant.response_safety import gateway_problem
+from app.evaluation.continuation import ContinuationCodec, ContinuationState
+from app.evaluation.facts import Asked
 from app.knowledge.bundle import KnowledgeBundle
 
 KNOWLEDGE = (
@@ -209,25 +210,44 @@ def test_explaining_an_approved_option_is_allowed(reply: str) -> None:
 
 
 def test_the_continuation_names_only_what_was_asked_and_only_for_its_owner() -> None:
+    """Without a configured key, the token carries what HeroOS asked, for its owner only.
+
+    The trusted, multi-instance state is tested in tests/evaluation/test_continuation.py.
+    """
     from uuid import uuid4
 
     now = [1_000_000.0]
-    facts = ["a_fact", "b_fact", "c_fact"]
-    tokens = Continuations(facts, "digest-1", key=b"k" * 32, now=lambda: now[0])
+    tokens = ContinuationCodec(None, now=lambda: now[0])
     company, user = uuid4(), uuid4()
-    token = tokens.issue(company, user, ["c_fact", "unknown"])
-    assert "c_fact" not in token and len(token) < 200
-    assert tokens.read(token, company, user) == ("c_fact",)
+    state = ContinuationState(asked=(Asked("fact", "c_fact"),), engine={"x": "yes"})
+    token = tokens.issue(state, company=company, user=user, versions="digest-1", message="Hi")
+
+    def read(token: object, company: object = company, user: object = user, **kw: object):  # type: ignore[no-untyped-def]
+        return tokens.read(
+            token,  # type: ignore[arg-type]
+            company=company,  # type: ignore[arg-type]
+            user=user,  # type: ignore[arg-type]
+            versions=kw.get("versions", "digest-1"),  # type: ignore[arg-type]
+            previous_message=kw.get("previous", "Hi"),  # type: ignore[arg-type]
+        )
+
+    assert "c_fact" not in token
+    result = read(token)
+    assert result.state is not None and result.state.asked == (Asked("fact", "c_fact"),)
+    # Never trusted state with a per-process key.
+    assert result.state.engine == {} and not result.trusted
     # Another user, Company, bundle or process key: nothing.
-    assert tokens.read(token, company, uuid4()) == ()
-    assert tokens.read(token, uuid4(), user) == ()
-    other = Continuations(facts, "digest-2", key=b"k" * 32, now=lambda: now[0])
-    assert other.read(token, company, user) == ()
-    assert Continuations(facts, "digest-1").read(token, company, user) == ()
-    # Tampered, malformed or expired: nothing.
-    body, signature = token.split(".")
-    assert tokens.read(body[:-2] + "AA." + signature, company, user) == ()
-    for junk in (None, "", "x", "a.b.c", "!!!.???", "a" * 600):
-        assert tokens.read(junk, company, user) == ()
+    assert read(token, user=uuid4()).rejection == "wrong_user"
+    assert read(token, company=uuid4()).rejection == "wrong_company"
+    assert read(token, versions="digest-2").rejection == "version_mismatch"
+    other = ContinuationCodec(None, now=lambda: now[0])
+    assert other.read(token, company=company, user=user, versions="digest-1",
+                      previous_message="Hi").rejection == "key_mismatch"  # fmt: skip
+    # Tampered, malformed, replayed or expired: nothing.
+    prefix, key_id, body = token.split(".")
+    assert read(f"{prefix}.{key_id}.{body[:-4]}AAAA").rejection == "tampered"
+    for junk in (None, "", "x", "a.b.c", "!!!.???", "a" * 3000):
+        assert read(junk).state is None
+    assert read(token, previous="Another message").rejection == "replayed"
     now[0] += 5 * 3600
-    assert tokens.read(token, company, user) == ()
+    assert read(token).rejection == "expired"

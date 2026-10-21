@@ -222,8 +222,8 @@ def test_each_request_keeps_instructions_and_untrusted_data_apart(bundle: Knowle
     assert "Use a reminder first" not in first.text
     # Response: knowledge view, company view, the conversation as data.
     assert set(second.data) == {
-        "approved_knowledge", "company_context", "established_facts", "jurisdiction_note",
-        "conversation", "current_message",
+        "approved_knowledge", "heroos_outcome", "company_context", "established_facts",
+        "jurisdiction_note", "conversation", "current_message",
     }  # fmt: skip
     assert second.data["current_message"] == injection
     # The website, people, ids and the bundle's identity are never sent.

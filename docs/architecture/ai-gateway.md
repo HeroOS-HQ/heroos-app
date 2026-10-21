@@ -15,7 +15,9 @@ works exactly as before (M2-NEW-02): Send opens a guided Disciplinary case.
   `apps/api/app/assistant/response_safety.py` (reply checks).
 - Web: `components/ask/ask-conversation.tsx`, `lib/ask/conversation.ts`,
   `POST /bff/companies/{id}/assistant/messages`.
-- Related: [knowledge-runtime.md](knowledge-runtime.md) (the only HR/legal
+- Related: [conversation-evaluation.md](conversation-evaluation.md) (M2-NEW-06:
+  the deterministic outcome each turn now carries),
+  [knowledge-runtime.md](knowledge-runtime.md) (the only HR/legal
   authority), [company-blueprint.md](company-blueprint.md) (the only company
   context), [signed-in-workspace.md](signed-in-workspace.md) (Ask HeroOS),
   [hannah-ai-demo.md](hannah-ai-demo.md) (the legacy demo this supersedes).
@@ -36,10 +38,10 @@ whatever the bundle says.
 
 | Does | Doesn't (owner) |
 | --- | --- |
-| Accept free text, with no Case and nothing to choose | Evaluate a Condition, or decide WARN / BLOCK / ESCALATE / ALLOW (M2-NEW-06) |
+| Accept free text, with no Case and nothing to choose | Evaluate a Condition, or decide WARN / BLOCK / ESCALATE / ALLOW (done by M2-NEW-06's deterministic evaluator, never by the model) |
 | Propose a candidate workflow, pathway and topics from the bundle's own catalog; unresolved is valid | Create or change a Case, workflow, fact, decision or history (M2-NEW-06/07) |
 | Keep the founder's explicit statements as facts for this turn, with evidence | Persist the conversation, its facts or provenance (M2-NEW-07) |
-| Query the runtime narrowly, server-side | Show Guidance / Warning / Block / Expert Review states (M2-NEW-06) |
+| Query the runtime narrowly, server-side | Choose the Guidance / Warning / Block / Expert Review outcome (M2-NEW-06's server-owned card; the model only phrases it) |
 | Choose what to ask next (server) and let the model phrase it | Generate or offer a document (M2-NEW-08) |
 | Explain approved options as possibilities the employer decides on | Create or promise an Expert Review (M2-NEW-09) |
 | Say when an action needs specialist review, and keep going with the methodology that still applies | Fetch the company website, browse or search (future, separately controlled) |
@@ -47,8 +49,10 @@ whatever the bundle says.
 
 **The 05 / 06 split.** Here, Conditions only shape the conversation: which
 facts matter, what must be clarified, what must not be said, which safeguards
-come first. Nothing here concludes that a Condition fired, and a Condition's
-`block` action never becomes "this case is blocked".
+come first. Nothing here concludes that a Condition fired. Since M2-NEW-06,
+the deterministic evaluator (`app/evaluation`, [conversation-evaluation.md](conversation-evaluation.md))
+runs between retrieval and the response: explicitly bound rules on
+server-trusted facts only, action by action, never the whole conversation.
 
 ## 3. One founder turn
 
@@ -110,8 +114,13 @@ Output, strictly validated (`proposals.parse_understanding`):
  "workflow_candidate": key | null, "pathway_candidate": key | null, "topics": [≤ 3 keys],
  "fact_proposals": [{fact_key, proposed_value, confidence, provenance, source_turn,
                      support_excerpt, explicit_or_inferred}],
- "uncertainties": [codes], "case_summary": text | null}
+ "uncertainties": [codes], "case_summary": text | null,
+ "requested_actions": [{action, source_turn, support_excerpt}]}   (M2-NEW-06, optional)
 ```
+
+`requested_actions` names, by stable catalog option id, the employer
+decisions the founder explicitly asked about, each with their own words
+(evidence-checked like a fact). It only ever adds deterministic checks.
 
 There is no field for a Condition, outcome, sanction, transition, document,
 jurisdiction or legal conclusion, and an unknown field is refused. Only
@@ -152,13 +161,14 @@ understanding phase never sees them, and nothing cites them.
 ## 8. What HeroOS last asked: the continuation
 
 "Yes" or "twice" only means something next to the question it answers. Each
-reply carries an opaque `continuation` token (`continuation.py`): the facts
-HeroOS asked about, as positions in the bundle's fact list, HMAC-signed with
-a key held in this API process's memory, bound to the Company, the user and
-the installed bundle, valid four hours. The next turn tells the model "the
-founder may be answering a question about: <labels from the bundle>". A
-restart, another bundle, another user, or a forged or stale token just means
-HeroOS doesn't know what it last asked; it grants nothing.
+reply carries an opaque `continuation` token. Since M2-NEW-06 it is the
+encrypted evaluation continuation (`app/evaluation/continuation.py`,
+[conversation-evaluation.md §11](conversation-evaluation.md#11-the-evaluation-continuation-heroosevaluation-continuation1)):
+what HeroOS asked and the state its checks trust, AES-GCM under a shared
+server key, bound to the Company, the user, the knowledge and the execution
+profile, valid four hours. The next turn tells the model "the founder may be
+answering a question about: <labels from the bundle>". Any problem with a
+token just loses that state (re-confirmed, never loosened); it grants nothing.
 
 ## 9. Retrieval and what to ask (server-side)
 
@@ -352,10 +362,12 @@ digest) stays server-side: it is not sent to the browser.
 `POST /companies/{id}/assistant/messages`:
 
 - in: `{message (≤ 2,000), history (≤ 12 turns, ≤ 4,000 each), continuation?}`;
-- out: `{reply, safe_next_step, conversation_state, continuation}`;
+- out: `{reply, safe_next_step, conversation_state, outcome, continuation}`;
 - `conversation_state`: `responded`, `clarifying` or
   `outside_approved_guidance`: how the turn was handled, deliberately not an
   outcome;
+- `outcome` (M2-NEW-06): the server's deterministic card, or null
+  ([conversation-evaluation.md §12](conversation-evaluation.md#12-browser-contract-and-ui));
 - errors: 401 / 403 / 404 (disabled) / 422 / 429 (+`Retry-After`) / 502 / 503
   (`Not configured`, `Knowledge unavailable`) / 504, fixed details only.
 
@@ -367,19 +379,21 @@ The conversation (`ask-conversation.tsx`) keeps the approved landing ("What
 can HR do for you today?"), then a thread with the composer docked below:
 free text always, Ctrl/⌘+Enter to send, a loading state, a recoverable
 error that keeps the typed message in the box, "New conversation", and a
-note that the conversation isn't saved. HeroOS's turns use one neutral style
-(no Guidance, Warning, Stop or Expert Review label or colour); an optional
-"Safe next step" is a practical step, never a decision. No suggestion chips.
-Navigation is unchanged.
+note that the conversation isn't saved. Since M2-NEW-06 a turn with a
+deterministic outcome shows it in JJ's approved tones (Guidance, Warning,
+Block, Expert Review; words and an icon, never colour alone); the box stays
+free in every state. An optional "Safe next step" is a practical step, never
+a decision. No suggestion chips. Navigation is unchanged.
 
-## 17. The handoff to M2-NEW-06
+## 17. The handoff to M2-NEW-06 and M2-NEW-07
 
 `service.Handoff` (server-side; not stored, not sent to the browser):
 intent, workflow, pathway candidate, topics, established facts (key, value,
 provenance, turn), tentative fact keys, uncertainties, case summary,
 knowledge status, jurisdiction, actions held for review, what was asked and
-the runtime bundle digest. M2-NEW-06 evaluates Conditions deterministically
-from authorized facts; M2-NEW-07 persists the conversation and provenance.
+the runtime bundle digest; since M2-NEW-06 also the requested action ids and
+the deterministic `ConversationEvaluation` (its `record()` is the versioned
+contract M2-NEW-07 may persist after re-evaluating it server-side).
 
 ## 18. The legacy Hannah demo
 
@@ -420,7 +434,8 @@ the gateway is activated (§13).
   and an unusual safe phrasing can be replaced.
 - Bounded history: a fact said long ago may fall out of view; HeroOS then
   asks again rather than guessing.
-- The continuation key lives in one process: after a restart HeroOS may ask
-  a question again.
+- Without `HEROOS_EVALUATION_CONTINUATION_KEY`, the continuation key lives in
+  one process and carries only what HeroOS asked: after a restart HeroOS may
+  ask a question again (M2-NEW-06 adds the shared key for trusted state).
 - One provider adapter (GroqCloud); another provider is another class with
   the same shape.

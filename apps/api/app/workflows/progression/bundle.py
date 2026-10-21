@@ -38,6 +38,27 @@ A rule is ``{"key", "action": "warn" | "block" | "escalate", "require" | "when",
 is definitely true; ``when: P`` fires unless P is definitely false. Either way
 an unknown input fires the rule: missing information never lets a transition
 through.
+
+**Conversation rules (M2-NEW-06, optional).** ``"conversation"`` holds the
+deterministic rules Ask HeroOS may run on a conversation's trusted facts
+before any Case exists (``app.evaluation``)::
+
+    "conversation": {
+      "facts": [{"key", "kind": "yes_no" | "count" | "choice",
+                 "options": [{"value", "label"}] (choice), "max": int (count)}],
+      "jurisdictions": {"<code>": {
+         "rules": [rule + optional "follow_up"],
+         "actions": [{"action": "<option id>", "rules": [rule + optional "follow_up"]}]}}}
+
+``facts`` types the facts the rules read that no question of the workflow
+definition owns (a definition question keeps its own options). ``rules``
+are bindable to a knowledge Condition by an execution profile, never by name;
+``actions`` are an employer decision's mandatory prerequisites. A rule may
+compare whole numbers (``compare``) and carry a ``follow_up``:
+``{"action", "when": "employer_insists"}`` (a two-state caution: stronger
+only once the employer explicitly insists) or ``{"action", "when":
+"condition_specific", "if": P}``. Conversation rules never read a sensitive
+answer or a stage. A bundle without the section has no conversation rules.
 """
 
 import hashlib
@@ -50,10 +71,10 @@ from pathlib import Path
 from typing import Final, Literal
 
 from app.workflows.conditions import JURISDICTIONS
-from app.workflows.definition import YES_NO_NOT_SURE, Option, Question, Step
+from app.workflows.definition import YES_NO_NOT_SURE, Option, Question, Step, WorkflowDefinition
 from app.workflows.definition import current_definition as _current_definition
 from app.workflows.progression import predicates
-from app.workflows.progression.spec import PROGRESSIONS
+from app.workflows.progression.spec import PROGRESSIONS, ProgressionSpec
 
 SCHEMA: Final = "heroos.rule-bundle/1"
 Provenance = Literal["synthetic", "private"]
@@ -88,6 +109,14 @@ MAX_STAGES: Final = 40
 MAX_CHECKLIST: Final = 20
 MAX_RULES: Final = 40
 MAX_OPTIONS: Final = 8
+# Conversation rules (M2-NEW-06): knowledge fact keys and option ids.
+CONVERSATION_FACT_KEY: Final = re.compile(r"^[a-z][a-z0-9_.]{0,99}$")
+ACTION_ID: Final = re.compile(r"^[A-Za-z][A-Za-z0-9._-]{0,79}$")
+CONVERSATION_FACT_KINDS: Final = ("yes_no", "count", "choice")
+FOLLOW_UP_WHEN: Final = ("employer_insists", "condition_specific")
+MAX_CONVERSATION_FACTS: Final = 60
+MAX_COUNT: Final = 1_000_000
+SEVERITY: Final[Mapping[str, int]] = {"warn": 1, "block": 2, "escalate": 3}
 
 
 class RuleBundleError(ValueError):
@@ -186,6 +215,56 @@ class JurisdictionProgram:
         return {i.fact_key: i for p in self.pathways for s in p.stages for i in s.checklist}
 
 
+ConversationFactKind = Literal["yes_no", "count", "choice"]
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationFact:
+    """A fact a conversation rule reads that no definition question types."""
+
+    key: str
+    kind: ConversationFactKind
+    # yes_no: Yes / No / Not sure; choice: as written; count: none.
+    options: tuple[Option, ...]
+    # count only: the largest value accepted as an answer.
+    maximum: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class FollowUp:
+    action: Action
+    when: Literal["employer_insists", "condition_specific"]
+    # condition_specific only: the follow-up applies unless this is definitely false.
+    trigger: predicates.Predicate | None
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationRule:
+    rule: BundleRule
+    follow_up: FollowUp | None
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationProgram:
+    jurisdiction: str
+    # Bindable to a knowledge Condition by an execution profile (never by name).
+    rules: tuple[ConversationRule, ...]
+    # An employer decision (option id) -> its mandatory prerequisites.
+    actions: Mapping[str, tuple[ConversationRule, ...]]
+
+    def rule(self, key: str) -> ConversationRule | None:
+        return next((r for r in self.rules if r.rule.key == key), None)
+
+
+@dataclass(frozen=True, slots=True)
+class ConversationRules:
+    facts: tuple[ConversationFact, ...]
+    jurisdictions: Mapping[str, ConversationProgram]
+
+    def fact(self, key: str) -> ConversationFact | None:
+        return next((f for f in self.facts if f.key == key), None)
+
+
 @dataclass(frozen=True, slots=True)
 class RuleBundle:
     bundle_id: str
@@ -201,6 +280,8 @@ class RuleBundle:
     digest: str
     # SHA-256 of the file as deployed (the configured pin).
     file_sha256: str
+    # Ask HeroOS's deterministic rules (M2-NEW-06); None: the bundle has none.
+    conversation: ConversationRules | None = None
 
     def program(self, jurisdiction: str | None) -> JurisdictionProgram | None:
         return None if jurisdiction is None else self.jurisdictions.get(jurisdiction)
@@ -280,9 +361,14 @@ def _message(raw: object, where: str) -> Message:
     )
 
 
-def _rule(raw: object, where: str) -> BundleRule:
+def _rule(
+    raw: object, where: str, *, comparisons: bool = False, extra: frozenset[str] = frozenset()
+) -> BundleRule:
     data = _object(
-        raw, where, {"key", "action", "provisional", "message"}, frozenset({"require", "when"})
+        raw,
+        where,
+        {"key", "action", "provisional", "message"},
+        frozenset({"require", "when"}) | extra,
     )
     forms = [name for name in ("require", "when") if name in data]
     if len(forms) != 1:
@@ -292,7 +378,7 @@ def _rule(raw: object, where: str) -> BundleRule:
     if action not in ("warn", "block", "escalate"):
         raise RuleBundleError("invalid_action", f"{where}.action")
     try:
-        predicate = predicates.parse(data[form], f"{where}.{form}")
+        predicate = predicates.parse(data[form], f"{where}.{form}", comparisons=comparisons)
     except predicates.PredicateError as error:
         raise RuleBundleError("invalid_condition", f"{where}.{form}") from error
     trigger = predicates.Not(predicate) if form == "require" else predicate
@@ -444,6 +530,128 @@ def _check_references(
                     raise RuleBundleError("unknown_stage_referenced", at)
 
 
+def _conversation_fact(raw: object, where: str, questions: frozenset[str]) -> ConversationFact:
+    data = _object(raw, where, {"key", "kind"}, frozenset({"options", "max"}))
+    key = _key(data["key"], CONVERSATION_FACT_KEY, f"{where}.key")
+    if key in questions or key.startswith(f"{FACT_PREFIX}."):
+        # A definition question keeps its own options; a checklist answer is a Case's.
+        raise RuleBundleError("fact_shadows_question", f"{where}.key")
+    kind = data["kind"]
+    if kind not in CONVERSATION_FACT_KINDS:
+        raise RuleBundleError("invalid_fact_kind", f"{where}.kind")
+    options: tuple[Option, ...] = ()
+    maximum: int | None = None
+    if kind == "choice":
+        if "options" not in data or "max" in data:
+            raise RuleBundleError("invalid_fact_kind", where)
+        options = _options(data["options"], f"{where}.options")
+    elif kind == "yes_no":
+        if "options" in data or "max" in data:
+            raise RuleBundleError("invalid_fact_kind", where)
+        options = YES_NO_NOT_SURE
+    else:
+        if "options" in data:
+            raise RuleBundleError("invalid_fact_kind", where)
+        raw_max = data.get("max")
+        if raw_max is not None and (
+            not isinstance(raw_max, int)
+            or isinstance(raw_max, bool)
+            or not 1 <= raw_max <= MAX_COUNT
+        ):
+            raise RuleBundleError("invalid_fact_kind", f"{where}.max")
+        maximum = raw_max
+    return ConversationFact(key, kind, options, maximum)
+
+
+def _conversation_rule(raw: object, where: str) -> ConversationRule:
+    rule = _rule(raw, where, comparisons=True, extra=frozenset({"follow_up"}))
+    assert isinstance(raw, dict)
+    if "follow_up" not in raw:
+        return ConversationRule(rule, None)
+    at = f"{where}.follow_up"
+    data = _object(raw["follow_up"], at, {"action", "when"}, frozenset({"if"}))
+    action, when = data["action"], data["when"]
+    if action not in SEVERITY or SEVERITY[str(action)] <= SEVERITY[rule.action]:
+        # A follow-up only ever makes the rule stronger.
+        raise RuleBundleError("invalid_follow_up", f"{at}.action")
+    if when not in FOLLOW_UP_WHEN or (("if" in data) != (when == "condition_specific")):
+        raise RuleBundleError("invalid_follow_up", f"{at}.when")
+    trigger = None
+    if "if" in data:
+        try:
+            trigger = predicates.parse(data["if"], f"{at}.if", comparisons=True)
+        except predicates.PredicateError as error:
+            raise RuleBundleError("invalid_condition", f"{at}.if") from error
+    return ConversationRule(rule, FollowUp(action, when, trigger))  # type: ignore[arg-type]  # checked
+
+
+def _conversation(
+    raw: object, readable: frozenset[str], sensitive: frozenset[str]
+) -> ConversationRules:
+    """The optional conversation section: typed facts and per-jurisdiction rules."""
+    where = "$.conversation"
+    data = _object(raw, where, {"facts", "jurisdictions"})
+    facts = tuple(
+        _conversation_fact(item, f"{where}.facts[{i}]", readable | sensitive)
+        for i, item in enumerate(_list(data["facts"], f"{where}.facts", MAX_CONVERSATION_FACTS))
+    )
+    if len({f.key for f in facts}) != len(facts):
+        raise RuleBundleError("duplicate_key", f"{where}.facts")
+    declared = {f.key: f for f in facts}
+    numeric = frozenset(f.key for f in facts if f.kind == "count")
+    jurisdictions_raw = data["jurisdictions"]
+    if not isinstance(jurisdictions_raw, dict) or not jurisdictions_raw:
+        raise RuleBundleError("invalid_jurisdictions", f"{where}.jurisdictions")
+    programs: dict[str, ConversationProgram] = {}
+    for code, program_raw in jurisdictions_raw.items():
+        if code not in JURISDICTIONS:
+            raise RuleBundleError("unsupported_jurisdiction", f"{where}.jurisdictions")
+        at = f"{where}.jurisdictions.{code}"
+        program = _object(program_raw, at, {"rules", "actions"})
+        rules = tuple(
+            _conversation_rule(item, f"{at}.rules[{i}]")
+            for i, item in enumerate(_list(program["rules"], f"{at}.rules", MAX_RULES))
+        )
+        actions: dict[str, tuple[ConversationRule, ...]] = {}
+        for i, entry in enumerate(_list(program["actions"], f"{at}.actions", MAX_RULES)):
+            entry_at = f"{at}.actions[{i}]"
+            entry_data = _object(entry, entry_at, {"action", "rules"})
+            action = _key(entry_data["action"], ACTION_ID, f"{entry_at}.action")
+            if action in actions:
+                raise RuleBundleError("duplicate_key", entry_at)
+            actions[action] = tuple(
+                _conversation_rule(item, f"{entry_at}.rules[{j}]")
+                for j, item in enumerate(
+                    _list(entry_data["rules"], f"{entry_at}.rules", MAX_RULES, allow_empty=False)
+                )
+            )
+            if any(r.follow_up is not None for r in actions[action]):
+                # A follow-up (a two-state caution) comes from an approved Condition only.
+                raise RuleBundleError("follow_up_on_prerequisite", entry_at)
+        everything = [*rules, *(r for group in actions.values() for r in group)]
+        keys = [r.rule.key for r in everything]
+        if len(set(keys)) != len(keys):
+            raise RuleBundleError("duplicate_rule", at)
+        for index, item in enumerate(everything):
+            triggers = [item.rule.trigger] + (
+                [item.follow_up.trigger]
+                if item.follow_up is not None and item.follow_up.trigger is not None
+                else []
+            )
+            for trigger in triggers:
+                if predicates.stage_keys(trigger):
+                    raise RuleBundleError("stage_referenced_in_conversation", f"{at}[{index}]")
+                for fact in predicates.fact_keys(trigger):
+                    if fact in sensitive:
+                        raise RuleBundleError("sensitive_answer_referenced", f"{at}[{index}]")
+                    if fact not in readable and fact not in declared:
+                        raise RuleBundleError("unknown_answer_referenced", f"{at}[{index}]")
+                if not set(predicates.compared_keys(trigger)) <= numeric:
+                    raise RuleBundleError("comparison_not_numeric", f"{at}[{index}]")
+        programs[code] = ConversationProgram(code, rules, actions)
+    return ConversationRules(facts, programs)
+
+
 def _canonical_digest(raw: Mapping[str, object]) -> str:
     canonical = json.dumps(raw, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -462,8 +670,19 @@ def _no_constants(name: str) -> object:
     raise RuleBundleError("invalid_json_number")
 
 
-def parse_bundle(content: bytes, *, file_sha256: str) -> RuleBundle:
-    """Validate a bundle's bytes against the schema and this code's definitions."""
+def parse_bundle(
+    content: bytes,
+    *,
+    file_sha256: str,
+    definition: WorkflowDefinition | None = None,
+    spec: ProgressionSpec | None = None,
+) -> RuleBundle:
+    """Validate a bundle's bytes against the schema and this code's definitions.
+
+    ``definition`` and ``spec`` replace the registered ones for the bundle's
+    workflow (a workflow this code doesn't register, e.g. a test's fictional
+    one); by default the current registered definition and spec are used.
+    """
     if len(content) > MAX_BUNDLE_BYTES:
         raise RuleBundleError("too_large")
     try:
@@ -486,7 +705,7 @@ def parse_bundle(content: bytes, *, file_sha256: str) -> RuleBundle:
             "definition_versions",
             "jurisdictions",
         },
-        frozenset({"serves_versions", "notice"}),
+        frozenset({"serves_versions", "notice", "conversation"}),
     )
     if data["schema"] != SCHEMA:
         raise RuleBundleError("unsupported_schema", "$.schema")
@@ -496,8 +715,14 @@ def parse_bundle(content: bytes, *, file_sha256: str) -> RuleBundle:
     workflow = data["workflow"]
     if not isinstance(workflow, str):
         raise RuleBundleError("unknown_workflow", "$.workflow")
-    spec = PROGRESSIONS.get(workflow)
-    definition = _current_definition(workflow)
+    spec = (
+        spec if spec is not None and spec.workflow_key == workflow else PROGRESSIONS.get(workflow)
+    )
+    definition = (
+        definition
+        if definition is not None and definition.key == workflow
+        else _current_definition(workflow)
+    )
     if spec is None or definition is None:
         raise RuleBundleError("unknown_workflow", "$.workflow")
     versions = _list(data["definition_versions"], "$.definition_versions", 16, allow_empty=False)
@@ -565,6 +790,26 @@ def parse_bundle(content: bytes, *, file_sha256: str) -> RuleBundle:
         _check_references(jurisdiction_program, where, readable, sensitive)
         programs[code] = jurisdiction_program
 
+    conversation = (
+        None
+        if data.get("conversation") is None
+        else _conversation(data["conversation"], readable, sensitive)
+    )
+    if conversation is not None:
+        for code, rules_program in conversation.jurisdictions.items():
+            stage_rules = {
+                r.key
+                for p in programs.get(code, JurisdictionProgram(code, ())).pathways
+                for rules in [p.select_rules, *(s.start_rules for s in p.stages),
+                              *(s.complete_rules for s in p.stages)]
+                for r in rules
+            }  # fmt: skip
+            own = {r.rule.key for r in rules_program.rules} | {
+                r.rule.key for group in rules_program.actions.values() for r in group
+            }
+            if stage_rules & own:
+                raise RuleBundleError("duplicate_rule", f"$.conversation.jurisdictions.{code}")
+
     return RuleBundle(
         bundle_id=_key(data["bundle"], BUNDLE_ID, "$.bundle"),
         version=version,
@@ -576,10 +821,18 @@ def parse_bundle(content: bytes, *, file_sha256: str) -> RuleBundle:
         jurisdictions=programs,
         digest=_canonical_digest(data),
         file_sha256=file_sha256,
+        conversation=conversation,
     )
 
 
-def load_bundle(path: Path, expected_sha256: str, *, production: bool) -> RuleBundle:
+def load_bundle(
+    path: Path,
+    expected_sha256: str,
+    *,
+    production: bool,
+    definition: WorkflowDefinition | None = None,
+    spec: ProgressionSpec | None = None,
+) -> RuleBundle:
     """Read, verify against the pin, validate. Raises ``RuleBundleError``; never falls back."""
     if not SHA256_HEX.fullmatch(expected_sha256):
         raise RuleBundleError("invalid_pin")
@@ -593,7 +846,7 @@ def load_bundle(path: Path, expected_sha256: str, *, production: bool) -> RuleBu
     actual = hashlib.sha256(content).hexdigest()
     if not hmac.compare_digest(actual, expected_sha256):
         raise RuleBundleError("checksum_mismatch")
-    bundle = parse_bundle(content, file_sha256=actual)
+    bundle = parse_bundle(content, file_sha256=actual, definition=definition, spec=spec)
     if production and bundle.provenance == "synthetic":
         raise RuleBundleError("synthetic_in_production")
     return bundle

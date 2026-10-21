@@ -16,9 +16,14 @@ from app.core.http_security import install_http_security
 from app.db.runtime_role import verify_runtime_role
 from app.db.session import engine
 from app.documents.bundle import TemplateBundle, check_against_rules, load_template_bundle
+from app.evaluation.continuation import ContinuationCodec, parse_key
+from app.evaluation.evaluator import ConversationEvaluationService
+from app.evaluation.profile import load_execution_profile
+from app.evaluation.snapshot import ExecutionRuntime, build_snapshot, describe
 from app.knowledge.bundle import KnowledgeBundle, load_knowledge_bundle
 from app.observability import configure_logging, install_observability
 from app.storage.dependencies import get_private_object_storage
+from app.workflows.definition import WORKFLOWS
 from app.workflows.progression.bundle import RuleBundle, load_bundle
 
 logger = logging.getLogger(__name__)
@@ -116,6 +121,44 @@ def load_knowledge(config: Settings) -> KnowledgeBundle | None:
     return bundle
 
 
+def load_evaluation(
+    config: Settings, knowledge: KnowledgeBundle | None, rules: RuleBundle | None
+) -> ConversationEvaluationService:
+    """Ask HeroOS's deterministic evaluation: one immutable snapshot of compatible artifacts.
+
+    A configured profile that is missing, doesn't match its pin or fails its
+    schema raises (startup stops). Whether it fits the installed knowledge,
+    definitions and rule bundle is checked here too: a mismatch leaves
+    deterministic evaluation unavailable for that workflow (logged with fixed
+    codes), never running stale rules. The log names identities, never content.
+    """
+    path, pin = config.heroos_execution_profile_path, config.heroos_execution_profile_sha256
+    profile = None
+    if path is None or pin is None:
+        logger.info("Conversation execution profile not installed")
+    else:
+        profile = load_execution_profile(path, pin, production=config.heroos_env == "production")
+        logger.info(
+            "Conversation execution profile loaded (profile=%s, version=%s, provenance=%s, "
+            "approval=%s, digest=%s)",
+            profile.profile,
+            profile.version,
+            profile.provenance,
+            profile.approval,
+            profile.digest[:16],
+        )
+    rule_bundles = {} if rules is None else {rules.workflow_key: rules}
+    snapshot = build_snapshot(knowledge, profile, rule_bundles, WORKFLOWS)
+    logger.info("Conversation evaluation snapshot %s", describe(snapshot))
+    return ConversationEvaluationService(ExecutionRuntime(snapshot))
+
+
+def continuation_codec(config: Settings) -> ContinuationCodec:
+    """The shared-key codec (trusted state across instances), or a per-process one (none)."""
+    key = config.heroos_evaluation_continuation_key
+    return ContinuationCodec(None if key is None else parse_key(key.get_secret_value()))
+
+
 def external_provider(config: Settings, model: str) -> GroqChatProvider | OfflineProvider | None:
     """The configured chat model, or an offline stand-in where real calls aren't allowed.
 
@@ -163,7 +206,11 @@ def load_hannah_demo(config: Settings) -> HannahDemo:
     )
 
 
-def load_ai_gateway(config: Settings, knowledge: KnowledgeBundle | None) -> AiGateway:
+def load_ai_gateway(
+    config: Settings,
+    knowledge: KnowledgeBundle | None,
+    evaluation: ConversationEvaluationService | None = None,
+) -> AiGateway:
     """Ask HeroOS's controlled AI gateway (docs/architecture/ai-gateway.md).
 
     Off unless enabled. Enabled, it answers only when every prerequisite holds
@@ -188,6 +235,8 @@ def load_ai_gateway(config: Settings, knowledge: KnowledgeBundle | None) -> AiGa
             global_per_minute=config.heroos_ai_gateway_global_limit_per_minute,
             global_per_day=config.heroos_ai_gateway_global_limit_per_day,
         ),
+        evaluation=evaluation,
+        continuations=continuation_codec(config),
     )
     if not ai.enabled:
         logger.info("AI gateway disabled")
@@ -243,8 +292,14 @@ def create_app(config: Settings) -> FastAPI:
     application.state.knowledge_bundle = load_knowledge(config)
     # The Hannah AI demo: off unless enabled, then for every Company administrator.
     application.state.hannah_demo = load_hannah_demo(config)
+    # Ask HeroOS's deterministic evaluation: the compatible artifacts, one immutable snapshot.
+    application.state.conversation_evaluation = load_evaluation(
+        config, application.state.knowledge_bundle, application.state.rule_bundle
+    )
     # Ask HeroOS's AI gateway: off unless enabled and every prerequisite holds.
-    application.state.ai_gateway = load_ai_gateway(config, application.state.knowledge_bundle)
+    application.state.ai_gateway = load_ai_gateway(
+        config, application.state.knowledge_bundle, application.state.conversation_evaluation
+    )
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
     application.include_router(companies.router)
     application.include_router(onboarding.router)

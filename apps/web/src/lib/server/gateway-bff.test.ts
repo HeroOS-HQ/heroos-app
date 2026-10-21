@@ -21,10 +21,20 @@ const BODY = {
   ],
   continuation: CONTINUATION,
 };
+const OUTCOME = {
+  kind: "block",
+  title: "Not yet: Written warning",
+  message: "Don't take this step yet: a written warning can't safely proceed yet.",
+  items: [
+    { kind: "block", text: "Written warning: can't safely proceed yet" },
+    { kind: "guidance", text: "Workplace reminder: no HeroOS rule prevents it on what's established so far" },
+  ],
+};
 const API_REPLY = {
   reply: "That's good to hear: improvement after a conversation can be where this ends.",
   safe_next_step: "Keep a short note of the conversation and the improvement.",
   conversation_state: "responded",
+  outcome: null,
   continuation: CONTINUATION,
 };
 
@@ -65,6 +75,7 @@ describe("handleGatewayMessage (Ask HeroOS)", () => {
       reply: API_REPLY.reply,
       safeNextStep: API_REPLY.safe_next_step,
       conversationState: "responded",
+      outcome: null,
       continuation: CONTINUATION,
     });
     const [url, init] = deps.fetchMock.mock.calls[0];
@@ -76,13 +87,44 @@ describe("handleGatewayMessage (Ask HeroOS)", () => {
     expect(JSON.parse(String(init?.body))).toEqual(BODY);
   });
 
-  it("omits an absent continuation and passes on nothing but the reply's four fields", async () => {
+  it("omits an absent continuation and passes on nothing but the reply's five fields", async () => {
     const deps = api(json({ ...API_REPLY, safe_next_step: null, provider: "groq", model: "m", knowledge: "x" }));
     const response = await handleGatewayMessage(post({ message: "Hello", history: [] }), CONFIG, COMPANY_ID, deps);
     const body = await response.json();
-    expect(Object.keys(body).sort()).toEqual(["continuation", "conversationState", "reply", "safeNextStep"]);
+    expect(Object.keys(body).sort()).toEqual(["continuation", "conversationState", "outcome", "reply", "safeNextStep"]);
     expect(JSON.stringify(body)).not.toMatch(/groq|knowledge/);
     expect(JSON.parse(String(deps.fetchMock.mock.calls[0][1]?.body))).toEqual({ message: "Hello", history: [] });
+  });
+
+  it("passes on the API's outcome card field by field, and nothing else in it", async () => {
+    const deps = api(json({ ...API_REPLY, outcome: OUTCOME }));
+    const body = await (await handleGatewayMessage(post(BODY), CONFIG, COMPANY_ID, deps)).json();
+    expect(body.outcome).toEqual(OUTCOME);
+    // An outcome with anything more, or anything malformed, refuses the whole reply.
+    for (const outcome of [
+      { ...OUTCOME, rule: "fictional_cap" },
+      { ...OUTCOME, kind: "allow" },
+      { ...OUTCOME, items: [{ kind: "escalate", text: "x" }] },
+      { ...OUTCOME, items: Array(5).fill(OUTCOME.items[0]) },
+      { ...OUTCOME, message: "" },
+      "block",
+    ]) {
+      const refused = await handleGatewayMessage(post(BODY), CONFIG, COMPANY_ID, api(json({ ...API_REPLY, outcome })));
+      expect(refused.status).toBe(503);
+    }
+    // An API from before outcomes existed sends none: no outcome, not an error.
+    const older: Record<string, unknown> = { ...API_REPLY };
+    delete older.outcome;
+    const answered = await handleGatewayMessage(post(BODY), CONFIG, COMPANY_ID, api(json(older)));
+    expect((await answered.json()).outcome).toBeNull();
+  });
+
+  it("never sends an outcome or a fact the browser chose", async () => {
+    for (const extra of [{ outcome: "guidance" }, { facts: { x: "yes" } }, { conditions: [] }]) {
+      const deps = api(json(API_REPLY));
+      expect((await handleGatewayMessage(post({ ...BODY, ...extra }), CONFIG, COMPANY_ID, deps)).status).toBe(422);
+      expect(deps.fetchMock).not.toHaveBeenCalled();
+    }
   });
 
   it.each([

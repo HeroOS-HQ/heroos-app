@@ -304,8 +304,17 @@ def knowledge_view(bundle: KnowledgeBundle, plan: TurnPlan) -> KnowledgeView:
     limitations = _limitations(context.limitations, plan)
     must = [REQUIRED[b] for b in context.required_behaviors if b in REQUIRED]
     must_not = [PROHIBITED[b] for b in context.prohibited_behaviors if b in PROHIBITED]
-    targets = [{"id": t.id, "about": t.label, "mode": t.mode} for t in plan.targets]
-    shown += [t.label for t in plan.targets] + limitations
+    targets = [
+        {
+            "id": t.id,
+            "about": t.label,
+            "mode": t.mode,
+            **({"ask": t.question} if t.question else {}),
+        }
+        for t in plan.targets
+    ]
+    shown += [t.label for t in plan.targets] + [t.question for t in plan.targets if t.question]
+    shown += limitations
     data: dict[str, object] = {
         "knowledge_status": STATUS[context.status],
         "jurisdiction": (

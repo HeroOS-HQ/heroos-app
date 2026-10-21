@@ -8,9 +8,12 @@ gateway allows one schema repair per phase.
 
 **Understanding** (``UnderstandingProposal``): the intent, an optional
 workflow, pathway and topics from the catalog (unknown is a valid answer),
-fact proposals, uncertainty codes and an optional short summary. It has no
-field for a Condition, an outcome, a sanction, a transition, a document, a
-jurisdiction or a legal conclusion, and none can be added.
+fact proposals, uncertainty codes, an optional short summary and (M2-NEW-06)
+the employer decisions the founder explicitly asked about, by catalog id and
+with the founder's own words. It has no field for a Condition, an outcome, a
+sanction choice, a transition, a document, a jurisdiction or a legal
+conclusion, and none can be added. A requested decision only makes HeroOS
+check more: its absence never proves a safeguard doesn't apply.
 
 **Fact proposals** are candidates, never facts. Each names a catalog fact key,
 a value, where it comes from (the current or an earlier founder message, or
@@ -30,7 +33,7 @@ review, jurisdiction or reference can be returned: the server owns those.
 import json
 import re
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final, Literal, cast
 
@@ -69,6 +72,7 @@ MAX_SUMMARY_CHARS: Final = 300
 MAX_REPLY_CHARS: Final = 1600
 MAX_NEXT_STEP_CHARS: Final = 300
 MAX_TARGET_IDS: Final = 3
+MAX_REQUESTED_ACTIONS: Final = 3
 
 _UNDERSTANDING_FIELDS: Final = frozenset(
     {"schema_version", "intent", "workflow_candidate", "pathway_candidate", "topics",
@@ -78,6 +82,7 @@ _FACT_FIELDS: Final = frozenset(
     {"fact_key", "proposed_value", "confidence", "provenance", "source_turn", "support_excerpt",
      "explicit_or_inferred"}
 )  # fmt: skip
+_ACTION_FIELDS: Final = frozenset({"action", "source_turn", "support_excerpt"})
 _RESPONSE_FIELDS: Final = frozenset({"schema_version", "reply"})
 _RESPONSE_OPTIONAL: Final = frozenset({"question_target_ids", "safe_next_step"})
 
@@ -110,6 +115,16 @@ class FactProposal:
 
 
 @dataclass(frozen=True, slots=True)
+class RequestedAction:
+    """An employer decision the founder explicitly asked about (catalog option id)."""
+
+    action: str
+    source_turn: int
+    # Server-side only: never logged, never returned to the browser.
+    excerpt: str
+
+
+@dataclass(frozen=True, slots=True)
 class UnderstandingProposal:
     intent: Intent
     workflow: str | None
@@ -118,6 +133,7 @@ class UnderstandingProposal:
     facts: tuple[FactProposal, ...]
     uncertainties: tuple[Uncertainty, ...]
     summary: str | None
+    actions: tuple[RequestedAction, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,7 +259,7 @@ def parse_understanding(
     ``check_evidence`` (a fact-level refusal, not a structural one).
     """
     data = _load(text)
-    _fields(data, _UNDERSTANDING_FIELDS, frozenset({"case_summary"}), "$")
+    _fields(data, _UNDERSTANDING_FIELDS, frozenset({"case_summary", "requested_actions"}), "$")
     if data["schema_version"] != UNDERSTANDING_SCHEMA:
         raise ProposalError("unknown_schema", "$.schema_version")
     intent = _code(data["intent"], INTENTS, "$.intent")
@@ -280,6 +296,26 @@ def parse_understanding(
         for i, u in enumerate(_list(data["uncertainties"], MAX_UNCERTAINTIES, "$.uncertainties"))
     ]
     summary = _text(data.get("case_summary"), MAX_SUMMARY_CHARS, "$.case_summary", nullable=True)
+    actions: list[RequestedAction] = []
+    raw_actions = _list(
+        data.get("requested_actions", []), MAX_REQUESTED_ACTIONS, "$.requested_actions"
+    )
+    for i, raw in enumerate(raw_actions):
+        where = f"$.requested_actions[{i}]"
+        if not isinstance(raw, dict):
+            raise ProposalError("expected_object", where)
+        _fields(raw, _ACTION_FIELDS, frozenset(), where)
+        key = raw["action"]
+        if workflow is None or not isinstance(key, str) or not workflow.has_action(key):
+            raise ProposalError("unknown_action", f"{where}.action")
+        turn = raw["source_turn"]
+        if not isinstance(turn, int) or isinstance(turn, bool) or not 0 <= turn <= current_turn:
+            raise ProposalError("bad_turn", f"{where}.source_turn")
+        excerpt = _text(raw["support_excerpt"], MAX_EXCERPT_CHARS, f"{where}.support_excerpt")
+        assert excerpt is not None
+        actions.append(RequestedAction(key, turn, excerpt))
+    if len({a.action for a in actions}) != len(actions):
+        raise ProposalError("duplicate_value", "$.requested_actions")
     return UnderstandingProposal(
         intent=intent,
         workflow=None if workflow is None else workflow.key,
@@ -288,6 +324,7 @@ def parse_understanding(
         facts=facts,
         uncertainties=cast(tuple[Uncertainty, ...], _unique(uncertainties, "$.uncertainties")),
         summary=summary,
+        actions=tuple(actions),
     )
 
 
@@ -329,7 +366,15 @@ def check_evidence(
             source = messages[fact.source_turn] if fact.source_turn < len(messages) else ""
         if excerpt in source:
             kept.append(fact)
-    dropped = len(proposal.facts) - len(kept)
+    # A requested decision needs the founder's own words too (it only ever adds checks).
+    actions = tuple(
+        a
+        for a in proposal.actions
+        if normalized(a.excerpt)
+        and a.source_turn < len(messages)
+        and normalized(a.excerpt) in messages[a.source_turn]
+    )
+    dropped = len(proposal.facts) - len(kept) + len(proposal.actions) - len(actions)
     return (
         UnderstandingProposal(
             intent=proposal.intent,
@@ -339,8 +384,43 @@ def check_evidence(
             facts=tuple(kept),
             uncertainties=proposal.uncertainties,
             summary=proposal.summary,
+            actions=actions,
         ),
         dropped,
+    )
+
+
+def without_contradicted(
+    proposal: UnderstandingProposal, contradicted: Callable[[FactProposal], bool]
+) -> UnderstandingProposal:
+    """Readings the founder's own words contradict or hedge establish nothing (M2-NEW-06).
+
+    "I did NOT speak to the employee" cited for "discussed: yes" is real words
+    and a wrong reading: it becomes an inferred proposal, so HeroOS asks
+    instead of relying on it.
+    """
+    return UnderstandingProposal(
+        intent=proposal.intent,
+        workflow=proposal.workflow,
+        pathway=proposal.pathway,
+        topics=proposal.topics,
+        facts=tuple(
+            FactProposal(
+                f.fact_key,
+                f.value,
+                f.confidence,
+                f.provenance,
+                f.source_turn,
+                f.excerpt,
+                "inferred",
+            )
+            if f.establishes and contradicted(f)
+            else f
+            for f in proposal.facts
+        ),  # fmt: skip
+        uncertainties=proposal.uncertainties,
+        summary=proposal.summary,
+        actions=proposal.actions,
     )
 
 

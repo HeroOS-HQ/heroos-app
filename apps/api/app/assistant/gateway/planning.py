@@ -57,6 +57,9 @@ SAFEGUARD_ACTIONS: Final = frozenset({"block", "escalate"})
 
 JurisdictionState = Literal["confirmed", "company_unconfirmed", "conversation_conflict"]
 TargetMode = Literal["ask", "confirm"]
+# M2-NEW-06: a fact, a confirmation of a canonical value, a two-state caution's insistence
+# question, or the employee's jurisdiction.
+TargetKind = Literal["fact", "confirm", "insistence", "jurisdiction"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +71,11 @@ class QuestionTarget:
     label: str
     # "confirm": the founder said something close but not explicit or exact.
     mode: TargetMode
+    kind: TargetKind = "fact"
+    # confirm: the canonical value to confirm; insistence: the held action's id.
+    candidate: str | int | None = None
+    # The server's own wording of the question (a deterministic check needs this answer).
+    question: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

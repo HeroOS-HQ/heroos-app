@@ -8,6 +8,7 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError
 
 from app.core.database_settings import DatabaseSettings
+from app.evaluation.continuation import parse_key
 
 Environment = Literal["development", "staging", "production"]
 AuthProviderName = Literal["development", "cognito", "oidc"]
@@ -194,6 +195,19 @@ class Settings(DatabaseSettings):
     heroos_knowledge_bundle_path: Path | None = None
     heroos_knowledge_bundle_sha256: str | None = None
 
+    # Ask HeroOS's deterministic conversation evaluation (M2-NEW-06): the execution
+    # profile approving which knowledge, workflow definition, rule bundle and Condition
+    # bindings operate together, a private JSON file plus its SHA-256 (set both or
+    # neither), and the shared secret that encrypts and authenticates the trusted state
+    # a conversation carries between turns (any API instance can read it; at least 32
+    # random bytes, base64url or hex; required with a profile). Unset: deterministic
+    # checks are unavailable and say so; nothing else changes. A synthetic or
+    # development profile is refused in production
+    # (docs/architecture/conversation-evaluation.md).
+    heroos_execution_profile_path: Path | None = None
+    heroos_execution_profile_sha256: str | None = None
+    heroos_evaluation_continuation_key: SecretStr | None = None
+
     # Hannah AI demo (conversational, GroqCloud). Off unless explicitly enabled;
     # then any Company administrator can use it in their own Company's Cases.
     # Production refuses it. The chat never changes a Case and receives no
@@ -312,6 +326,34 @@ class Settings(DatabaseSettings):
             raise ValueError("HEROOS_KNOWLEDGE_BUNDLE_PATH must be an absolute path")
         if pin is not None and not RULE_BUNDLE_PIN.fullmatch(pin):
             raise ValueError("HEROOS_KNOWLEDGE_BUNDLE_SHA256 must be 64 lowercase hex characters")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_execution_profile(self) -> Self:
+        path, pin = self.heroos_execution_profile_path, self.heroos_execution_profile_sha256
+        if (path is None) != (pin is None):
+            raise ValueError(
+                "HEROOS_EXECUTION_PROFILE_PATH and HEROOS_EXECUTION_PROFILE_SHA256 must be set "
+                "together"
+            )
+        if path is not None and not path.is_absolute():
+            raise ValueError("HEROOS_EXECUTION_PROFILE_PATH must be an absolute path")
+        if pin is not None and not RULE_BUNDLE_PIN.fullmatch(pin):
+            raise ValueError("HEROOS_EXECUTION_PROFILE_SHA256 must be 64 lowercase hex characters")
+        key = self.heroos_evaluation_continuation_key
+        if path is not None and key is None:
+            # Trusted state across turns and API instances needs a shared secret.
+            raise ValueError(
+                "HEROOS_EXECUTION_PROFILE_PATH requires HEROOS_EVALUATION_CONTINUATION_KEY"
+            )
+        if key is not None:
+            try:
+                parse_key(key.get_secret_value())
+            except ValueError as error:
+                raise ValueError(
+                    "HEROOS_EVALUATION_CONTINUATION_KEY must be base64url or hex of at least 32 "
+                    "random bytes"
+                ) from error
         return self
 
     @model_validator(mode="after")

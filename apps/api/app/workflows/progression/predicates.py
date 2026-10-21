@@ -13,6 +13,11 @@ JSON forms (``parse``):
 - ``{"all": [...]}``, ``{"any": [...]}``: conjunction and disjunction.
 - ``{"not": {...}}``: negation.
 - ``{"stage_completed": "<stage key>"}``: the stage was completed in this Case.
+- ``{"compare": "<fact key>", "op": "gt" | "ge" | "lt" | "le" | "eq" | "ne",
+  "value": <integer>}`` or ``{..., "field": "<fact key>"}``: a whole-number fact
+  against a number or against another fact (M2-NEW-06 conversation rules only:
+  ``parse(..., comparisons=True)``). Anything that isn't a whole number
+  (missing, "Not sure", text) is UNKNOWN.
 """
 
 from collections.abc import Mapping
@@ -59,7 +64,36 @@ class StageCompleted:
     stage: str
 
 
-Predicate = Answer | AllOf | AnyOf | Not | StageCompleted
+COMPARISONS: Final = ("gt", "ge", "lt", "le", "eq", "ne")
+MAX_COMPARED: Final = 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class Compare:
+    """A whole-number fact against a number (``value``) or another fact (``field``)."""
+
+    key: str
+    op: str
+    value: int | None = None
+    field: str | None = None
+
+
+Predicate = Answer | AllOf | AnyOf | Not | StageCompleted | Compare
+
+
+def _number(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _compared(op: str, left: int, right: int) -> bool:
+    return {
+        "gt": left > right,
+        "ge": left >= right,
+        "lt": left < right,
+        "le": left <= right,
+        "eq": left == right,
+        "ne": left != right,
+    }[op]
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +113,16 @@ def evaluate(predicate: Predicate, context: Context) -> Tri:
         return Tri.TRUE if value in predicate.values else Tri.FALSE
     if isinstance(predicate, StageCompleted):
         return Tri.TRUE if predicate.stage in context.completed else Tri.FALSE
+    if isinstance(predicate, Compare):
+        left = _number(context.answers.get(predicate.key))
+        right = (
+            predicate.value
+            if predicate.field is None
+            else _number(context.answers.get(predicate.field))
+        )
+        if left is None or right is None:
+            return Tri.UNKNOWN
+        return Tri.TRUE if _compared(predicate.op, left, right) else Tri.FALSE
     if isinstance(predicate, Not):
         inner = evaluate(predicate.term, context)
         if inner is Tri.UNKNOWN:
@@ -98,6 +142,8 @@ def fact_keys(predicate: Predicate) -> tuple[str, ...]:
     """The answer keys a predicate reads, in order, without repeats."""
     if isinstance(predicate, Answer):
         return (predicate.key,)
+    if isinstance(predicate, Compare):
+        return (predicate.key,) if predicate.field is None else (predicate.key, predicate.field)
     if isinstance(predicate, StageCompleted):
         return ()
     terms = (predicate.term,) if isinstance(predicate, Not) else predicate.terms
@@ -107,11 +153,24 @@ def fact_keys(predicate: Predicate) -> tuple[str, ...]:
     return tuple(keys)
 
 
+def compared_keys(predicate: Predicate) -> tuple[str, ...]:
+    """The fact keys a predicate compares as numbers, in order, without repeats."""
+    if isinstance(predicate, Compare):
+        return fact_keys(predicate)
+    if isinstance(predicate, (Answer, StageCompleted)):
+        return ()
+    terms = (predicate.term,) if isinstance(predicate, Not) else predicate.terms
+    keys: list[str] = []
+    for term in terms:
+        keys += [key for key in compared_keys(term) if key not in keys]
+    return tuple(keys)
+
+
 def stage_keys(predicate: Predicate) -> tuple[str, ...]:
     """The stages a predicate reads, in order, without repeats."""
     if isinstance(predicate, StageCompleted):
         return (predicate.stage,)
-    if isinstance(predicate, Answer):
+    if isinstance(predicate, (Answer, Compare)):
         return ()
     terms = (predicate.term,) if isinstance(predicate, Not) else predicate.terms
     keys: list[str] = []
@@ -125,6 +184,10 @@ def unknown_keys(predicate: Predicate, context: Context) -> tuple[str, ...]:
     if isinstance(predicate, Answer):
         value = context.answers.get(predicate.key)
         return (predicate.key,) if value is None or value in predicate.unknown else ()
+    if isinstance(predicate, Compare):
+        return tuple(
+            key for key in fact_keys(predicate) if _number(context.answers.get(key)) is None
+        )
     if isinstance(predicate, StageCompleted):
         return ()
     terms = (predicate.term,) if isinstance(predicate, Not) else predicate.terms
@@ -146,13 +209,43 @@ def _strings(value: object, where: str, *, allow_empty: bool = False) -> tuple[s
     return tuple(value)
 
 
-def parse(raw: object, where: str, depth: int = 0) -> Predicate:
-    """A predicate from its JSON form; anything else is refused."""
+def _compare(raw: dict[str, object], where: str) -> Compare:
+    keys = set(raw)
+    if not ({"compare", "op"} <= keys <= {"compare", "op", "value", "field"}) or (
+        ("value" in keys) == ("field" in keys)
+    ):
+        raise PredicateError(f"{where}: a comparison takes compare, op and value or field")
+    key, op = raw["compare"], raw["op"]
+    if not isinstance(key, str) or not key:
+        raise PredicateError(f"{where}.compare: expected a fact key")
+    if op not in COMPARISONS:
+        raise PredicateError(f"{where}.op: unknown comparison")
+    if "field" in raw:
+        other = raw["field"]
+        if not isinstance(other, str) or not other or other == key:
+            raise PredicateError(f"{where}.field: expected another fact key")
+        return Compare(key, str(op), field=other)
+    value = _number(raw["value"])
+    if value is None or abs(value) > MAX_COMPARED:
+        raise PredicateError(f"{where}.value: expected a bounded whole number")
+    return Compare(key, str(op), value=value)
+
+
+def parse(raw: object, where: str, depth: int = 0, *, comparisons: bool = False) -> Predicate:
+    """A predicate from its JSON form; anything else is refused.
+
+    ``comparisons``: whether numeric comparisons are allowed (conversation
+    rules only; a stage rule never compares numbers).
+    """
     if depth > MAX_DEPTH:
         raise PredicateError(f"{where}: nested too deeply")
     if not isinstance(raw, dict):
         raise PredicateError(f"{where}: expected an object")
     keys = set(raw)
+    if "compare" in raw:
+        if not comparisons:
+            raise PredicateError(f"{where}: unknown condition")
+        return _compare(raw, where)
     if "answer" in raw:
         if not keys <= {"answer", "in", "unknown"} or "in" not in raw:
             raise PredicateError(f"{where}: an answer condition takes answer, in and unknown")
@@ -176,11 +269,12 @@ def parse(raw: object, where: str, depth: int = 0) -> Predicate:
         if not isinstance(value, list) or not value or len(value) > MAX_TERMS:
             raise PredicateError(f"{where}.{name}: expected 1 to {MAX_TERMS} conditions")
         terms = tuple(
-            parse(term, f"{where}.{name}[{index}]", depth + 1) for index, term in enumerate(value)
+            parse(term, f"{where}.{name}[{index}]", depth + 1, comparisons=comparisons)
+            for index, term in enumerate(value)
         )
         return AllOf(terms) if name == "all" else AnyOf(terms)
     if name == "not":
-        return Not(parse(value, f"{where}.not", depth + 1))
+        return Not(parse(value, f"{where}.not", depth + 1, comparisons=comparisons))
     if name == "stage_completed":
         if not isinstance(value, str) or not value:
             raise PredicateError(f"{where}.stage_completed: expected a stage key")

@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { COMPANY_ID } from "@/test/fixtures";
@@ -217,6 +217,64 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(fetcher).not.toHaveBeenCalled();
     fireEvent.keyDown(box(), { key: "Enter", ctrlKey: true });
     expect(await screen.findByText(REPLY)).toBeInTheDocument();
+  });
+});
+
+describe("AskConversation outcomes (M2-NEW-06: decided by the API, never by a model)", () => {
+  const outcome = (kind: string, title: string, message: string, items: unknown[] = []) => ({ kind, title, message, items });
+
+  it("shows a Block on the step, with words and its sign, and keeps the conversation going", async () => {
+    const card = outcome("block", "Not yet: Written warning", "Don't take this step yet: a written warning can't safely proceed yet.", [
+      { kind: "block", text: "Written warning: can't safely proceed yet" },
+      { kind: "guidance", text: "Workplace reminder: no HeroOS rule prevents it on what's established so far" },
+    ]);
+    const { fetcher } = setup(null, answer(REPLY, { outcome: card }), answer("Thanks."));
+    await ask(WORDS);
+    const turn = await screen.findByRole("article", { name: /HeroOS, Stop/ });
+    expect(within(turn).getByText("Not yet: Written warning")).toBeInTheDocument();
+    expect(within(turn).getByText(card.message)).toBeInTheDocument();
+    expect(within(turn).getByRole("list", { name: "Each step you asked about" })).toBeInTheDocument();
+    expect(within(turn).getByText("Guidance")).toBeInTheDocument();
+    expect(turn).toHaveClass("tone-stop");
+    expect(document.body.textContent).not.toMatch(/HeroOS can.t proceed/);
+    // A Block holds one step, never the conversation: the box is free.
+    expect(box()).not.toHaveAttribute("readonly");
+    expect(box()).not.toBeDisabled();
+    await ask("He was told about the standard in writing.");
+    expect(await screen.findByText("Thanks.")).toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ["expert_review", "Expert Review", "tone-expert", "Specialist review is required before dismissal without notice."],
+    ["warning", "Warning", "tone-warning", "A caution applies to unpaid suspension."],
+    ["guidance", "Guidance", "tone-guidance", "HeroOS's approved guidance applies here."],
+  ])("labels %s in words, never colour alone", async (kind, label, tone, message) => {
+    setup(null, answer(REPLY, { outcome: outcome(kind, label, message) }));
+    await ask(WORDS);
+    const turn = await screen.findByRole("article", { name: new RegExp(`HeroOS, ${label}`) });
+    expect(turn).toHaveClass(tone);
+    expect(within(turn).getByText(label)).toBeInTheDocument();
+    if (kind !== "guidance") expect(within(turn).getByText(message)).toBeInTheDocument();
+    expect(turn.textContent).not.toMatch(/ticket|submitted|assigned|will respond/i);
+    expect(box()).not.toBeDisabled();
+  });
+
+  it("says when the checks are unavailable, never as an HR outcome", async () => {
+    const card = outcome("unavailable", "Checks unavailable", "HeroOS's deterministic checks aren't available right now.");
+    setup(null, answer(REPLY, { outcome: card }));
+    await ask(WORDS);
+    const note = await screen.findByRole("note");
+    expect(note).toHaveTextContent("Checks unavailable.");
+    expect(screen.queryByRole("article")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/Expert Review|Warning/);
+  });
+
+  it("refuses a reply whose outcome isn't the API's exact card", async () => {
+    setup(null, answer(REPLY, { outcome: { ...outcome("block", "Not yet", "x"), rule: "fictional_cap" } }));
+    await ask(WORDS);
+    expect(await screen.findByRole("alert")).toHaveTextContent("HeroOS couldn't answer just now");
+    expect(box()).toHaveValue(WORDS);
   });
 });
 
