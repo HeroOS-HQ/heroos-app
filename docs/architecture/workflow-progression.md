@@ -127,7 +127,10 @@ decision's mandatory-prerequisite rules. They may compare whole numbers
 (`{"compare": key, "op": "gt", "value": n}` or `"field": other`) and carry a
 `follow_up` (`employer_insists`: a two-state caution; `condition_specific`:
 its own predicate). They never read a sensitive answer or a stage. A stage
-rule can't compare numbers. See [conversation-evaluation.md](conversation-evaluation.md).
+rule can't compare numbers. A conversation rule only ever translates a rule
+the approved HeroOS content already states unambiguously; the Technical Lead
+may approve that translation, and anything missing, ambiguous or new waits for
+the product, domain or legal authority. See [conversation-evaluation.md §14.1](conversation-evaluation.md#141-who-approves-what).
 
 **Validation** (strict; the API refuses to start on any failure): exact fields
 only, no duplicate JSON keys, no NaN/Infinity, bounded sizes and text, known

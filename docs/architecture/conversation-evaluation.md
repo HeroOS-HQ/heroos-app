@@ -73,7 +73,7 @@ Every Condition of a workflow gets exactly one category when the snapshot is bui
                                           "completed_investigation": "<rule key>"}}]}]}
 ```
 
-The schema is exact: there is no field for wording, a threshold, guidance, a trigger or a predicate. Loading (`load_execution_profile`) is fail-closed like every bundle: SHA-256 pin, strict schema, no duplicate keys, production refuses synthetic or development profiles. A real profile names private Condition ids and stays private (git-ignored names, never committed).
+The schema is exact: there is no field for wording, a threshold, guidance, a trigger or a predicate. Loading (`load_execution_profile`) is fail-closed like every bundle: SHA-256 pin, strict schema, no duplicate keys, production refuses synthetic or development profiles. A real profile names private Condition ids and stays private (git-ignored names, never committed). `approval: approved` is generic: who may approve what is in §14.1.
 
 **Explicit bindings only.** Nothing is ever bound because a Condition "sounds like" a rule:
 
@@ -175,7 +175,59 @@ The gateway's one log line per turn adds bounded fields only: workflow, evaluati
 
 ## 14. Activation (none done)
 
-Deterministic checks need, beyond the M2-NEW-05 gateway prerequisites: an approved execution profile (JJ's approval of the bindings and coverage), the rule bundle it pairs (if any), `HEROOS_EXECUTION_PROFILE_PATH` + `_SHA256`, and `HEROOS_EVALUATION_CONTINUATION_KEY` (the same secret on every instance). Production refuses synthetic or development profiles. Until then the gateway works as in M2-NEW-05, and each turn's card says the checks are unavailable.
+Beyond the M2-NEW-05 gateway prerequisites ([ai-gateway.md §13](ai-gateway.md#13-configuration-and-activation)), deterministic checks need:
+
+- an approved execution profile, reviewed by HeroOS's technical authority (§14.1);
+- the rule bundle it pairs, if any;
+- `HEROOS_EXECUTION_PROFILE_PATH` and `HEROOS_EXECUTION_PROFILE_SHA256`;
+- `HEROOS_EVALUATION_CONTINUATION_KEY`: a secret, the same value on every instance.
+
+The rest of the contract stays as it is. The profile is private and SHA-256 pinned. It must match the installed knowledge, definitions, rule bundle and executors exactly (§5), and there is no silent fallback. Production refuses a synthetic or development profile. Until a profile is installed, the gateway works as in M2-NEW-05 and each turn's card says the checks are unavailable.
+
+### 14.1 Who approves what
+
+The profile's `approval` field is generic (`development` or `approved`); it names no person, and it shouldn't.
+
+> **Technical approval is sufficient for faithful implementation of already-approved, unambiguous HeroOS rules. Technical approval is not authority to create, reinterpret, or resolve missing HR/legal methodology.**
+
+| Authority | Approves |
+| --- | --- |
+| **Technical authority** (the Technical Lead, to whom JJ has delegated technical implementation and architecture decisions) | Execution-profile compatibility. The exact Condition → executor/rule bindings. The technical representation of a rule the approved HeroOS sources already establish unambiguously. Rule-bundle, schema and version compatibility. Provider and model configuration as architecture, after the evaluation in §14.2. Deployment and configuration mechanics |
+| **Product / HR-domain authority** (JJ: HeroOS's methodology and approved content) | Anything the approved sources don't establish. That includes a new threshold, a choice between contradictory source rules, a change to the disciplinary methodology, a sanction, or a new business or product policy |
+| **Legal / privacy authority** | What UAE Federal or DIFC law means where the approved material leaves it unresolved, whether an action is legally permissible, and the acceptability of data processing (the privacy decisions in `docs/privacy/decision-register.md`) |
+
+Until the right authority resolves such a source question, the affected Condition stays non-executable. Engineering never resolves an ambiguous Condition by preference, and never turns Condition prose into a rule.
+
+### 14.2 Production model and provider validation
+
+Deterministic outcomes don't depend on the model (§9, §10). The conversation around them does. A model, provider, version, revision or inference configuration can behave differently in workflow and topic recognition, requested-action detection, structured extraction and canonical value proposals, ambiguity handling, clarification quality, structured-output reliability, grounding, wording and latency.
+
+> **Synthetic/scripted-provider tests prove deterministic safety and integration behavior. They do not prove the conversational quality of a live production model.**
+
+| Layer | What it proves | Where it runs |
+| --- | --- | --- |
+| 1. Deterministic engine tests | The same snapshot, ENGINE_TRUSTED facts and requested actions always give the same outcome | CI (`tests/evaluation/`) |
+| 2. Scripted-model integration tests | Provider failures, malformed output and contradicting replies can't weaken a Warning, Block or Expert Review | CI, scripted provider only. Automated tests can't call an external provider (`app/assistant/live.py`) |
+| 3. Exact production-model evaluation | Interpretation, extraction, clarification and phrasing quality for one specific provider, model, version and configuration | A controlled evaluation run before activation, never in normal CI |
+
+**Before an external production model is activated**, its exact inference configuration goes through a HeroOS conversational regression evaluation (layer 3). The run:
+
+- compares structured-output validity, interpretation and extraction behavior on representative and ambiguous cases, and grounding and reply-safety failure rates;
+- checks latency and, where relevant, cost;
+- confirms deterministic outcomes are unchanged for identical trusted facts.
+
+**A model change is a controlled change.** A new version of the same model, another model of the same family, or another provider is never assumed to behave the same, and is evaluated again before it serves founders.
+
+**Runtime identity.** The evaluated configuration is identified by:
+
+- the provider and model identifier (logged at startup and on every turn);
+- the model version or revision the provider reports, where it reports one;
+- the prompt version, which is the deployed API commit (the instructions are code: `app/assistant/gateway/prompts.py`);
+- the knowledge runtime digest (logged per turn);
+- the execution profile id, version and digest (logged per turn and at startup);
+- the gateway settings (`HEROOS_AI_GATEWAY_*`).
+
+The evaluation record cites these. Nothing about it logs founder text, prompts, replies, facts or other sensitive data, and it adds no high-cardinality telemetry.
 
 ## 15. The M2-NEW-07 handoff
 
@@ -183,7 +235,9 @@ Deterministic checks need, beyond the M2-NEW-05 gateway prerequisites: an approv
 
 ## 16. Known limitations and future scale (documented, not built)
 
-- Real coverage today: only Conditions the M2-NEW-04 runtime already links to intake rules are executable; most real Conditions are `question_only` until JJ approves conversation rules and bindings (the private audit lists them). A supported real step is therefore shown as "not confirmed yet" (Warning), never as clear.
+- Real coverage today: only the Conditions the M2-NEW-04 runtime already links to intake rules are executable. The private audit of the current runtime counts 42 Conditions: 4 executable (one of them reads only sensitive inputs, so a conversation can't collect them), 10 guard-only, 24 question-only, 4 not enforced and 0 quarantined. A supported real step is therefore shown as "not confirmed yet" (Warning), never as clear.
+
+  This isn't an architecture defect: the evaluator refuses to invent executable logic. More coverage needs explicit rules and bindings. The Technical Lead may approve a faithful technical translation of already-approved, unambiguous HeroOS content (§14.1). A rule that is missing, ambiguous, conflicting, legally unresolved or would create new HR methodology stays non-executable until the appropriate product, domain or legal authority resolves the source rule.
 - `OPTION_KINDS` (M2-NEW-04) is a closed Disciplinary vocabulary; other workflows reuse its kinds until the runtime grows its own.
 - Usage limits stay per process (M2-NEW-05); shared, distributed rate limiting is future work, like durable conversations, case facts, workflow progression, Expert Review and shared event history (M2-NEW-07/09). No Redis or queue was added.
 - The checks are patterns over replies (contradiction, safety, grounding): defence in depth, not a legal classifier.
