@@ -319,3 +319,28 @@ def test_the_api_never_reads_word_documents() -> None:
         assert not any(
             name.startswith(("scripts", "zipfile", "xml", "lxml", "docx")) for name in imported
         ), path
+
+
+def test_the_knowledge_runtime_is_pure_and_offline() -> None:
+    """M2-NEW-04: the runtime describes approved knowledge; it never acts or reaches out.
+
+    It reads no database (no Case, no Company row: callers pass what they
+    have), calls no model, opens no network connection and never parses
+    source documents (that is the offline compiler in ``scripts``).
+    """
+    forbidden = (
+        "app.db", "app.repositories", "app.tenancy", "app.api", "app.assistant", "sqlalchemy",
+        "httpx", "urllib", "socket", "requests", "scripts", "zipfile", "xml", "openai", "groq",
+        "anthropic",
+    )  # fmt: skip
+    for path in (APP / "knowledge").rglob("*.py"):
+        imported = _imports(path)
+        assert not any(name.startswith(forbidden) for name in imported), path
+        assert "eval(" not in path.read_text(encoding="utf-8").replace("evaluate(", ""), path
+
+
+def test_no_route_or_api_module_serves_the_knowledge_runtime() -> None:
+    """The knowledge is server-side only: no route reads it (M2-NEW-05 will compose it)."""
+    assert not any("knowledge" in route.path for route in _app_routes())
+    for path in (APP / "api").rglob("*.py"):
+        assert not any(name.startswith("app.knowledge") for name in _imports(path)), path

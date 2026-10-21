@@ -14,6 +14,7 @@ from app.core.http_security import install_http_security
 from app.db.runtime_role import verify_runtime_role
 from app.db.session import engine
 from app.documents.bundle import TemplateBundle, check_against_rules, load_template_bundle
+from app.knowledge.bundle import KnowledgeBundle, load_knowledge_bundle
 from app.observability import configure_logging, install_observability
 from app.storage.dependencies import get_private_object_storage
 from app.workflows.progression.bundle import RuleBundle, load_bundle
@@ -87,6 +88,32 @@ def load_templates(config: Settings, rules: RuleBundle | None) -> TemplateBundle
     return bundle
 
 
+def load_knowledge(config: Settings) -> KnowledgeBundle | None:
+    """The configured approved-knowledge bundle, verified; None if none is configured.
+
+    A configured bundle that is missing, doesn't match its pinned SHA-256 or
+    fails validation (schema, digests, safety invariants, engine links) raises
+    (startup stops): nothing falls back to other knowledge. The log names the
+    bundle, version, provenance, approval and both digests, never content.
+    """
+    path, pin = config.heroos_knowledge_bundle_path, config.heroos_knowledge_bundle_sha256
+    if path is None or pin is None:
+        logger.info("Approved knowledge not installed")
+        return None
+    bundle = load_knowledge_bundle(path, pin, production=config.heroos_env == "production")
+    logger.info(
+        "Approved knowledge loaded (bundle=%s, version=%s, provenance=%s, approval=%s, "
+        "source_package_digest=%s, runtime_bundle_digest=%s)",
+        bundle.bundle_id,
+        bundle.version,
+        bundle.provenance,
+        bundle.approval,
+        bundle.source_package_digest,
+        bundle.runtime_digest,
+    )
+    return bundle
+
+
 def load_hannah_demo(config: Settings) -> HannahDemo:
     """The Hannah AI demo's switch, provider and usage limits (docs/architecture/hannah-ai-demo.md).
 
@@ -148,6 +175,8 @@ def create_app(config: Settings) -> FastAPI:
     application.state.rule_bundle = load_rule_bundle(config)
     # Document templates (previews only): verified against those rules at startup.
     application.state.template_bundle = load_templates(config, application.state.rule_bundle)
+    # Approved knowledge (server-side only: no route serves it): verified at startup.
+    application.state.knowledge_bundle = load_knowledge(config)
     # The Hannah AI demo: off unless enabled, then for every Company administrator.
     application.state.hannah_demo = load_hannah_demo(config)
     application.add_api_route("/health", health, methods=["GET"], tags=["system"])
