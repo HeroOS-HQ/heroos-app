@@ -97,6 +97,18 @@ export function AskConversation({
     end.current?.scrollIntoView?.({ block: "end", behavior: "smooth" });
   }, [turns.length, pending]);
 
+  // Sending the first message (or a first message failing) swaps the landing and the
+  // conversation, and with them the box: keep keyboard focus in it.
+  const inConversation = turns.length > 0 || pending !== null;
+  const firstRender = useRef(true);
+  useEffect(() => {
+    if (firstRender.current) {
+      firstRender.current = false;
+      return;
+    }
+    document.getElementById("ask-heroos")?.focus();
+  }, [inConversation]);
+
   async function send() {
     if (!canSend || inFlight.current) return;
     const message = value;
@@ -107,7 +119,10 @@ export function AskConversation({
     const at = new Date();
     inFlight.current = true;
     setFailure(null);
+    // The message moves into the conversation: shown once, never also in the box.
     setPending({ text: message, at });
+    setText("");
+    let delivered = false;
     try {
       const response = await (fetcher ?? fetch)(`/bff/companies/${encodeURIComponent(companyId)}/assistant/messages`, {
         method: "POST",
@@ -125,18 +140,19 @@ export function AskConversation({
         return;
       }
       continuation.current = reply.continuation;
+      delivered = true;
       setTurns((current) => [
         ...current,
         { id: nextId.current++, role: "founder", text: message, at },
         { id: nextId.current++, role: "heroos", text: reply.reply, safeNextStep: reply.safeNextStep, at: new Date() },
       ]);
-      // Sent: the box is ready for the next message.
-      setText("");
     } catch {
       setFailure("unavailable");
     } finally {
       inFlight.current = false;
       setPending(null);
+      // Anything but a reply: the words go back in the box, to send again or edit.
+      if (!delivered) setText(message);
     }
   }
 
@@ -159,9 +175,13 @@ export function AskConversation({
         }}
         onSend={() => void send()}
         placeholder={
-          compact ? "Reply in your own words." : "For example: one of my team hasn't come in for two days and isn't answering."
+          pending
+            ? "HeroOS is answering…"
+            : compact
+              ? "Reply in your own words."
+              : "For example: one of my team hasn't come in for two days and isn't answering."
         }
-        // While HeroOS answers, the words stay in the box (they come back if anything fails).
+        // While HeroOS answers, the box is empty and waits (a failed message comes back into it).
         readOnly={pending !== null}
         value={text}
       />
@@ -179,7 +199,7 @@ export function AskConversation({
     </>
   );
 
-  if (turns.length === 0 && pending === null) {
+  if (!inConversation) {
     return <AskLanding returning={returning}>{composer(false)}</AskLanding>;
   }
 

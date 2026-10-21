@@ -269,6 +269,26 @@ temperature 0.0 (understanding) and 0.2 (response), 1,200 tokens each.
 Provider and model are server configuration only. There is no automatic
 fallback to another provider. CI uses a scripted fake (`tests/fixtures/gateway.py`).
 
+**Automated tests never reach a real provider** (`app/assistant/live.py`,
+added in the M2-NEW-05 closeout after a test harness left the gateway enabled
+with a placeholder key and one synthetic message reached GroqCloud). Whether a
+process may call the real provider doesn't depend on the gateway, demo or key
+settings at all:
+
+- a deployed environment (staging, production) that isn't a test run may;
+- an automated test run (pytest is loaded, or `HEROOS_AUTOMATED_TEST=true`,
+  which the end-to-end harness sets on every API it starts, after any suite's
+  own settings) and local development never may;
+- a deliberate local live smoke test opts in with
+  `HEROOS_AI_LIVE_SMOKE_ENABLED=true` (refused in production).
+
+Where calls aren't allowed, the gateway and the Hannah demo get an
+`OfflineProvider` (the configuration still reads as configured, so pages can
+be tested) and every request fails as `unavailable` with no network access.
+The real transport checks again before every request, so a provider built
+any other way inside a test run can't call out either
+(`tests/assistant/test_live_calls.py`).
+
 ## 13. Configuration and activation
 
 | Variable | Default | Meaning |
@@ -282,6 +302,8 @@ fallback to another provider. CI uses a scripted fake (`tests/fixtures/gateway.p
 | `HEROOS_AI_GATEWAY_ACCOUNT_LIMIT` | 10 | Founder turns per account per 5 minutes |
 | `HEROOS_AI_GATEWAY_GLOBAL_LIMIT_PER_MINUTE` | 6 | Founder turns per minute, whole service |
 | `HEROOS_AI_GATEWAY_GLOBAL_LIMIT_PER_DAY` | 300 | Founder turns per day, whole service |
+| `HEROOS_AI_LIVE_SMOKE_ENABLED` | `false` | A local live smoke test's explicit opt-in to real provider calls from development or a test run; refused in production (§12) |
+| `HEROOS_AUTOMATED_TEST` | `false` | Marks an automated test run: no real provider calls (set by the e2e harness; pytest is detected) |
 
 Plus an installed knowledge bundle (`HEROOS_KNOWLEDGE_BUNDLE_PATH` and
 `_SHA256`, knowledge-runtime.md §14). Enabled with anything missing, the
@@ -379,6 +401,9 @@ explain approved options.
 - `tests/assistant/test_gateway_service.py`: readiness, limits, repairs, the
   call ceiling, provider failures, the time budget, layering, logs, the handoff.
 - `tests/assistant/test_gateway_configuration.py`: settings, startup, the JSON request.
+- `tests/assistant/test_live_calls.py`: stale gateway, demo and key settings
+  never reach the network; the transport refuses inside a test run; only the
+  live smoke opt-in builds the real provider; the e2e harness marks its APIs.
 - `tests/auth/test_gateway_api.py`: the routes through the real application.
 - `tests/assistant/test_real_bundle.py`: generic checks on the real bundle
   (local only: `KNOWLEDGE_BUNDLE=… uv run pytest tests/assistant/test_real_bundle.py`).

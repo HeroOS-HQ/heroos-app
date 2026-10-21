@@ -81,13 +81,24 @@ def test_production_never_serves_development_knowledge() -> None:
         )
 
 
-def test_startup_wires_a_ready_gateway(
+def test_startup_wires_a_ready_gateway_offline_in_a_test_run(
     bundle: KnowledgeBundle, caplog: pytest.LogCaptureFixture
 ) -> None:
+    """A test run never gets the real provider (tests/assistant/test_live_calls.py)."""
     caplog.set_level(logging.INFO)
     ai = load_ai_gateway(settings(**READY), bundle)
     assert ai.reason is None and ai.provider is not None
-    assert (ai.provider.name, ai.provider.model) == ("groq", "openai/gpt-oss-120b")
+    assert (ai.provider.name, ai.provider.model) == ("offline", "openai/gpt-oss-120b")
+    assert "AI gateway enabled (provider=offline, model=openai/gpt-oss-120b" in caplog.text
+    assert KEY not in caplog.text
+
+
+def test_startup_wires_the_real_provider_only_for_a_live_smoke_test(
+    bundle: KnowledgeBundle, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    ai = load_ai_gateway(settings(**READY, heroos_ai_live_smoke_enabled=True), bundle)
+    assert ai.provider is not None and ai.provider.name == "groq"  # built, never called
     assert "AI gateway enabled (provider=groq, model=openai/gpt-oss-120b" in caplog.text
     assert KEY not in caplog.text
 

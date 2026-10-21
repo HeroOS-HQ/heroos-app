@@ -9,6 +9,7 @@ from app.api.assistant import HannahDemo
 from app.assistant.gateway.service import AiGateway
 from app.assistant.groq import GroqChatProvider
 from app.assistant.limits import UsageLimits
+from app.assistant.live import OfflineProvider, external_ai_permitted
 from app.auth.dependencies import get_authentication_provider
 from app.core.config import Settings, settings
 from app.core.http_security import install_http_security
@@ -115,23 +116,37 @@ def load_knowledge(config: Settings) -> KnowledgeBundle | None:
     return bundle
 
 
+def external_provider(config: Settings, model: str) -> GroqChatProvider | OfflineProvider | None:
+    """The configured chat model, or an offline stand-in where real calls aren't allowed.
+
+    None without a key. An automated test run or local development (unless a
+    live smoke test opted in) gets an ``OfflineProvider`` instead of the real
+    one, whatever else is configured: it never reaches the network
+    (app/assistant/live.py).
+    """
+    key = config.groq_api_key
+    if key is None or not key.get_secret_value().strip():
+        return None
+    permitted = external_ai_permitted(
+        environment=config.heroos_env,
+        automated_test=config.heroos_automated_test,
+        live_smoke=config.heroos_ai_live_smoke_enabled,
+    )
+    return GroqChatProvider(key, model) if permitted else OfflineProvider(model)
+
+
 def load_hannah_demo(config: Settings) -> HannahDemo:
     """The Hannah AI demo's switch, provider and usage limits (docs/architecture/hannah-ai-demo.md).
 
     Off unless enabled; then for every Company administrator in their own
     Company's Cases. The log names the provider, model and limits, never the key.
     """
-    key = config.groq_api_key
-    provider = (
-        GroqChatProvider(key, config.heroos_hannah_model)
-        if key is not None and key.get_secret_value().strip()
-        else None
-    )
+    provider = external_provider(config, config.heroos_hannah_model)
     if config.heroos_hannah_demo_enabled:
         logger.info(
             "Hannah AI demo enabled (provider=%s, model=%s, account_limit=%d/5min, "
             "global_limit=%d/min %d/day)",
-            "groq" if provider is not None else "none",
+            "none" if provider is None else provider.name,
             config.heroos_hannah_model,
             config.heroos_hannah_account_limit,
             config.heroos_hannah_global_limit_per_minute,
@@ -156,13 +171,10 @@ def load_ai_gateway(config: Settings, knowledge: KnowledgeBundle | None) -> AiGa
     allowed development knowledge); otherwise it stays unavailable and the
     log names what is missing, never a key or a value.
     """
-    key = config.groq_api_key
+    model = config.heroos_ai_gateway_model
     provider = (
-        GroqChatProvider(key, config.heroos_ai_gateway_model)
-        if config.heroos_ai_gateway_provider == "groq"
-        and config.heroos_ai_gateway_model is not None
-        and key is not None
-        and key.get_secret_value().strip()
+        external_provider(config, model)
+        if config.heroos_ai_gateway_provider == "groq" and model is not None
         else None
     )
     ai = AiGateway(
@@ -180,10 +192,11 @@ def load_ai_gateway(config: Settings, knowledge: KnowledgeBundle | None) -> AiGa
     if not ai.enabled:
         logger.info("AI gateway disabled")
     elif ai.reason is None:
+        assert ai.provider is not None
         logger.info(
             "AI gateway enabled (provider=%s, model=%s, approval=%s, development_knowledge=%s, "
             "account_limit=%d/5min, global_limit=%d/min %d/day)",
-            config.heroos_ai_gateway_provider,
+            ai.provider.name,
             config.heroos_ai_gateway_model,
             config.heroos_ai_gateway_approval,
             ai.development_knowledge,
