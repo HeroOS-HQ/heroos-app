@@ -7,9 +7,9 @@
  * shown at the same height they reproduce the approved lockup, spacing
  * included.
  *
- * Keep the logo shared so header, footer, and workspace branding stay in sync.
- * `compact` shows the symbol alone on phones, for headers with no room for the
- * wordmark.
+ * The public site's logo (header and footer); every signed-in page uses
+ * `WorkspaceBrandMark` below. `compact` shows the symbol alone on phones, for
+ * headers with no room for the wordmark.
  */
 export function BrandMark({ className, compact = false }: { className?: string; compact?: boolean }) {
   return (
@@ -54,7 +54,11 @@ export function LogoSymbol({ className }: { className: string }) {
   );
 }
 
-/** Symbol + wordmark at one height, as in the approved signed-in header. */
+/**
+ * Symbol + wordmark at one height, as in the approved signed-in header: every
+ * signed-in page's top bar (the workspace header and `AppShell`, which frames
+ * loading, choosing a workspace, onboarding and the sign-in states).
+ */
 export function WorkspaceBrandMark({ className }: { className?: string }) {
   return (
     <span className={`inline-flex shrink-0 items-center gap-0.5 sm:gap-1 ${className ?? ""}`}>

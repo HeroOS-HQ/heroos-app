@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import { AppShell } from "@/components/app/app-shell";
+import { LoadingView } from "@/components/app/loading-view";
 import {
   AccessDeniedView,
   NoActiveWorkspaceView,
@@ -149,6 +150,16 @@ describe("AppShell", () => {
     expect(form).toHaveAttribute("action", "/auth/logout");
     expect(form).toHaveAttribute("method", "post");
     expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main");
+  });
+
+  it("has the signed-in top bar's current HeroOS symbol, also while a page loads, never the old logo", () => {
+    for (const view of [<AppShell key="shell">x</AppShell>, <LoadingView key="loading" />]) {
+      const { container, unmount } = render(view);
+      const logos = [...container.querySelector("header")!.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+      expect(logos).toContain("/branding/heroos-symbol.png");
+      expect(logos).not.toContain("/branding/heroos-logo-symbol.png");
+      unmount();
+    }
   });
 });
 

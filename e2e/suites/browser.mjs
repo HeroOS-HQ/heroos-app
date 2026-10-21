@@ -654,6 +654,12 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
       await page.viewport(width, 900);
       await page.goto(`${webOrigin}${path}`);
       await page.waitForText(text);
+      if (width === WIDTHS[0]) {
+        // One HeroOS symbol across the signed-in app: the top bar's is the one HeroOS speaks with.
+        const logos = await page.eval(`[...document.querySelectorAll("header img")].map((img) => img.getAttribute("src"))`);
+        check("UI-39", `${name}: the top bar shows the current HeroOS symbol (/branding/heroos-symbol.png), not the old speech-bubble logo`,
+          logos.includes("/branding/heroos-symbol.png") && !logos.includes("/branding/heroos-logo-symbol.png"), JSON.stringify(logos));
+      }
       const over = await page.overflow();
       const clash = await headerClash();
       check("A11Y-1", `${name} @${width}px: no horizontal scroll, header items don't overlap`, over <= 0 && clash === null, `${over}px ${clash ?? ""}`);
@@ -687,6 +693,64 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
   await page.waitFor(`![...document.querySelectorAll('ul[aria-label="Company"] a')].some((a) => a.offsetParent !== null)`, { message: "account menu closed by Escape" });
   const back = await page.eval(`document.activeElement?.getAttribute("aria-expanded")`);
   check("A11Y-6", "the account menu opens with Enter, reports aria-expanded, closes with Escape and returns focus", menuLabel.startsWith("Account menu") && expanded === "true" && back === "false", `${menuLabel} ${expanded} ${back}`);
+
+  // Text fields inside a rounded control (the Ask composer, Search cases): the control's rounded
+  // border shows focus and the field draws no rectangle, by keyboard (Tab) and by mouse alike.
+  const fieldFocus = (selector) => page.eval(`(() => {
+    const field = document.querySelector(${JSON.stringify(selector)});
+    const control = getComputedStyle(field.parentElement);
+    return { focused: document.activeElement === field, outline: getComputedStyle(field).outlineStyle,
+             border: control.borderTopColor, shadow: control.boxShadow, radius: parseFloat(control.borderTopLeftRadius) };
+  })()`);
+  const FOCUS_BORDER = "rgb(61, 107, 196)";
+  const looksFocused = (look) => look.focused && look.outline === "none" && look.border === FOCUS_BORDER && look.shadow.includes("rgba(61, 107, 196, 0.12)") && look.radius >= 12;
+  const tabTo = async (selector) => {
+    for (let step = 0; step < 12 && !(await page.eval(`document.activeElement === document.querySelector(${JSON.stringify(selector)})`)); step += 1) await page.press("Tab");
+  };
+  const mouseInto = async (selector) => {
+    const { x, y } = await page.eval(`(() => { const r = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    for (const type of ["mousePressed", "mouseReleased"]) await page.call("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 });
+  };
+  // Waits out the control's border/shadow transition, then reads the settled look.
+  const settled = async (selector, focused) => {
+    const expression = `(() => { const f = document.querySelector(${JSON.stringify(selector)}); return (document.activeElement === f) === ${focused} && getComputedStyle(f.parentElement).borderTopColor ${focused ? "===" : "!=="} ${JSON.stringify(FOCUS_BORDER)}; })()`;
+    await page.waitFor(expression, { timeout: 3_000 }).catch(() => {});
+    await ctx.sleep(300);
+    return fieldFocus(selector);
+  };
+  for (const width of [1440, 390]) {
+    await page.viewport(width, 900);
+    await page.goto(`${webOrigin}/workspaces/${alpha.companyId}`);
+    await page.waitForHydrated("#ask-heroos");
+    const idle = await settled("#ask-heroos", false);
+    await tabTo("#ask-heroos");
+    const byKeyboard = await settled("#ask-heroos", true);
+    await page.eval("document.activeElement.blur()");
+    await settled("#ask-heroos", false);
+    await mouseInto("#ask-heroos");
+    const byMouse = await settled("#ask-heroos", true);
+    check("A11Y-12", `Ask composer @${width}px: focus shows on the rounded composer (keyboard and mouse), no rectangle on the field`,
+      !looksFocused(idle) && idle.border !== FOCUS_BORDER && looksFocused(byKeyboard) && looksFocused(byMouse), JSON.stringify({ idle, byKeyboard, byMouse }));
+    await ctx.screenshotOf(page, `a11y-12-ask-focused-${width}`, "form:has(#ask-heroos)");
+
+    const search = '[role="dialog"] input[type="search"]';
+    await page.waitForHydrated('button[aria-label="Cases"]');
+    await page.eval(`document.querySelector('button[aria-label="Cases"]').focus()`);
+    await page.press("Enter");
+    await page.waitFor(`document.querySelector(${JSON.stringify(search)})`, { message: "Cases drawer opened by keyboard" });
+    const searchIdle = await settled(search, false);
+    await tabTo(search);
+    const searchByKeyboard = await settled(search, true);
+    await page.eval("document.activeElement.blur()");
+    await settled(search, false);
+    await mouseInto(search);
+    const searchByMouse = await settled(search, true);
+    await ctx.screenshotOf(page, `a11y-13-search-focused-${width}`, '[role="dialog"]');
+    check("A11Y-13", `Search cases @${width}px: focus shows on the rounded field (keyboard and mouse), no rectangle on the input`,
+      searchIdle.border !== FOCUS_BORDER && looksFocused(searchByKeyboard) && looksFocused(searchByMouse), JSON.stringify({ searchIdle, searchByKeyboard, searchByMouse }));
+    await page.press("Escape");
+  }
+  await page.viewport(1440, 900);
 
   // Onboarding by keyboard: Enter submits, errors are announced and focused.
   await page.goto(`${webOrigin}/onboarding`);

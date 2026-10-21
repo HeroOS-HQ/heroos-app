@@ -8,6 +8,7 @@ import { apiCaseSummary, CASE_ID, OTHER_CASE_ID } from "@/test/workflow-fixtures
 
 import { caseWhen, groupCases } from "./cases-panel";
 import { CompanyShell } from "./company-shell";
+import { AdviserMark } from "./workspace-chrome";
 
 const COMPANY_B = "d3e0b000-0000-4000-8000-000000000001";
 const ADMIN: Membership = { companyId: COMPANY_ID, membershipId: "m", role: "company_admin", canUpdateBlueprint: true };
@@ -112,6 +113,25 @@ describe("the workspace header", () => {
     expect(within(drawer).getByRole("link", { name: /Attendance concern/ })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`);
     fireEvent.keyDown(document, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Cases" })).toBeNull();
+  });
+
+  it("shows the same current HeroOS symbol as HeroOS's own mark in the conversation, never the old logo", () => {
+    const { container } = shell();
+    const header = container.querySelector("header")!;
+    const headerLogos = [...header.querySelectorAll("img")].map((img) => img.getAttribute("src"));
+    const { container: turn } = render(<AdviserMark />);
+    const conversationLogo = turn.querySelector("img")!.getAttribute("src");
+    expect(conversationLogo).toBe("/branding/heroos-symbol.png");
+    expect(headerLogos).toContain(conversationLogo);
+    expect(headerLogos).not.toContain("/branding/heroos-logo-symbol.png");
+  });
+
+  it("shows the search field's focus on its rounded border, never as a rectangle on the input", async () => {
+    shell({ initialCasesOpen: true });
+    const drawer = await screen.findByRole("dialog", { name: "Cases" });
+    const search = within(drawer).getByRole("searchbox", { name: "Search your cases" });
+    expect(search).toHaveClass("focus-visible:outline-hidden!");
+    expect(search.closest("label")).toHaveClass("rounded-xl", "focus-within:border-hero-blue");
   });
 
   it("starts with the skip link, gives the page one main region and says it's a demonstration environment", () => {

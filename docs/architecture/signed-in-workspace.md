@@ -39,8 +39,16 @@ served them were removed.
 The production code never imports the design-review package
 (`security-boundaries.test.ts`). The approved logo symbol is copied byte for
 byte to `/branding/heroos-symbol.png` (`LogoSymbol`, `WorkspaceBrandMark` in
-`components/site/brand-mark.tsx`). The public site and the favicon keep the
-speech-bubble logo.
+`components/site/brand-mark.tsx`). Every signed-in top bar uses it: the
+workspace header and `AppShell` (loading, choosing a workspace, onboarding,
+the sign-in states). The public site and the favicon keep the speech-bubble
+logo.
+
+Text fields inside a rounded control (the Ask composer, Search cases) show
+focus on the control's rounded border (`focus-within`) and draw no outline of
+their own. The global `:focus-visible` outline in `globals.css` is unlayered
+CSS, so it outranks Tailwind utilities: such a field needs
+`focus-visible:outline-hidden!` (the `!` is required) to turn it off.
 
 ## 2. Ask HeroOS and its seam
 
