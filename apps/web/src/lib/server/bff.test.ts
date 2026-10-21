@@ -255,6 +255,29 @@ describe("handleBlueprintUpdate", () => {
     expect(JSON.parse(String(init.body))).toEqual({ industry: "Retail", licensing: { location: "difc" } });
   });
 
+  it("forwards the company context and a primary contact, and maps the API's refusal of the contact to its field", async () => {
+    const contact = "d3e0a000-0000-4000-8000-00000000a001";
+    const patch = {
+      website_url: "https://gamma.example",
+      company_summary: "Two shops.\n\nEight staff.",
+      hr_support: "internal",
+      primary_contact_membership_id: contact,
+    };
+    const deps = api(json(BLUEPRINT));
+    expect((await handleBlueprintUpdate(request(BLUEPRINT_PATH, patch, { method: "PATCH" }), CONFIG, COMPANY_ID, deps)).status).toBe(200);
+    const [, init] = deps.fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual(patch);
+
+    const refused = await handleBlueprintUpdate(
+      request(BLUEPRINT_PATH, { primary_contact_membership_id: contact }, { method: "PATCH" }),
+      CONFIG,
+      COMPANY_ID,
+      api(json({ detail: [{ type: "value_error", loc: ["body", "primary_contact_membership_id"], msg: "invalid" }] }, 422)),
+    );
+    expect(refused.status).toBe(422);
+    expect(await body(refused)).toEqual({ error: "invalid", fields: ["primaryContact"] });
+  });
+
   it("allows clearing an optional field with null", async () => {
     const deps = api(json(BLUEPRINT));
     await handleBlueprintUpdate(request(BLUEPRINT_PATH, { legal_name: null }, { method: "PATCH" }), CONFIG, COMPANY_ID, deps);
@@ -279,6 +302,9 @@ describe("handleBlueprintUpdate", () => {
     ["a confirmation", { employment_jurisdiction: "difc" }],
     ["the legacy label", { primary_jurisdiction: "DIFC" }],
     ["the company name", { company_name: "Renamed" }],
+    ["an unsafe website", { website_url: "javascript:alert(1)" }],
+    ["people", { people: [] }],
+    ["policy documents", { policy_documents: ["handbook.pdf"] }],
   ])("refuses %s", async (_, payload) => {
     const deps = api(json(BLUEPRINT));
     const response = await handleBlueprintUpdate(request(BLUEPRINT_PATH, payload, { method: "PATCH" }), CONFIG, COMPANY_ID, deps);

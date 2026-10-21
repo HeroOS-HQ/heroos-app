@@ -28,6 +28,8 @@ export async function run(ctx) {
   check("R1-5", "exactly one Membership: the founder, company_admin, active", memberships.length === 1 && memberships[0][0] === facts[0]?.userId && memberships[0][1] === "company_admin" && memberships[0][2] === "active", JSON.stringify(memberships));
   const registrations = await fixtures.ownerQuery(`SELECT identity_id, user_id, membership_id FROM company_registrations WHERE company_id = ${quote(companyId)}`);
   check("R1-6", "one self-registration record links identity, User, Company and Membership", registrations.length === 1 && registrations[0][0] === facts[0]?.identityId && registrations[0][2] === created.json?.membership_id);
+  const [contact] = await fixtures.ownerQuery(`SELECT primary_contact_membership_id FROM company_blueprints WHERE company_id = ${quote(companyId)}`);
+  check("R1-6b", "the founder's own Membership is the Blueprint's first primary contact (set by the server, never by the request)", contact?.[0] === created.json?.membership_id, JSON.stringify(contact));
   const events = await fixtures.ownerQuery(`SELECT event_type, actor_kind, actor_reference FROM company_events WHERE company_id = ${quote(companyId)}`);
   check("R1-7", "the registration is audited (company_registered, actor api, registration reference)", events.length === 1 && events[0][0] === "company_registered" && events[0][1] === "api" && /^registration:[0-9a-f-]{36}$/.test(events[0][2]), JSON.stringify(events));
   const after = await counts(ctx);

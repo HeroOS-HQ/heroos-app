@@ -2,13 +2,14 @@ import type { ReactNode } from "react";
 
 import { LogoSymbol } from "@/components/site/brand-mark";
 import {
+  BookIcon,
   BuildingIcon,
   CertificateIcon,
   CheckIcon,
   SparkleIcon,
 } from "@/components/site/icons";
 
-type SceneStage = "company" | "licensing" | "review" | "complete";
+type SceneStage = "company" | "context" | "licensing" | "review" | "complete";
 
 /**
  * Hannah beside each setup stage (JJ design review, screens 02–05). JJ's
@@ -128,6 +129,18 @@ function StageProp({ stage }: { stage: SceneStage }) {
             <span className={`${line} mt-1.5 w-2/3`} />
           </span>
           <Sparks className="-right-[4.5rem] bottom-[33%] rotate-[-20deg] 2xl:-right-[5.5rem]" />
+        </>
+      );
+    case "context":
+      return (
+        <>
+          <span className="absolute -right-[3.5rem] bottom-[15%] w-[6rem] -rotate-[6deg] rounded-xl border border-[#e7e3d6] bg-white p-2.5 shadow-[0_10px_20px_-12px_rgb(14_30_61/0.35)] 2xl:-right-[3.25rem] 2xl:w-[7.5rem] 2xl:p-3">
+            <BookIcon className="size-6 text-hero-navy 2xl:size-7" />
+            <span className={`${line} mt-2 w-full`} />
+            <span className={`${line} mt-1.5 w-full`} />
+            <span className={`${line} mt-1.5 w-1/2`} />
+          </span>
+          <Sparks className="-right-[4.5rem] bottom-[34%] rotate-[-20deg] 2xl:-right-[5.5rem]" />
         </>
       );
     case "licensing":

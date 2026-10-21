@@ -30,12 +30,19 @@ function start() {
   click(/^Get Started/);
 }
 
+/** Company Basics filled in; lands on About Your Company. */
 function completeCompanyStep() {
   start();
   type(/^Company name/, "Gamma Trading");
   type(/^Legal business name/, "Gamma Trading FZ-LLC");
   type(/^Number of employees/, "12");
-  click(/^Continue to Licence/);
+  click(/^Continue$/);
+}
+
+/** About Your Company left empty (all optional); lands on Jurisdiction. */
+function toJurisdiction() {
+  completeCompanyStep();
+  click(/^Continue$/);
 }
 
 const progressLabels = () =>
@@ -63,14 +70,14 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("OnboardingWizard: welcome (stage 1 of 5)", () => {
+describe("OnboardingWizard: welcome (stage 1 of 6)", () => {
   it("welcomes the founder, previews the setup and sends nothing", () => {
     const { fetcher } = setup();
     expect(screen.getByRole("heading", { level: 1, name: "Welcome to HeroOS" })).toBeInTheDocument();
     const steps = screen.getByRole("list", { name: "Setup steps" });
     expect(within(steps).getAllByRole("heading").map((heading) => heading.textContent)).toEqual([
       "Step 1: Company Basics",
-      "Step 2: Business Licence & Jurisdiction",
+      "Step 2: Jurisdiction",
       "Step 3: Company Blueprint Review",
       "Step 4: Workspace Ready",
     ]);
@@ -108,7 +115,7 @@ describe("OnboardingWizard: welcome (stage 1 of 5)", () => {
   });
 });
 
-describe("OnboardingWizard: five-stage progress", () => {
+describe("OnboardingWizard: six-stage progress", () => {
   it("marks earlier stages completed and the current one, never Complete before the server answered", () => {
     setup();
     // Welcome mirrors its review screen: the step cards preview the journey instead.
@@ -117,23 +124,27 @@ describe("OnboardingWizard: five-stage progress", () => {
     expect(progressLabels()).toEqual([
       "Welcome (completed)",
       "> 2Company Basics",
-      "3Licence & Jurisdiction",
-      "4Review",
-      "5Complete",
+      "3About Your Company",
+      "4Jurisdiction",
+      "5Review",
+      "6Complete",
     ]);
     type(/^Company name/, "Gamma Trading");
-    click(/^Continue to Licence/);
-    expect(progressLabels()[2]).toBe("> 3Licence & Jurisdiction");
+    click(/^Continue$/);
+    expect(progressLabels()[2]).toBe("> 3About Your Company");
+    click(/^Continue$/);
+    expect(progressLabels()[3]).toBe("> 4Jurisdiction");
     chooseLicensing("DIFC");
     click(/^Continue to Review/);
     expect(progressLabels()).toEqual([
       "Welcome (completed)",
       "Company Basics (completed)",
-      "Licence & Jurisdiction (completed)",
-      "> 4Review",
-      "5Complete",
+      "About Your Company (completed)",
+      "Jurisdiction (completed)",
+      "> 5Review",
+      "6Complete",
     ]);
-    expect(screen.getAllByText("Step 4 of 5").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Step 5 of 6").length).toBeGreaterThan(0);
   });
 });
 
@@ -142,7 +153,7 @@ describe("OnboardingWizard: company basics (stage 2)", () => {
     setup();
     start();
     expect(screen.getByRole("heading", { level: 1, name: "Tell us about your company" })).toBeInTheDocument();
-    click(/^Continue to Licence/);
+    click(/^Continue$/);
 
     const name = field(/^Company name/);
     expect(name).toHaveAttribute("aria-invalid", "true");
@@ -156,12 +167,12 @@ describe("OnboardingWizard: company basics (stage 2)", () => {
     start();
     type(/^Company name/, "Gamma");
     type(/^Number of employees/, "a dozen");
-    click(/^Continue to Licence/);
+    click(/^Continue$/);
     expect(field(/^Number of employees/)).toHaveAccessibleDescription(/Enter a whole number, such as 12\./);
 
     type(/^Number of employees/, "");
-    click(/^Continue to Licence/);
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your licence and jurisdiction");
+    click(/^Continue$/);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("About your company");
   });
 
   it("validates the optional text fields' limits and characters", () => {
@@ -170,7 +181,7 @@ describe("OnboardingWizard: company basics (stage 2)", () => {
     type(/^Company name/, "Gamma");
     type(/^Legal business name/, "x".repeat(201));
     type(/^Industry/, "Retail\u2028Wholesale");
-    click(/^Continue to Licence/);
+    click(/^Continue$/);
     expect(field(/^Legal business name/)).toHaveAccessibleDescription(/Use 200 characters or fewer\./);
     expect(field(/^Industry/)).toHaveAccessibleDescription(/Remove line breaks, tabs or other special characters\./);
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tell us about your company");
@@ -180,7 +191,7 @@ describe("OnboardingWizard: company basics (stage 2)", () => {
     setup();
     completeCompanyStep();
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "instant" });
-    expect(screen.getByRole("heading", { level: 1, name: "Your licence and jurisdiction" })).toHaveFocus();
+    expect(screen.getByRole("heading", { level: 1, name: "About your company" })).toHaveFocus();
   });
 
   it("marks the one required field, the optional ones, and keeps the input hints", () => {
@@ -191,16 +202,60 @@ describe("OnboardingWizard: company basics (stage 2)", () => {
     expect(field(/^Company name/)).toHaveAttribute("aria-required", "true");
     expect(field(/^Company name/)).toHaveAttribute("autocomplete", "organization");
     expect(field(/^Number of employees/)).toHaveAttribute("inputmode", "numeric");
-    // Only the registration contract's fields: no business description or other unsaved inputs.
+    // Only the registration contract's fields: nothing HeroOS wouldn't save.
     expect(screen.getAllByRole("textbox")).toHaveLength(4);
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 });
 
-describe("OnboardingWizard: licence & jurisdiction (stage 3)", () => {
-  it("offers exactly DIFC, Other and I'm not sure, with no follow-up questions", () => {
+describe("OnboardingWizard: about your company (stage 3)", () => {
+  it("asks for the website, a summary and whether HR policies exist, all optional", () => {
     setup();
     completeCompanyStep();
+    expect(screen.getByRole("heading", { level: 1, name: "About your company" })).toHaveFocus();
+    expect(screen.getAllByText("Optional")).toHaveLength(3);
+    expect(screen.queryByText("Required")).toBeNull();
+    expect(field(/^Company website/)).toHaveAccessibleDescription("HeroOS keeps the address only. It doesn't visit or read your website.");
+    expect(field(/^Company summary/)).toHaveAccessibleDescription(
+      "Briefly describe what your company does and how your team is structured. You can paste or adapt content from your website or About page.",
+    );
+    const policies = screen.getByRole("group", { name: /Does your company already have HR policies\?/ });
+    expect(within(policies).getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual(["yes", "no", "not_sure"]);
+    // No uploads, HR support or people questions here: those belong to the Blueprint.
+    expect(document.querySelector("input[type=file]")).toBeNull();
+    expect(screen.getAllByRole("textbox")).toHaveLength(2);
+    click(/^Continue$/);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your jurisdiction");
+  });
+
+  it("refuses an unsafe or malformed website next to the field, with the Blueprint's rules", async () => {
+    setup();
+    completeCompanyStep();
+    type(/^Company website/, "javascript:alert(1)");
+    click(/^Continue$/);
+    expect(field(/^Company website/)).toHaveAccessibleDescription(/Use a web address that starts with https:\/\/ or http:\/\//);
+    await waitFor(() => expect(field(/^Company website/)).toHaveFocus());
+    type(/^Company website/, "localhost");
+    click(/^Continue$/);
+    expect(field(/^Company website/)).toHaveAccessibleDescription(/Enter your website's address, such as www\.example\.com\./);
+    type(/^Company website/, "gamma.example");
+    click(/^Continue$/);
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your jurisdiction");
+  });
+
+  it("limits the summary to the Blueprint's 2,000 characters", () => {
+    setup();
+    completeCompanyStep();
+    type(/^Company summary/, "x".repeat(2001));
+    click(/^Continue$/);
+    expect(field(/^Company summary/)).toHaveAccessibleDescription(/Use 2,000 characters or fewer\./);
+  });
+});
+
+describe("OnboardingWizard: jurisdiction (stage 4)", () => {
+  it("offers exactly DIFC, Other and I'm not sure, with no follow-up questions", () => {
+    setup();
+    toJurisdiction();
 
     const group = screen.getByRole("group", { name: "Where is your company licensed?" });
     expect(within(group).getAllByRole("radio").map((radio) => (radio as HTMLInputElement).value)).toEqual([
@@ -217,7 +272,7 @@ describe("OnboardingWizard: licence & jurisdiction (stage 3)", () => {
 
   it("offers no licence number, upload, issuing-area list or multi-jurisdiction question, and suggests no law", () => {
     setup();
-    completeCompanyStep();
+    toJurisdiction();
     expect(document.querySelector("input[type=file]")).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.queryByText(/licence number|upload/i)).toBeNull();
@@ -230,7 +285,7 @@ describe("OnboardingWizard: licence & jurisdiction (stage 3)", () => {
 
   it("requires a choice", () => {
     setup();
-    completeCompanyStep();
+    toJurisdiction();
     click(/^Continue to Review/);
     expect(screen.getByRole("group", { name: "Where is your company licensed?" })).toHaveAccessibleDescription(
       /Choose where your company is licensed/,
@@ -239,7 +294,7 @@ describe("OnboardingWizard: licence & jurisdiction (stage 3)", () => {
 
   it("asks for the issuing authority only for Other, and clears it when the choice changes", () => {
     setup();
-    completeCompanyStep();
+    toJurisdiction();
     chooseLicensing("Other");
     type(/^Which authority issued your licence\?/, "Example Free Zone Authority");
 
@@ -253,7 +308,9 @@ describe("OnboardingWizard: licence & jurisdiction (stage 3)", () => {
 
   it("keeps the draft when going back and forward", () => {
     setup();
-    completeCompanyStep();
+    toJurisdiction();
+    click("Back");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("About your company");
     click("Back");
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Tell us about your company");
     expect(field(/^Company name/)).toHaveValue("Gamma Trading");
@@ -261,9 +318,9 @@ describe("OnboardingWizard: licence & jurisdiction (stage 3)", () => {
   });
 });
 
-describe("OnboardingWizard: review and create (stage 4)", () => {
+describe("OnboardingWizard: review and create (stage 5)", () => {
   function toReview(licensing: "DIFC" | "Other" | "I'm not sure" = "Other", authority = "Example Free Zone Authority") {
-    completeCompanyStep();
+    toJurisdiction();
     chooseLicensing(licensing);
     if (licensing === "Other") type(/^Which authority issued your licence\?/, authority);
     click(/^Continue to Review/);
@@ -278,14 +335,14 @@ describe("OnboardingWizard: review and create (stage 4)", () => {
     expect(within(details).getByText("Gamma Trading")).toBeInTheDocument();
     expect(within(details).getByText("Gamma Trading FZ-LLC")).toBeInTheDocument();
     expect(within(details).getByText("12")).toBeInTheDocument();
-    const licensing = screen.getByRole("region", { name: "Licence details" });
+    const licensing = screen.getByRole("region", { name: "Jurisdiction" });
     expect(within(licensing).getByText("Other licensing authority")).toBeInTheDocument();
     expect(within(licensing).getByText("Example Free Zone Authority")).toBeInTheDocument();
     expect(screen.getByText("Jurisdiction: not yet confirmed")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/MOHRE|UAE Federal|verified|compliant|eligible/);
 
     fireEvent.click(within(licensing).getByRole("button", { name: /Edit/ }));
-    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your licence and jurisdiction");
+    expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("Your jurisdiction");
     expect(screen.getByRole("radio", { name: /^Other/ })).toBeChecked();
     expect(field(/^Which authority issued your licence\?/)).toHaveValue("Example Free Zone Authority");
   });
@@ -294,14 +351,19 @@ describe("OnboardingWizard: review and create (stage 4)", () => {
     setup();
     start();
     type(/^Company name/, "  Gamma Trading  ");
-    click(/^Continue to Licence/);
+    click(/^Continue$/);
+    click(/^Continue$/);
     chooseLicensing("I'm not sure");
     click(/^Continue to Review/);
     const details = screen.getByRole("region", { name: "Company information" });
     // Trimmed, exactly as buildRegistrationPayload sends it.
     expect(within(details).getByText("Gamma Trading")).toBeInTheDocument();
     expect(within(details).getAllByText("Not provided")).toHaveLength(3);
-    expect(within(screen.getByRole("region", { name: "Licence details" })).getByText("Not sure yet")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "Jurisdiction" })).getByText("Not sure yet")).toBeInTheDocument();
+    expect(within(screen.getByRole("region", { name: "About your company" })).getAllByText("Not provided")).toHaveLength(3);
+    // The founder starts as the primary contact; the full Blueprint isn't claimed complete.
+    expect(screen.getByRole("region", { name: "Primary contact" })).toHaveTextContent(/You, as the person creating this workspace/);
+    expect(document.body.textContent).not.toMatch(/Blueprint (is )?complete/i);
     expect(screen.queryByRole("checkbox")).toBeNull();
     expect(screen.queryByRole("button", { name: /Confirm company details/ })).toBeNull();
   });
@@ -334,6 +396,42 @@ describe("OnboardingWizard: review and create (stage 4)", () => {
       },
     });
     expect(screen.getByRole("button", { name: /Opening your workspace/ })).toBeDisabled();
+  });
+
+  it("shows and sends the company context exactly as HeroOS will store it", async () => {
+    const { fetcher } = setup();
+    completeCompanyStep();
+    type(/^Company website/, " WWW.Gamma.example/ ");
+    type(/^Company summary/, "Two shops in Dubai.\r\n\r\nEight\u00a0staff. ");
+    fireEvent.click(screen.getByRole("radio", { name: /^No, not yet/ }));
+    click(/^Continue$/);
+    chooseLicensing("DIFC");
+    click(/^Continue to Review/);
+
+    const context = within(screen.getByRole("region", { name: "About your company" }));
+    expect(context.getByText("https://www.gamma.example")).toBeInTheDocument();
+    expect(context.getByText("No HR policies yet")).toBeInTheDocument();
+    const summary = context.getByText(/Two shops in Dubai\./);
+    expect(summary.textContent).toBe("Two shops in Dubai.\n\nEight staff.");
+    fireEvent.click(context.getByRole("button", { name: /Edit/ }));
+    expect(field(/^Company website/)).toHaveValue(" WWW.Gamma.example/ ");
+    click(/^Continue$/);
+    click(/^Continue to Review/);
+    click("Create my workspace");
+
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    const [, init] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({
+      company_name: "Gamma Trading",
+      blueprint: {
+        legal_name: "Gamma Trading FZ-LLC",
+        employee_count: 12,
+        website_url: "https://www.gamma.example",
+        company_summary: "Two shops in Dubai.\n\nEight staff.",
+        policies_exist: "no",
+        licensing: { location: "difc" },
+      },
+    });
   });
 
   it("sends 'not sure' as its own answer, never Other with a placeholder", async () => {
@@ -477,6 +575,8 @@ describe("OnboardingWizard: privacy and context", () => {
     const local = vi.spyOn(Storage.prototype, "setItem");
     setup();
     completeCompanyStep();
+    type(/^Company summary/, "A private summary.");
+    click(/^Continue$/);
     chooseLicensing("Other");
     type(/^Which authority issued your licence\?/, "Example Free Zone Authority");
     expect(local).not.toHaveBeenCalled();

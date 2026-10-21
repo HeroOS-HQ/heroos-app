@@ -1,4 +1,5 @@
 import type { AuthConfig } from "@/lib/server/config";
+import type { Blueprint } from "@/lib/server/heroos-api";
 
 export const WEB_ORIGIN = "https://heroos-demo.example.com";
 export const COGNITO_ORIGIN = "https://heroos-demo.auth.eu-west-1.amazoncognito.com";
@@ -80,3 +81,33 @@ export function cookieValue(response: Response, name: string): string | undefine
   const header = setCookies(response).find((cookie) => cookie.startsWith(`${name}=`));
   return header?.slice(name.length + 1).split(";")[0];
 }
+
+/**
+ * The company-context part of a Blueprint as an API from before M2-NEW-03
+ * reads (none of it): spread into a test Blueprint that only has the profile
+ * and jurisdiction.
+ */
+export const NO_COMPANY_CONTEXT: Pick<
+  Blueprint,
+  | "version"
+  | "websiteUrl"
+  | "companySummary"
+  | "policiesExist"
+  | "policyContext"
+  | "hrSupport"
+  | "hrSupportNotes"
+  | "primaryContact"
+  | "people"
+  | "missing"
+> = {
+  version: "legacy",
+  websiteUrl: null,
+  companySummary: null,
+  policiesExist: null,
+  policyContext: null,
+  hrSupport: null,
+  hrSupportNotes: null,
+  primaryContact: null,
+  people: [],
+  missing: null,
+};

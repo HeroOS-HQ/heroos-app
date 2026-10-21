@@ -5,6 +5,7 @@ import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
+  BookIcon,
   BriefcaseIcon,
   BuildingIcon,
   CertificateIcon,
@@ -14,19 +15,24 @@ import {
   PeopleIcon,
   ScaleIcon,
   StoreIcon,
+  UserIcon,
 } from "@/components/site/icons";
 import { Notice } from "@/components/ui/notice";
 import { buttonQuiet } from "@/components/ui/styles";
+import { policiesLabel } from "@/lib/blueprint/model";
 import { licensingLabel } from "@/lib/onboarding/copy";
 import {
   buildRegistrationPayload,
+  checkPlainText,
   EMPTY_DRAFT,
   type FieldErrors,
   type FieldName,
   LIMITS,
   type LicensingLocation,
+  normalizeWebsiteUrl,
   type OnboardingDraft,
   validateCompanyStep,
+  validateContextStep,
   validateLicensingStep,
 } from "@/lib/onboarding/model";
 import {
@@ -45,26 +51,31 @@ import {
   onboardingSecondary,
   StageCard,
 } from "./onboarding-frame";
+import { OnboardingContext } from "./onboarding-context";
 import { OnboardingLicensing } from "./onboarding-licensing";
 import { OnboardingWelcome } from "./onboarding-welcome";
 
 /**
- * Founder onboarding: the first four of the journey's five stages (JJ design
- * review, screens 01–04). Welcome → Company Basics → Licence & Jurisdiction →
- * Review, then one registration request; the fifth stage, Complete, is the
- * ready page, reached only after the API confirmed it. Welcome is a
- * presentation and sends nothing. Nothing is saved before "Create my
- * workspace". The draft lives only in this component's memory: never in
- * browser storage.
+ * Founder onboarding: the first five of the journey's six stages (JJ design
+ * review, screens 01–04, plus About Your Company, M2-NEW-03). Welcome →
+ * Company Basics → About Your Company → Jurisdiction → Review, then one
+ * registration request; the sixth stage, Complete, is the ready page, reached
+ * only after the API confirmed it. Welcome is a presentation and sends
+ * nothing. Nothing is saved before "Create my workspace". The draft lives only
+ * in this component's memory: never in browser storage.
  *
- * States: ONBOARDING_WELCOME, ONBOARDING_COMPANY, ONBOARDING_LICENSING,
- * ONBOARDING_REVIEW, REGISTRATION_SUBMITTING, then either navigation to the
+ * Onboarding lays the Company Blueprint's foundation with the Blueprint's own
+ * fields and validation: the founder becomes its primary contact (the API sets
+ * that), and the longer details are left for the Blueprint page.
+ *
+ * States: ONBOARDING_WELCOME, ONBOARDING_COMPANY, ONBOARDING_CONTEXT,
+ * ONBOARDING_LICENSING, ONBOARDING_REVIEW, REGISTRATION_SUBMITTING, then either navigation to the
  * authoritative "ready" page (REGISTRATION_CREATED / REGISTRATION_EXISTING)
  * or a failure shown on the review step (SESSION_EXPIRED, ACCESS_DENIED,
  * REGISTRATION_DISABLED, validation, API_UNAVAILABLE / uncertain).
  */
 
-type Stage = "welcome" | "company" | "licensing" | "review";
+type Stage = "welcome" | "company" | "context" | "licensing" | "review";
 
 type Submission =
   | { status: "idle" }
@@ -73,12 +84,16 @@ type Submission =
   | { status: "failed"; reason: RegistrationFailure };
 
 const COMPANY_FIELDS: FieldName[] = ["companyName", "legalName", "industry", "employeeCount"];
-// Element to focus for each field's error (the first radio for the licensing choice).
-const FIELD_IDS: Record<FieldName, string> = {
+const CONTEXT_FIELDS: FieldName[] = ["websiteUrl", "companySummary", "policiesExist"];
+// Element to focus for each field's error (the first radio for a choice).
+const FIELD_IDS: Partial<Record<FieldName, string>> = {
   companyName: "company-name",
   legalName: "legal-name",
   industry: "industry",
   employeeCount: "employee-count",
+  websiteUrl: "website-url",
+  companySummary: "company-summary",
+  policiesExist: "onboarding-policies-yes",
   licensingLocation: "onboarding-location-difc",
   licensingAuthority: "onboarding-authority",
 };
@@ -156,7 +171,8 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
 
   function focusFirstError(found: FieldErrors, order: FieldName[]) {
     const first = order.find((field) => found[field]);
-    if (first) requestAnimationFrame(() => document.getElementById(FIELD_IDS[first])?.focus());
+    const id = first ? FIELD_IDS[first] : undefined;
+    if (id) requestAnimationFrame(() => document.getElementById(id)?.focus());
   }
 
   function goTo(next: Stage) {
@@ -168,6 +184,13 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
     const found = validateCompanyStep(draft);
     setErrors(found);
     if (Object.keys(found).length > 0) return focusFirstError(found, COMPANY_FIELDS);
+    goTo("context");
+  }
+
+  function continueFromContext() {
+    const found = validateContextStep(draft);
+    setErrors(found);
+    if (Object.keys(found).length > 0) return focusFirstError(found, CONTEXT_FIELDS);
     goTo("licensing");
   }
 
@@ -183,7 +206,14 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
     const built = buildRegistrationPayload(draft);
     if (!built.ok) {
       setErrors(built.errors);
-      goTo(Object.keys(built.errors).some((field) => COMPANY_FIELDS.includes(field as FieldName)) ? "company" : "licensing");
+      const fields = Object.keys(built.errors) as FieldName[];
+      goTo(
+        fields.some((field) => COMPANY_FIELDS.includes(field))
+          ? "company"
+          : fields.some((field) => CONTEXT_FIELDS.includes(field))
+            ? "context"
+            : "licensing",
+      );
       return;
     }
     inFlight.current = true;
@@ -235,7 +265,7 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
               <>
                 <LeaveSetup />
                 <button className={`${onboardingPrimary} sm:min-w-[14.5rem]`} form="onboarding-company-form" type="submit">
-                  Continue to Licence
+                  Continue
                   <ArrowRightIcon className="size-5 stroke-[2.25]" />
                 </button>
               </>
@@ -326,6 +356,60 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
     );
   }
 
+  if (step === "context") {
+    return (
+      <OnboardingStage
+        actions={
+          <ActionBar
+            end={
+              <>
+                <LeaveSetup />
+                <button className={`${onboardingPrimary} sm:min-w-[14.5rem]`} form="onboarding-context-form" type="submit">
+                  Continue
+                  <ArrowRightIcon className="size-5 stroke-[2.25]" />
+                </button>
+              </>
+            }
+            start={<BackButton onClick={() => goTo("company")} />}
+          />
+        }
+        bubble="Tell me a little about how your company works!"
+        guidance={
+          <GuidanceCard
+            items={[
+              "Everything on this step is optional. Leave anything you don't have to hand.",
+              "A short summary helps HeroOS understand your company.",
+              "HeroOS keeps your website's address only. It doesn't visit or read it.",
+              "You can add more, such as policy details and HR support, in Company Blueprint.",
+            ]}
+            title="Why this information helps"
+          />
+        }
+        notice={existingNotice}
+        stage="context"
+      >
+        <StageCard
+          accent="your company"
+          headingRef={headingRef}
+          intro="A little context about your business. All optional, and you can change it later."
+          lead="About"
+          stage="context"
+        >
+          <form
+            id="onboarding-context-form"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault();
+              continueFromContext();
+            }}
+          >
+            <OnboardingContext draft={draft} errors={errors} update={update} />
+          </form>
+        </StageCard>
+      </OnboardingStage>
+    );
+  }
+
   if (step === "licensing") {
     return (
       <OnboardingStage
@@ -340,17 +424,17 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
                 </button>
               </>
             }
-            start={<BackButton onClick={() => goTo("company")} />}
+            start={<BackButton onClick={() => goTo("context")} />}
           />
         }
         bubble="Now, where is your business licensed?"
         guidance={
           <GuidanceCard
             items={[
-              "It records where your business licence was issued, as you tell us.",
-              "HeroOS doesn't decide which employment law applies from it.",
-              "Jurisdiction is confirmed separately before any jurisdiction-specific guidance.",
-              "You can update your licensing later in Company Blueprint.",
+              "Your jurisdiction starts from where your business licence was issued, as you tell us.",
+              "HeroOS never guesses or changes it on its own.",
+              "It is confirmed separately before any jurisdiction-specific guidance.",
+              "You can update it later in Company Blueprint.",
             ]}
             title="Why this information matters"
           />
@@ -361,8 +445,8 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
         <StageCard
           accent="jurisdiction"
           headingRef={headingRef}
-          intro="Choose where your business licence was issued. This tells HeroOS which services may apply; it doesn't decide which employment law applies."
-          lead="Your licence and"
+          intro="Choose where your business licence was issued. HeroOS records your answer as you give it; which employment law applies is confirmed separately."
+          lead="Your"
           stage="licensing"
         >
           <form
@@ -420,7 +504,7 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
             "Your workspace is created only when you select “Create my workspace”.",
             "Edit any section: what you've entered stays here as you move between steps.",
             "Jurisdiction stays unconfirmed until it's reviewed separately.",
-            "Afterwards, you can update the optional details in Company Blueprint.",
+            "Afterwards, you can complete and update everything in Company Blueprint.",
           ]}
           title="Why review before continuing?"
         />
@@ -448,12 +532,34 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
             <ReviewRow label="Industry" value={draft.industry.trim()} error={errors.industry} />
             <ReviewRow label="Number of employees" value={draft.employeeCount.trim()} error={errors.employeeCount} />
           </ReviewSection>
+          {/* Exactly what will be saved: the website as HeroOS normalizes it, the summary as tidied. */}
+          <ReviewSection
+            disabled={busy}
+            icon={<BookIcon className="size-6" />}
+            id="review-context"
+            onEdit={() => goTo("context")}
+            title="About your company"
+          >
+            <ReviewRow
+              label="Company website"
+              value={normalizeWebsiteUrl(draft.websiteUrl).value ?? draft.websiteUrl.trim()}
+              error={errors.websiteUrl}
+            />
+            <ReviewRow label="HR policies" value={policiesLabel(draft.policiesExist || null) ?? ""} error={errors.policiesExist} />
+            <ReviewRow
+              label="Company summary"
+              multiline
+              value={checkPlainText(draft.companySummary, LIMITS.companySummary).value ?? draft.companySummary.trim()}
+              error={errors.companySummary}
+              wide
+            />
+          </ReviewSection>
           <ReviewSection
             disabled={busy}
             icon={<CertificateIcon className="size-6" />}
             id="review-licensing"
             onEdit={() => goTo("licensing")}
-            title="Licence details"
+            title="Jurisdiction"
           >
             <ReviewRow
               label="Licensed in"
@@ -472,7 +578,7 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
             <section aria-labelledby="review-jurisdiction" className="overflow-hidden rounded-xl border border-hero-border">
               <div className="flex min-h-11 items-center bg-[#f2f4f9] px-4 py-1.5">
                 <h2 className="text-[1.0625rem] font-extrabold text-hero-navy" id="review-jurisdiction">
-                  Jurisdiction
+                  Jurisdiction review
                 </h2>
               </div>
               <div className="flex gap-3 bg-hero-yellow-tint/50 px-4 py-3">
@@ -494,12 +600,25 @@ export function OnboardingWizard({ existingWorkspaces = [], fetcher, navigate }:
               </div>
             </section>
           </IconRow>
+          <IconRow align="top" icon={<UserIcon className="size-6" />}>
+            <section aria-labelledby="review-contact" className="overflow-hidden rounded-xl border border-hero-border">
+              <div className="flex min-h-11 items-center bg-[#f2f4f9] px-4 py-1.5">
+                <h2 className="text-[1.0625rem] font-extrabold text-hero-navy" id="review-contact">
+                  Primary contact
+                </h2>
+              </div>
+              <p className="px-4 py-3 text-[0.9375rem] leading-relaxed text-hero-navy/85">
+                <span className="font-semibold text-hero-navy">You</span>, as the person creating this workspace. You can
+                choose someone else in Company Blueprint once they have access.
+              </p>
+            </section>
+          </IconRow>
           <div className="flex gap-3 rounded-xl border border-[#cfe0f8] bg-hero-blue-tint px-4 py-3.5">
             <InfoIcon className="mt-0.5 size-5 shrink-0 text-hero-blue" />
             <p className="text-[0.9375rem] leading-relaxed text-hero-navy/85">
               <span className="font-bold text-hero-navy">Please check these details.</span> Nothing is saved until you
-              select “Create my workspace”. Afterwards, you can update the optional details and licensing in Company
-              Blueprint.
+              select “Create my workspace”. This is the start of your Company Blueprint: you can complete and update it
+              there at any time.
             </p>
           </div>
         </div>
@@ -597,11 +716,29 @@ function ReviewSection({
   );
 }
 
-function ReviewRow({ label, value, error }: { label: string; value: string; error?: string }) {
+function ReviewRow({
+  label,
+  value,
+  error,
+  multiline = false,
+  wide = false,
+}: {
+  label: string;
+  value: string;
+  error?: string;
+  /** Keep the value's line breaks (the summary). */
+  multiline?: boolean;
+  /** Span both columns of the section. */
+  wide?: boolean;
+}) {
   return (
-    <div className="grid min-w-0 gap-0.5 min-[480px]:grid-cols-[minmax(0,9.25rem)_minmax(0,1fr)] min-[480px]:gap-3">
+    <div
+      className={`grid min-w-0 gap-0.5 min-[480px]:grid-cols-[minmax(0,9.25rem)_minmax(0,1fr)] min-[480px]:gap-3 ${wide ? "@[40rem]:col-span-2" : ""}`}
+    >
       <dt className="text-sm leading-6 text-hero-muted">{label}</dt>
-      <dd className="min-w-0 break-words text-[0.9375rem] font-semibold leading-6 text-hero-navy">
+      <dd
+        className={`min-w-0 break-words text-[0.9375rem] font-semibold leading-6 text-hero-navy ${multiline ? "whitespace-pre-line font-normal" : ""}`}
+      >
         {value || <span className="font-normal text-hero-muted">Not provided</span>}
         {error ? <span className="mt-1 block text-sm font-semibold text-hero-danger">{error}</span> : null}
       </dd>

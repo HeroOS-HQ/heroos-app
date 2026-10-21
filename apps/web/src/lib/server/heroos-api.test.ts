@@ -278,6 +278,65 @@ describe("parseBlueprint", () => {
   ])("refuses %s", (_, override) => {
     expect(parseBlueprint({ ...BLUEPRINT, ...override })).toBeNull();
   });
+
+  it("reads an API without the company context as legacy, so the page edits only what it keeps", () => {
+    expect(parseBlueprint(BLUEPRINT)).toMatchObject({
+      version: "legacy",
+      websiteUrl: null,
+      companySummary: null,
+      primaryContact: null,
+      people: [],
+      missing: null,
+    });
+  });
+
+  const PERSON = {
+    membership_id: MEMBERSHIP_ID,
+    role: "company_admin",
+    member_since: "2026-10-13T08:00:00Z",
+    is_current_user: true,
+    is_primary_contact: true,
+  };
+  const CONTEXT = {
+    ...BLUEPRINT,
+    company_name: "Alpha",
+    website_url: "https://alpha.example",
+    company_summary: "Two shops.\n\nEight staff.",
+    policies_exist: "yes",
+    policy_context: "Employee handbook",
+    hr_support: "external",
+    hr_support_notes: null,
+    primary_contact: PERSON,
+    people: [PERSON],
+    completeness: { complete: false, missing: ["jurisdiction"] },
+  };
+
+  it("reads the company context (M2-NEW-03): people without names, the API's completeness", () => {
+    expect(parseBlueprint(CONTEXT)).toMatchObject({
+      version: "context",
+      websiteUrl: "https://alpha.example",
+      companySummary: "Two shops.\n\nEight staff.",
+      policiesExist: "yes",
+      policyContext: "Employee handbook",
+      hrSupport: "external",
+      hrSupportNotes: null,
+      primaryContact: { membershipId: MEMBERSHIP_ID, role: "company_admin", isCurrentUser: true, isPrimaryContact: true },
+      people: [{ membershipId: MEMBERSHIP_ID, memberSince: "2026-10-13T08:00:00Z" }],
+      missing: ["jurisdiction"],
+    });
+  });
+
+  it.each([
+    ["an unknown policies answer", { policies_exist: "maybe" }],
+    ["an unknown HR support", { hr_support: "outsourced" }],
+    ["a person without a membership id", { people: [{ ...PERSON, membership_id: "x" }] }],
+    ["a primary contact with an unknown role", { primary_contact: { ...PERSON, role: "owner" } }],
+    ["an unknown completeness detail", { completeness: { complete: false, missing: ["website_url"] } }],
+    ["no completeness", { completeness: undefined }],
+    ["a summary that isn't text", { company_summary: 7 }],
+  ])("refuses a context with %s", (_, override) => {
+    expect(parseBlueprint({ ...CONTEXT, ...override })).toBeNull();
+  });
 });
 
 const PAYLOAD = {

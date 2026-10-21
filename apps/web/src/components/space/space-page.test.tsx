@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { Blueprint, Membership, WorkspaceDetails } from "@/lib/server/heroos-api";
-import { COMPANY_ID } from "@/test/fixtures";
+import { COMPANY_ID, NO_COMPANY_CONTEXT } from "@/test/fixtures";
 
 import { monogram, SpacePage } from "./space-page";
 
@@ -19,7 +19,7 @@ const BLUEPRINT: Blueprint = {
     confirmedAt: "2026-10-14T09:00:00Z",
     guidanceAllowed: true,
   },
-  updatedAt: "2026-10-16T09:00:00Z",
+  updatedAt: "2026-10-16T09:00:00Z",  ...NO_COMPANY_CONTEXT,
 };
 const ADMIN: Membership = { companyId: COMPANY_ID, membershipId: "m", role: "company_admin", canUpdateBlueprint: true };
 const MEMBER: Membership = { ...ADMIN, role: "member", canUpdateBlueprint: false };

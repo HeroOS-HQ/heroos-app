@@ -20,7 +20,7 @@ the database or the identity provider.
 | `/auth/signup` | Same Authorization Code + PKCE flow as `/auth/login`, plus `screen_hint=signup` (OIDC only); after the callback the user lands on `/onboarding?start=signup` (an account that already has a workspace is sent to `/workspaces`) | — |
 | `/auth/login`, `/auth/callback`, `POST /auth/logout` | Unchanged (Authentication §10.2), except that the login transaction now records where to land | — |
 | `/workspaces` | Workspace discovery: one workspace → redirect to it; several → chooser; otherwise a state page (§3) | "Please sign in" |
-| `/onboarding` | Stages 1–4 of the five-stage setup journey (§4): Welcome, then the three-step form | "Create your account to get started" |
+| `/onboarding` | Stages 1–5 of the six-stage setup journey (§4): Welcome, then the four-step form | "Create your account to get started" |
 | `/workspaces/{id}` | Company workspace: name, role, welcome, Company information, jurisdiction readiness, setup checklist, HR workflows marked "Coming soon", read-only case list | "Please sign in" |
 | `/workspaces/{id}/ready` | Stage 5 of the journey (Complete), after a confirmed registration only. `?outcome=existing` only changes the wording; all data is read back from the API | "Please sign in" |
 | `/workspaces/{id}/settings` | Company profile: administrators edit, members see it read-only | "Please sign in" |
@@ -75,10 +75,13 @@ never shown partially.
 
 ## 4. Onboarding and registration
 
-The founder sees one five-stage journey (JJ design review, screens 01–05,
-user-selected and pending JJ sign-off): **Welcome → Company Basics → Licence &
-Jurisdiction → Review → Complete**. The stages are stages of the interface, not
-of anything saved. Welcome and the three form steps run in one page
+The founder sees one six-stage journey (JJ design review, screens 01–05,
+user-selected and pending JJ sign-off, plus About Your Company from
+M2-NEW-03): **Welcome → Company Basics → About Your Company → Jurisdiction →
+Review → Complete**. The stages are stages of the interface, not of anything
+saved. Onboarding lays the [Company Blueprint](company-blueprint.md)'s
+foundation with the Blueprint's own fields and validation; the longer details
+are completed later on the Blueprint page. Welcome and the four form steps run in one page
 (`OnboardingWizard`) and hold the draft in the browser's memory only (no
 storage, no URL parameters); Complete is the ready page, which renders only
 after the API confirmed the registration and the Company was read back.
@@ -92,21 +95,28 @@ Leaving with unsaved details asks for confirmation.
    name, industry and number of employees (optional). Text is trimmed and
    checked like the API does (length: 200, 200, 120; no control, format or
    line-separator characters). Employees: a whole number from 0 to 10,000,000.
-   The mockup's business description is not offered: registration has no such
-   field.
-2. **Licence & Jurisdiction** (screen 03, §6), in three groups: where the
+2. **About Your Company** (M2-NEW-03), all optional: the company website
+   (normalized exactly like the API; stored only, never visited), a short
+   company summary ("Briefly describe what your company does and how your team
+   is structured. You can paste or adapt content from your website or About
+   page.") and "Does your company already have HR policies?" (Yes / No, not
+   yet / Not sure). Policy details, HR support and people are left for the
+   Blueprint.
+3. **Jurisdiction** (screen 03, §6), in three groups: where the
    licence was issued, the issuing authority (Other only) and how jurisdiction
    is confirmed. The mockup's licence number, document upload and
    multi-jurisdiction question are not offered: registration has no such fields.
-3. **Review** (screen 04), then **Create my workspace**. This is the only step
+4. **Review** (screen 04), then **Create my workspace**. This is the only step
    that sends anything. Nothing is ever submitted automatically, and a second
    click while a request is in flight is ignored. Each section's Edit returns
-   to its step with the draft intact. The jurisdiction is shown as not yet
-   confirmed; nothing is suggested.
+   to its step with the draft intact. It shows exactly what will be stored
+   (the normalized website, the tidied summary), the jurisdiction as not yet
+   confirmed (nothing is suggested), and the founder as the first primary
+   contact (set by the server; changeable later in the Blueprint).
 
 The journey's frame (`components/onboarding/onboarding-frame.tsx`) is used by
 `/onboarding` and the ready page only: the full-width app header, the
-five-stage progress (`onboarding-progress.tsx`; phones show "Step N of 5"), a
+six-stage progress (`onboarding-progress.tsx`; phones show "Step N of 6"), a
 white card beside Hannah's scene and a guidance card (wide screens), and an
 action bar that is sticky on wide screens and follows the form on phones. The
 scene uses JJ's approved front-view Hannah artwork unchanged, with a small

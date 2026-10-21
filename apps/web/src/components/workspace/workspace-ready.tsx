@@ -19,6 +19,7 @@ import {
 } from "@/components/site/icons";
 import { Notice } from "@/components/ui/notice";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { attentionOf } from "@/lib/blueprint/model";
 import { licensingLabel, readinessCopy } from "@/lib/onboarding/copy";
 import type { Blueprint, WorkspaceDetails } from "@/lib/server/heroos-api";
 
@@ -36,6 +37,7 @@ export function WorkspaceReady({ details, outcome }: { details: WorkspaceDetails
   const admin = membership?.role === "company_admin";
   const canEdit = membership?.canUpdateBlueprint === true;
   const created = outcome === "created";
+  const toComplete = blueprint?.version === "context" ? attentionOf(blueprint).length : 0;
   const readiness = blueprint ? readinessCopy(blueprint.jurisdiction) : null;
   const confirmed = readiness?.tone === "positive";
 
@@ -114,16 +116,23 @@ export function WorkspaceReady({ details, outcome }: { details: WorkspaceDetails
                 />
                 {blueprint ? (
                   <StatusRow
-                    action={canEdit ? { href: `${base}/settings`, label: "Edit", context: "licence details" } : undefined}
+                    action={canEdit ? { href: `${base}/settings`, label: "Edit", context: "jurisdiction" } : undefined}
                     detail={licensingSummary(blueprint)}
                     pending={blueprint.licensing.location === null}
                     status={blueprint.licensing.location === null ? "Not provided" : created ? "Saved" : "On record"}
-                    title="Licence details"
+                    title="Jurisdiction"
                   />
                 ) : null}
                 <StatusRow
                   action={{ href: `${base}/settings`, label: "Open", context: "Company Blueprint" }}
-                  status={canEdit ? "Available to review and update" : "Available to view"}
+                  status={
+                    // Setup starts the Blueprint; it never claims the whole Blueprint is complete.
+                    canEdit
+                      ? toComplete > 0
+                        ? `Started: ${toComplete === 1 ? "1 detail" : `${toComplete} details`} to complete`
+                        : "Available to review and update"
+                      : "Available to view"
+                  }
                   title="Company Blueprint"
                 />
                 {readiness ? (

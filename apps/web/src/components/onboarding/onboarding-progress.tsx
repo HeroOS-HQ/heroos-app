@@ -1,16 +1,18 @@
 import { CheckIcon } from "@/components/site/icons";
 
 /**
- * The five stages of the founder's setup journey (JJ design review, screens
- * 01–05). They are stages of the interface, not of anything saved: Welcome,
- * Company Basics, Licence & Jurisdiction and Review are one form held in the
- * browser's memory, and Complete is the ready page, shown only after the API
- * confirmed the registration and read the Company back.
+ * The six stages of the founder's setup journey (JJ design review, screens
+ * 01–05, plus "About Your Company" for the Blueprint's company context,
+ * M2-NEW-03). They are stages of the interface, not of anything saved:
+ * Welcome, Company Basics, About Your Company, Jurisdiction and Review are one
+ * form held in the browser's memory, and Complete is the ready page, shown
+ * only after the API confirmed the registration and read the Company back.
  */
 export const STAGES = [
   { key: "welcome", label: "Welcome" },
   { key: "company", label: "Company Basics" },
-  { key: "licensing", label: "Licence & Jurisdiction" },
+  { key: "context", label: "About Your Company" },
+  { key: "licensing", label: "Jurisdiction" },
   { key: "review", label: "Review" },
   { key: "complete", label: "Complete" },
 ] as const;
@@ -24,7 +26,7 @@ export function stageNumber(stage: StageKey): number {
 /**
  * Horizontal progress below the header: navy checks for the stages behind,
  * a yellow numbered circle for the current one, outlined circles ahead.
- * Phones show "Step N of 5" with a five-part track instead. Completed stages
+ * Phones show "Step N of 6" with a six-part track instead. Completed stages
  * also say "(completed)" to assistive technology, never colour alone.
  */
 export function OnboardingProgress({ current }: { current: StageKey }) {
@@ -35,7 +37,7 @@ export function OnboardingProgress({ current }: { current: StageKey }) {
         Step {index + 1} of {STAGES.length}
         <span className="font-semibold text-hero-muted"> · {STAGES[index].label}</span>
       </p>
-      <div aria-hidden="true" className="mt-2 grid grid-cols-5 gap-1.5 md:hidden">
+      <div aria-hidden="true" className="mt-2 grid grid-cols-6 gap-1.5 md:hidden">
         {STAGES.map((stage, position) => (
           <span
             className={`h-1.5 rounded-full ${position < index ? "bg-hero-navy" : position === index ? "bg-hero-yellow" : "bg-[#d9dee7]"}`}
@@ -43,7 +45,7 @@ export function OnboardingProgress({ current }: { current: StageKey }) {
           />
         ))}
       </div>
-      <ol aria-label="Setup progress" className="hidden grid-cols-5 md:grid xl:mr-14">
+      <ol aria-label="Setup progress" className="hidden grid-cols-6 md:grid xl:mr-14">
         {STAGES.map((stage, position) => {
           const done = position < index;
           const active = position === index;

@@ -155,7 +155,7 @@ def test_cli_refuses_a_schema_before_b1b(tenant_database: TenantDatabase) -> Non
 
 
 def test_cli_refuses_the_b1b_schema(tenant_database: TenantDatabase) -> None:
-    # The CLI needs C1's grants and exactly the current contract (7 since D4).
+    # The CLI needs C1's grants and exactly the current contract (8 since D5).
     with disposable_database(tenant_database, "clib1b") as admin_url:
         assert run_alembic(admin_url, "upgrade", "09cb5ec569b9").returncode == 0
         database = make_url(admin_url).database or ""
@@ -171,15 +171,15 @@ def test_cli_refuses_the_b1b_schema(tenant_database: TenantDatabase) -> None:
 
 @pytest.mark.parametrize(
     ("revision", "contract"),
-    [("3f6c2a9d81b4", 3), ("75ec6db8b6c1", 4), ("8d217d768395", 6)],
-    ids=["c1", "d1", "d3"],
+    [("3f6c2a9d81b4", 3), ("75ec6db8b6c1", 4), ("8d217d768395", 6), ("c4a7e2d9b310", 7)],
+    ids=["c1", "d1", "d3", "d4"],
 )
 def test_cli_refuses_an_earlier_schema(
     tenant_database: TenantDatabase, revision: str, contract: int
 ) -> None:
     # Exact contract: the CLI refuses any schema it was not written against,
     # including the previous ones (C1, contract 3; D1, contract 4; D3, contract
-    # 6), even though D1 to D4 add nothing for the operator.
+    # 6; D4, contract 7), even though D1 to D5 add nothing for the operator.
     with disposable_database(tenant_database, f"cli{contract}") as admin_url:
         assert run_alembic(admin_url, "upgrade", revision).returncode == 0
         database = make_url(admin_url).database or ""

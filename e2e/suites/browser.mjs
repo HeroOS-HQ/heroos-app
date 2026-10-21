@@ -62,14 +62,24 @@ export async function run(ctx) {
     await page.waitForHydrated("#company-name");
   }
 
-  async function fillWizard(page, { name, legal, industry, employees, location, authority }) {
+  // Company Basics, then About Your Company (M2-NEW-03, all optional), then Jurisdiction.
+  async function passAboutStep(page, { website, summary, policies } = {}) {
+    await page.waitFor(`document.getElementById("website-url")`, { message: "about-your-company step" });
+    if (website) await page.type("#website-url", website);
+    if (summary) await page.type("#company-summary", summary);
+    if (policies) await page.click(`#onboarding-policies-${policies}`);
+    await page.clickText("button", "Continue");
+    await page.waitFor(`document.getElementById("onboarding-location-difc")`, { message: "jurisdiction step" });
+  }
+
+  async function fillWizard(page, { name, legal, industry, employees, website, summary, policies, location, authority }) {
     await startOnboarding(page);
     await page.type("#company-name", name);
     if (legal) await page.type("#legal-name", legal);
     if (industry) await page.type("#industry", industry);
     if (employees) await page.type("#employee-count", employees);
     await page.clickText("button", "Continue");
-    await page.waitFor(`document.getElementById("onboarding-location-difc")`, { message: "licensing step" });
+    await passAboutStep(page, { website, summary, policies });
     await page.click(`#onboarding-location-${location}`);
     if (authority) {
       await page.waitFor(`document.getElementById("onboarding-authority")`);
@@ -112,7 +122,21 @@ export async function run(ctx) {
   check("UI-4", "validation: an empty company name is refused next to the field, focus on it", focusedName,
     await page.eval("document.activeElement?.id ?? 'none'"));
   await shot(page, "validation-error-390");
-  await fillWizard(page, { name: "[SYNTHETIC E2E] UI Founder Co.", legal: "UI Founder Trading LLC", industry: "Hospitality", employees: "14", location: "other", authority: "Example Free Zone Authority" });
+  await fillWizard(page, {
+    name: "[SYNTHETIC E2E] UI Founder Co.",
+    legal: "UI Founder Trading LLC",
+    industry: "Hospitality",
+    employees: "14",
+    website: "WWW.UI-Founder.example/",
+    summary: "Two fictional cafés. A manager leads twelve staff.",
+    policies: "yes",
+    location: "other",
+    authority: "Example Free Zone Authority",
+  });
+  const reviewText = await page.text();
+  check("UI-4b", "the review shows exactly what will be stored: the normalized website, the summary, the policies answer and the founder as primary contact",
+    reviewText.includes("https://www.ui-founder.example") && reviewText.includes("Two fictional cafés. A manager leads twelve staff.") &&
+      reviewText.includes("Yes, the company has HR policies") && reviewText.includes("as the person creating this workspace"));
   await shot(page, "r1-review-390");
   await page.viewport(1440, 900);
   await shot(page, "r1-review-1440");
@@ -131,12 +155,16 @@ export async function run(ctx) {
   const [facts] = await identityFacts(ctx, founderSubject);
   const companyId = readyUrl.pathname.split("/")[2];
   const [stored] = await fixtures.ownerQuery(
-    `SELECT c.name, b.legal_name, b.industry, b.employee_count, b.licensing_location, b.licensing_authority, m.role
+    `SELECT c.name, b.legal_name, b.industry, b.employee_count, b.licensing_location, b.licensing_authority, m.role,
+            b.website_url, b.company_summary, b.policies_exist, (b.primary_contact_membership_id = m.id)::text
        FROM companies c JOIN company_blueprints b ON b.company_id = c.id JOIN memberships m ON m.company_id = c.id
       WHERE c.id = ${quote(companyId)} AND m.user_id = ${quote(facts?.userId)}`,
   );
-  check("UI-5", "\"Create my workspace\" created exactly what the founder entered, with the founder as company_admin",
-    JSON.stringify(stored) === JSON.stringify(["[SYNTHETIC E2E] UI Founder Co.", "UI Founder Trading LLC", "Hospitality", "14", "other", "Example Free Zone Authority", "company_admin"]), JSON.stringify(stored));
+  check("UI-5", "\"Create my workspace\" created exactly what the founder entered (the canonical Blueprint values), with the founder as company_admin and primary contact",
+    JSON.stringify(stored) === JSON.stringify([
+      "[SYNTHETIC E2E] UI Founder Co.", "UI Founder Trading LLC", "Hospitality", "14", "other", "Example Free Zone Authority", "company_admin",
+      "https://www.ui-founder.example", "Two fictional cafés. A manager leads twelve staff.", "yes", "true",
+    ]), JSON.stringify(stored));
   check("UI-6", "exactly one Company and Membership were created by the journey", (await counts(ctx)).companies - beforeCreate.companies === 1);
   await shot(page, "r1-ready-390");
   await page.clickText("a", "Open my workspace");
@@ -157,6 +185,48 @@ export async function run(ctx) {
   const industry = await fixtures.ownerValue(`SELECT industry FROM company_blueprints WHERE company_id = ${quote(companyId)}`);
   check("UI-8", "settings: the administrator's change is saved through the BFF and the API", industry === "Hospitality and events");
   await shot(page, "r1-settings-saved-390");
+
+  // ===== M2-NEW-03: onboarding -> Company Blueprint -> edit an optional detail -> reload =====
+  const blueprintUrl = `${webOrigin}/workspaces/${companyId}/settings`;
+  const blueprintText = await page.text();
+  check("BP-1", "the Blueprint shows the onboarding values: the website, the summary, the policies answer and the founder as primary contact (\"You\")",
+    blueprintText.includes("https://www.ui-founder.example") && blueprintText.includes("Two fictional cafés. A manager leads twelve staff.") &&
+      blueprintText.includes("Yes, the company has HR policies") && /Primary contact\s*You/.test(blueprintText));
+  const jurisdictionBefore = await fixtures.ownerQuery(
+    `SELECT licensing_location, licensing_authority, coalesce(employment_jurisdiction, '-') FROM company_blueprints WHERE company_id = ${quote(companyId)}`,
+  );
+  await page.click("#edit-blueprint");
+  await page.waitForHydrated("#bp-hr-external");
+  await page.click("#bp-hr-external");
+  await page.type("#bp-hr-notes", "A fictional HR consultant helps with contracts.");
+  await shot(page, "bp-edit-hr-390");
+  await page.clickText("button", "Save changes");
+  await page.waitForText("Company Blueprint updated");
+  const savedNotice = await page.text();
+  await shot(page, "bp-saved-390");
+  // Away to Ask HeroOS, then back with a full reload.
+  await page.goto(`${webOrigin}/workspaces/${companyId}`);
+  await page.waitForText("What can HR do for you today?");
+  await page.goto(blueprintUrl);
+  await page.waitForHydrated("#edit-blueprint");
+  const reloaded = await page.text();
+  const [afterEdit] = await fixtures.ownerQuery(
+    `SELECT b.hr_support, b.hr_support_notes, b.licensing_location, b.licensing_authority, coalesce(b.employment_jurisdiction, '-'),
+            (b.primary_contact_membership_id = m.id)::text
+       FROM company_blueprints b JOIN memberships m ON m.company_id = b.company_id
+      WHERE b.company_id = ${quote(companyId)} AND m.user_id = ${quote(facts?.userId)}`,
+  );
+  check("BP-2", "saving an optional detail confirms it (\"HR support, HR support notes saved\") and it persists across navigation and reload",
+    savedNotice.includes("HR support, HR support notes saved") && reloaded.includes("An outside provider") &&
+      reloaded.includes("A fictional HR consultant helps with contracts.") && afterEdit?.[0] === "external",
+    JSON.stringify(afterEdit));
+  check("BP-3", "the jurisdiction stays canonical and unchanged (the founder's answer, nothing confirmed), and the primary contact is still the founder's Membership",
+    JSON.stringify(afterEdit?.slice(2, 5)) === JSON.stringify(jurisdictionBefore[0]) && afterEdit?.[4] === "-" && afterEdit?.[5] === "true",
+    JSON.stringify({ before: jurisdictionBefore[0], after: afterEdit }));
+  const otherNames = await fixtures.ownerQuery(`SELECT name FROM companies WHERE id <> ${quote(companyId)}`);
+  check("BP-4", "no other Company's data is visible on the Blueprint (names, people)",
+    otherNames.every(([name]) => !reloaded.includes(name)) && /Others with access\s*No one else yet/.test(reloaded), `${otherNames.length} other companies`);
+  await shot(page, "bp-reloaded-390");
 
   // Tokens stay on the server.
   const storage = await page.eval(`JSON.stringify({ local: Object.entries(localStorage), session: Object.entries(sessionStorage), cookie: document.cookie })`);
@@ -208,7 +278,7 @@ export async function run(ctx) {
   await lost.waitForHydrated("#company-name");
   await lost.type("#company-name", "[SYNTHETIC E2E] Lost Response EDITED");
   await lost.clickText("button", "Continue");
-  await lost.waitFor(`document.getElementById("onboarding-location-difc")`);
+  await passAboutStep(lost);
   await lost.clickText("button", "Continue");
   await lost.waitForText("Review your company information");
   await lost.clickText("button", "Create my workspace");
@@ -494,7 +564,7 @@ export async function run(ctx) {
   await startOnboarding(lic);
   await lic.type("#company-name", "[SYNTHETIC E2E] Licensing Look Co.");
   await lic.clickText("button", "Continue");
-  await lic.waitFor(`document.getElementById("onboarding-location-difc")`);
+  await passAboutStep(lic);
   const radios = await lic.eval(`[...document.querySelectorAll("input[type=radio]")].map((r) => r.value)`);
   await lic.click("#onboarding-location-other");
   await lic.waitFor(`document.getElementById("onboarding-authority")`);

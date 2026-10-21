@@ -46,6 +46,7 @@ from tests.tenant_isolation.migration_helpers import (
     D2,
     D3,
     D4,
+    D5,
     LEGACY_ISSUER,
     PRE_B1,
     REFERENCE,
@@ -240,12 +241,13 @@ def test_old_api_fails_closed_on_b1b(legacy_db: LegacyDatabase) -> None:
     assert getattr(exc_info.value.orig, "sqlstate", None) == "42703"
 
 
-def test_current_api_requires_the_d4_schema_contract(legacy_db: LegacyDatabase) -> None:
+def test_current_api_requires_the_d5_schema_contract(legacy_db: LegacyDatabase) -> None:
     with engine_for(legacy_db.runtime_url) as engine:
-        # Pre-B1a, B1a, B1b, C1, D1, D2 and D3 schemas: the current API refuses to
-        # start rather than fail per request (it maps memberships.role, the
-        # M2-01 workflow tables, the M2-02 intake evaluations, the M2-03
-        # progress events and, since M2-04, the decision records).
+        # Pre-B1a, B1a, B1b, C1, D1, D2, D3 and D4 schemas: the current API
+        # refuses to start rather than fail per request (it maps
+        # memberships.role, the M2-01 workflow tables, the M2-02 intake
+        # evaluations, the M2-03 progress events, the M2-04 decision records
+        # and, since M2-NEW-03, the Company Blueprint context columns).
         with pytest.raises(IncompatibleSchemaError):
             verify_runtime_role(engine)
         b1a(legacy_db)
@@ -267,10 +269,13 @@ def test_current_api_requires_the_d4_schema_contract(legacy_db: LegacyDatabase) 
         with pytest.raises(IncompatibleSchemaError, match="contract is 6"):
             verify_runtime_role(engine)
         upgrade(legacy_db, D4)
+        with pytest.raises(IncompatibleSchemaError, match="contract is 7"):
+            verify_runtime_role(engine)
+        upgrade(legacy_db, D5)
         verify_runtime_role(engine)
         with engine.connect() as conn:
-            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 7
-    assert API_MINIMUM_SCHEMA_CONTRACT == 7
+            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 8
+    assert API_MINIMUM_SCHEMA_CONTRACT == 8
 
 
 # --- revocation and rollback --------------------------------------------------------

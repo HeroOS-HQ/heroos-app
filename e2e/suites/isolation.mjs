@@ -42,6 +42,17 @@ export async function run(ctx) {
     const patch = await apiFetch(`/companies/${other.companyId}/blueprint`, { method: "PATCH", token: me.token, body: { industry: "Hijacked" } });
     const otherAfter = await fixtures.ownerQuery(`SELECT legal_name, industry, updated_at FROM company_blueprints WHERE company_id = ${quote(other.companyId)}`);
     check("D-4", `${who} cannot modify the other Company's Blueprint (403, row unchanged)`, patch.status === 403 && JSON.stringify(otherBefore) === JSON.stringify(otherAfter));
+    // M2-NEW-03: the primary contact must be a Membership of the caller's own Company.
+    const mine = await fixtures.ownerQuery(`SELECT primary_contact_membership_id, website_url FROM company_blueprints WHERE company_id = ${quote(me.companyId)}`);
+    const borrowed = await apiFetch(`/companies/${me.companyId}/blueprint`, { method: "PATCH", token: me.token, body: { primary_contact_membership_id: other.membershipId, website_url: "hijack.example" } });
+    const nowhere = await apiFetch(`/companies/${me.companyId}/blueprint`, { method: "PATCH", token: me.token, body: { primary_contact_membership_id: randomUUID() } });
+    const mineAfter = await fixtures.ownerQuery(`SELECT primary_contact_membership_id, website_url FROM company_blueprints WHERE company_id = ${quote(me.companyId)}`);
+    check("D-4b", `${who} cannot make the other Company's member its primary contact (422 exactly like an unknown id; nothing saved)`,
+      borrowed.status === 422 && borrowed.text === nowhere.text && JSON.stringify(mine) === JSON.stringify(mineAfter), borrowed.text);
+    const own = (await apiFetch(`/companies/${me.companyId}/blueprint`, { token: me.token })).json;
+    check("D-4c", `${who}'s Blueprint lists only its own people and contact`,
+      own?.people?.length === 1 && own.people[0].membership_id === me.membershipId && own.primary_contact?.membership_id === me.membershipId && own.people[0].is_current_user === true,
+      JSON.stringify(own?.people));
   }
 
   const otherCase = await apiFetch(`/companies/${alpha.companyId}/cases/${betaCase}`, { token: alpha.token });

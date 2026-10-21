@@ -5,8 +5,12 @@ import {
   type BlueprintPatch,
   type FieldName,
   fieldsFromApiDetail,
+  type HrSupport,
+  isHrSupport,
   isLicensingLocation,
+  isPoliciesExist,
   type LicensingLocation,
+  type PoliciesExist,
   type RegistrationPayload,
 } from "@/lib/onboarding/model";
 
@@ -59,6 +63,28 @@ export type Workspace = { companyId: string; name: string; membershipId: string 
 
 export type Membership = { companyId: string; membershipId: string; role: Role; canUpdateBlueprint: boolean };
 
+/** Someone with access to the Company. HeroOS keeps no names or email addresses. */
+export type BlueprintPerson = {
+  membershipId: string;
+  role: Role;
+  memberSince: string;
+  isCurrentUser: boolean;
+  isPrimaryContact: boolean;
+};
+
+/** A detail HeroOS relies on that the API says still needs attention. */
+export const BLUEPRINT_DETAILS = [
+  "legal_name",
+  "industry",
+  "employee_count",
+  "company_summary",
+  "jurisdiction",
+  "policies",
+  "hr_support",
+  "primary_contact",
+] as const;
+export type BlueprintDetail = (typeof BLUEPRINT_DETAILS)[number];
+
 export type Blueprint = {
   companyId: string;
   legalName: string | null;
@@ -73,6 +99,22 @@ export type Blueprint = {
     guidanceAllowed: boolean;
   };
   updatedAt: string | null;
+  /**
+   * `context`: the API keeps the company context (M2-NEW-03). `legacy`: an API
+   * from before it (the web app may be deployed first), which has none of the
+   * fields below; the page then shows and edits only what that API keeps.
+   */
+  version: "context" | "legacy";
+  websiteUrl: string | null;
+  companySummary: string | null;
+  policiesExist: PoliciesExist | null;
+  policyContext: string | null;
+  hrSupport: HrSupport | null;
+  hrSupportNotes: string | null;
+  primaryContact: BlueprintPerson | null;
+  people: BlueprintPerson[];
+  /** The API's completeness (`null` from a legacy API). */
+  missing: BlueprintDetail[] | null;
 };
 
 export type Registration = { outcome: "created" | "existing"; companyId: string; membershipId: string };
@@ -287,6 +329,92 @@ export function parseMembership(body: unknown): Membership | null {
 const READINESS = new Set(["supported_confirmed", "unconfirmed", "unsupported"]);
 const JURISDICTIONS = new Set(["uae_federal", "difc", "adgm", "other"]);
 
+function parsePerson(value: unknown): BlueprintPerson | null {
+  if (
+    !isRecord(value) ||
+    !isId(value.membership_id) ||
+    !isRole(value.role) ||
+    typeof value.member_since !== "string" ||
+    typeof value.is_current_user !== "boolean" ||
+    typeof value.is_primary_contact !== "boolean"
+  ) {
+    return null;
+  }
+  return {
+    membershipId: value.membership_id,
+    role: value.role,
+    memberSince: value.member_since,
+    isCurrentUser: value.is_current_user,
+    isPrimaryContact: value.is_primary_contact,
+  };
+}
+
+const isDetail = (value: unknown): value is BlueprintDetail =>
+  typeof value === "string" && (BLUEPRINT_DETAILS as readonly string[]).includes(value);
+
+type CompanyContext = Pick<
+  Blueprint,
+  | "version"
+  | "websiteUrl"
+  | "companySummary"
+  | "policiesExist"
+  | "policyContext"
+  | "hrSupport"
+  | "hrSupportNotes"
+  | "primaryContact"
+  | "people"
+  | "missing"
+>;
+
+const LEGACY_CONTEXT: CompanyContext = {
+  version: "legacy",
+  websiteUrl: null,
+  companySummary: null,
+  policiesExist: null,
+  policyContext: null,
+  hrSupport: null,
+  hrSupportNotes: null,
+  primaryContact: null,
+  people: [],
+  missing: null,
+};
+
+/** The company context (M2-NEW-03); an API without it reads as `legacy`, a malformed one as null. */
+function parseCompanyContext(body: Record<string, unknown>): CompanyContext | null {
+  if (!Object.hasOwn(body, "website_url")) return LEGACY_CONTEXT;
+  const { completeness } = body;
+  if (
+    !optionalText(body.website_url) ||
+    !optionalText(body.company_summary) ||
+    !(body.policies_exist === null || isPoliciesExist(body.policies_exist)) ||
+    !optionalText(body.policy_context) ||
+    !(body.hr_support === null || isHrSupport(body.hr_support)) ||
+    !optionalText(body.hr_support_notes) ||
+    !Array.isArray(body.people) ||
+    !isRecord(completeness) ||
+    !Array.isArray(completeness.missing) ||
+    !completeness.missing.every(isDetail)
+  ) {
+    return null;
+  }
+  const people = body.people.map(parsePerson);
+  if (people.some((person) => person === null)) return null;
+  const primary = body.primary_contact === null ? null : parsePerson(body.primary_contact);
+  if (body.primary_contact !== null && primary === null) return null;
+  return {
+    version: "context",
+    websiteUrl: body.website_url,
+    companySummary: body.company_summary,
+    policiesExist: body.policies_exist as PoliciesExist | null,
+    policyContext: body.policy_context,
+    hrSupport: body.hr_support as HrSupport | null,
+    hrSupportNotes: body.hr_support_notes,
+    primaryContact: primary,
+    people: people as BlueprintPerson[],
+    missing: completeness.missing as BlueprintDetail[],
+  };
+}
+
 export function parseBlueprint(body: unknown): Blueprint | null {
   if (!isRecord(body) || !isId(body.company_id) || !isRecord(body.licensing) || !isRecord(body.jurisdiction)) {
     return null;
@@ -309,6 +437,8 @@ export function parseBlueprint(body: unknown): Blueprint | null {
   ) {
     return null;
   }
+  const context = parseCompanyContext(body);
+  if (context === null) return null;
   const readiness = jurisdiction.readiness as Readiness;
   return {
     companyId: body.company_id,
@@ -325,6 +455,7 @@ export function parseBlueprint(body: unknown): Blueprint | null {
       guidanceAllowed: readiness === "supported_confirmed" && jurisdiction.guidance_allowed,
     },
     updatedAt: body.updated_at,
+    ...context,
   };
 }
 

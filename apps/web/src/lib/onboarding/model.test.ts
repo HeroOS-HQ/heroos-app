@@ -1,18 +1,62 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   buildRegistrationPayload,
   checkEmployeeCount,
+  checkPlainText,
   checkText,
   EMPTY_DRAFT,
   fieldsFromApiDetail,
   MESSAGES,
+  normalizeWebsiteUrl,
   type OnboardingDraft,
   parseBlueprintPatch,
   parseRegistrationRequest,
   validateCompanyStep,
+  validateContextStep,
   validateLicensingStep,
 } from "./model";
+
+// The API's own cases (apps/api/tests/fixtures/website_urls.json): both sides must agree.
+const WEBSITE_CASES: { input: string; stored: string | null }[] = JSON.parse(
+  readFileSync(resolve(__dirname, "../../../../api/tests/fixtures/website_urls.json"), "utf8"),
+).cases;
+
+describe("normalizeWebsiteUrl (mirrors the API exactly)", () => {
+  it.each(WEBSITE_CASES)("$input → $stored", ({ input, stored }) => {
+    expect(normalizeWebsiteUrl(input).value).toBe(stored);
+  });
+
+  it("explains a refusal: an unsupported scheme, or not a website address", () => {
+    expect(normalizeWebsiteUrl("javascript:alert(1)")).toEqual({ value: null, error: MESSAGES.websiteScheme });
+    expect(normalizeWebsiteUrl("data:text/html,x")).toEqual({ value: null, error: MESSAGES.websiteScheme });
+    expect(normalizeWebsiteUrl("https://127.0.0.1")).toEqual({ value: null, error: MESSAGES.websiteFormat });
+    expect(normalizeWebsiteUrl("   ")).toEqual({ value: null });
+  });
+
+  it("is idempotent: a stored address normalizes to itself", () => {
+    for (const { stored } of WEBSITE_CASES) {
+      if (stored !== null) expect(normalizeWebsiteUrl(stored).value).toBe(stored);
+    }
+  });
+});
+
+describe("checkPlainText (the summary and notes)", () => {
+  it("keeps line breaks, tidies pasted spaces and line endings, trims the ends", () => {
+    expect(checkPlainText("  Line one\r\n\r\nLine\u00a0two\u200b  ", 2000)).toEqual({ value: "Line one\n\nLine two" });
+    expect(checkPlainText("Tabbed\tcolumns", 2000)).toEqual({ value: "Tabbed\tcolumns" });
+    expect(checkPlainText(" \n ", 2000)).toEqual({ value: null });
+  });
+
+  it("counts characters as the API does (an emoji is one) and refuses invisible controls", () => {
+    expect(checkPlainText("😀".repeat(5), 5)).toEqual({ value: "😀".repeat(5) });
+    expect(checkPlainText("x".repeat(6), 5).error).toBe(MESSAGES.tooLong(5));
+    expect(checkPlainText("bell\u0007", 100).error).toBe(MESSAGES.unsupportedTextCharacters);
+  });
+});
 
 const draft = (overrides: Partial<OnboardingDraft> = {}): OnboardingDraft => ({
   ...EMPTY_DRAFT,
@@ -91,6 +135,28 @@ describe("step validation", () => {
   });
 });
 
+describe("the About Your Company step", () => {
+  it("is all optional, and checks what is given with the Blueprint's rules", () => {
+    expect(validateContextStep(draft())).toEqual({});
+    expect(validateContextStep(draft({ websiteUrl: "file:///etc/passwd", companySummary: "x".repeat(2001) }))).toEqual({
+      websiteUrl: MESSAGES.websiteScheme,
+      companySummary: MESSAGES.tooLong(2000),
+    });
+  });
+
+  it("sends the context only when given, exactly as the API stores it", () => {
+    const built = buildRegistrationPayload(
+      draft({ websiteUrl: "Gamma.example/", companySummary: " Two shops.\r\nEight staff. ", policiesExist: "not_sure" }),
+    );
+    expect(built.ok && built.value.blueprint).toEqual({
+      website_url: "https://gamma.example",
+      company_summary: "Two shops.\nEight staff.",
+      policies_exist: "not_sure",
+      licensing: { location: "not_sure" },
+    });
+  });
+});
+
 describe("buildRegistrationPayload (the M1-10C contract)", () => {
   it("sends only given optional fields and the licensing answer", () => {
     const result = buildRegistrationPayload(
@@ -150,6 +216,50 @@ describe("server-side parsing", () => {
       ok: true,
       value: { industry: null, employee_count: null },
     });
+  });
+});
+
+describe("server-side parsing of the company context", () => {
+  it("accepts the context exactly as the forms build it, and a primary contact id in a patch", () => {
+    const contact = "d3e0a000-0000-4000-8000-00000000a001";
+    const patch = {
+      website_url: "https://gamma.example",
+      company_summary: "Two shops.\n\nEight staff.",
+      policies_exist: "yes",
+      policy_context: null,
+      hr_support: "mixed",
+      hr_support_notes: "A consultant helps.",
+      primary_contact_membership_id: contact,
+    };
+    expect(parseBlueprintPatch(patch)).toEqual({ ok: true, value: patch });
+    const registration = {
+      company_name: "Gamma",
+      blueprint: { website_url: "https://gamma.example", company_summary: "Two shops.", policies_exist: "no", licensing: { location: "difc" } },
+    };
+    expect(parseRegistrationRequest(registration)).toEqual({ ok: true, value: registration });
+  });
+
+  it.each([
+    ["an un-normalized website", { website_url: "Gamma.example" }, "websiteUrl"],
+    ["an unsafe website", { website_url: "javascript:alert(1)" }, "websiteUrl"],
+    ["untidy summary", { company_summary: " padded " }, "companySummary"],
+    ["an overlong policy context", { policy_context: "x".repeat(1001) }, "policyContext"],
+    ["an unknown policies answer", { policies_exist: "maybe" }, "policiesExist"],
+    ["an unknown HR support", { hr_support: "outsourced" }, "hrSupport"],
+    ["a malformed contact", { primary_contact_membership_id: "someone" }, "primaryContact"],
+  ])("refuses %s in a patch, naming the field", (_, body, field) => {
+    expect(parseBlueprintPatch(body)).toEqual({ ok: false, fields: [field] });
+  });
+
+  it("never lets registration choose a primary contact or the later Blueprint details", () => {
+    const blueprint = { licensing: { location: "difc" } };
+    for (const extra of [
+      { primary_contact_membership_id: "d3e0a000-0000-4000-8000-00000000a001" },
+      { hr_support: "none" },
+      { policy_context: "Handbook" },
+    ]) {
+      expect(parseRegistrationRequest({ company_name: "Gamma", blueprint: { ...blueprint, ...extra } }).ok).toBe(false);
+    }
   });
 });
 

@@ -11,6 +11,7 @@ import {
   UnprovisionedView,
 } from "@/components/app/state-views";
 import type { Blueprint, Membership, WorkspaceDetails } from "@/lib/server/heroos-api";
+import { NO_COMPANY_CONTEXT } from "@/test/fixtures";
 
 import { WorkspaceChooser } from "./workspace-chooser";
 import { WorkspaceReady } from "./workspace-ready";
@@ -31,7 +32,7 @@ const BLUEPRINT: Blueprint = {
     confirmedAt: null,
     guidanceAllowed: false,
   },
-  updatedAt: null,
+  updatedAt: null,  ...NO_COMPANY_CONTEXT,
 };
 const ADMIN: Membership = { companyId: COMPANY_ID, membershipId: "m", role: "company_admin", canUpdateBlueprint: true };
 const MEMBER: Membership = { ...ADMIN, role: "member", canUpdateBlueprint: false };
@@ -63,13 +64,14 @@ describe("WorkspaceReady", () => {
     expect(stages.map((stage) => stage.textContent)).toEqual([
       "Welcome (completed)",
       "Company Basics (completed)",
-      "Licence & Jurisdiction (completed)",
+      "About Your Company (completed)",
+      "Jurisdiction (completed)",
       "Review (completed)",
-      "5Complete",
+      "6Complete",
     ]);
-    expect(stages[4]).toHaveAttribute("aria-current", "step");
+    expect(stages[5]).toHaveAttribute("aria-current", "step");
     // Phones say it in words above the card; the card says it too.
-    expect(screen.getAllByText("Step 5 of 5")).toHaveLength(2);
+    expect(screen.getAllByText("Step 6 of 6")).toHaveLength(2);
   });
 
   it("shows only what the API returned: the saved details, the licensing answer and an unconfirmed jurisdiction", () => {
