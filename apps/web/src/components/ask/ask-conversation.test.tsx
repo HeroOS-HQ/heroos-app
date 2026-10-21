@@ -112,7 +112,7 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(box()).toHaveValue("");
     expect(box()).not.toHaveAttribute("readonly");
     expect(box()).toHaveAttribute("placeholder", "Reply in your own words.");
-    expect(box()).toHaveFocus();
+    await waitFor(() => expect(box()).toHaveFocus());
   });
 
   it("puts a later message back in the box, and only there, when it fails", async () => {
@@ -156,7 +156,7 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(copy);
     expect(box()).toHaveValue(WORDS);
     expect(screen.getAllByText(WORDS)).toHaveLength(1);
-    expect(box()).toHaveFocus();
+    await waitFor(() => expect(box()).toHaveFocus());
     expect(send()).toBeEnabled();
     // Sending again works, with the same words.
     fireEvent.click(send());
@@ -188,6 +188,26 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
     await waitFor(() => expect(screen.queryByText(REPLY)).toBeNull());
     expect(screen.getByRole("heading", { level: 1, name: "What can HR do for you today?" })).toBeInTheDocument();
+  });
+
+  it("scrolls to below the docked box, so the newest turn is never left under it", async () => {
+    const scrolled: Element[] = [];
+    const original = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this);
+    };
+    try {
+      setup(null, answer(REPLY, { safeNextStep: "Write down the dates." }));
+      await ask(WORDS);
+      await screen.findByText("Write down the dates.");
+      const target = scrolled.at(-1);
+      expect(target).toBeDefined();
+      // After the box and the not-saved note, not inside the conversation list.
+      expect(box().compareDocumentPosition(target!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(screen.getByRole("list", { name: "Conversation with HeroOS" }).contains(target!)).toBe(false);
+    } finally {
+      Element.prototype.scrollIntoView = original;
+    }
   });
 
   it("sends with Ctrl+Enter and adds a line with Enter", async () => {

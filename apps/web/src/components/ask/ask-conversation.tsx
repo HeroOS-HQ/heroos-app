@@ -88,7 +88,8 @@ export function AskConversation({
   const continuation = useRef<string | null>(null);
   const nextId = useRef(0);
   const inFlight = useRef(false);
-  const end = useRef<HTMLLIElement>(null);
+  // After the docked box, so scrolling to it leaves the newest turn above the box, not under it.
+  const end = useRef<HTMLDivElement>(null);
 
   const value = text.trim();
   const canSend = value.length > 0 && pending === null;
@@ -238,7 +239,6 @@ export function AskConversation({
             </li>
           </>
         ) : null}
-        <li aria-hidden="true" ref={end} />
       </ol>
       <div className="sticky bottom-0 mt-6 bg-gradient-to-t from-hero-bg from-60% to-transparent pb-2 pt-4">
         {composer(true)}
@@ -246,6 +246,7 @@ export function AskConversation({
           This conversation isn&apos;t saved: reloading the page clears it. HeroOS doesn&apos;t make employment decisions.
         </p>
       </div>
+      <div aria-hidden="true" ref={end} />
     </div>
   );
 }
