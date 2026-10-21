@@ -1,9 +1,17 @@
 # Hannah AI demo (conversational, synthetic scenarios only)
 
-A conversation with a language model ("Hannah") inside the Disciplinary case
-workspace, for demonstrating HeroOS's conversational direction with fictional
-scenarios. It is **not** the case workflow: it never writes the Case, its
-facts, its history or a decision, and nothing it says authorizes a step.
+> **Status (M2-NEW-02, 2026-10-21): the chat is no longer on the case page.**
+> JJ's approved signed-in design has HeroOS speak with its own mark and no
+> mascot in active HR advice, so the "Chat with Hannah" tab was removed from
+> the case page. The API route, the BFF routes, the provider adapter, the usage
+> ceilings and the reply check below are unchanged and stay in place for
+> M2-NEW-05 (the controlled AI conversation gateway). With no page calling it,
+> the demo only answers a direct BFF request from a signed-in administrator.
+
+A conversation with a language model ("Hannah") about a Disciplinary case, for
+demonstrating HeroOS's conversational direction with fictional scenarios. It
+is **not** the case workflow: it never writes the Case, its facts, its history
+or a decision, and nothing it says authorizes a step.
 
 ## Flow
 
@@ -15,53 +23,10 @@ browser (React state only)
   ← API checks the reply (app/assistant/response_safety.py) → the reply, or a fixed neutral one
 ```
 
-`GET …/assistant` tells the page whether the composer is shown. The case page
-reads it on the server together with the Case (`loadCase`), so the first paint
-is already right; "Check again" re-reads it through the BFF.
-
-## In the case workspace
-
-The case page follows the JJ design-review direction for the master case
-conversation (screen 10; user-selected, JJ review pending). It spans the full
-window under the company header, in place of the company navigation (never two
-sidebars): about 284 px / the rest / 398 px on large screens, the centre taking
-any extra width.
-
-- **Left:** "New case", a search of the Company's Disciplinary Cases (titles,
-  statuses, last update; the current one highlighted) and the way back to the
-  dashboard and the full case list.
-- **Centre:** a compact case header, then two tabs: **Chat with Hannah** (AI demo)
-  and **Guided case workflow** (the official record: the guided conversation,
-  next steps, question groups, decisions & history, documents, unchanged). On
-  large screens the chat fills the screen, its messages scroll on their own and
-  the composer stays at the bottom; on phones the composer is pinned to the
-  bottom of the screen.
-- **Right:** "Case status" (the official status, the stage in progress, the
-  next step the guided workflow offers), then any hold and cautions (never
-  folded away), "Case info" (case ID, dates, intake, the case's jurisdiction,
-  pathway) and links into the guided workflow. "Full case details" (progress,
-  the jurisdiction's basis, facts, missing information, history pointer, what
-  isn't available yet) is a disclosure, closed at first. Everything there is
-  the API's data; nothing comes from the chat. On smaller screens the case list
-  and the case details open as panels from the case header.
-- **The chat's disclosure** ("AI demo · Fictional scenarios only · Exploratory
-  responses that don't authorize disciplinary decisions · Not saved to the
-  official case, which this chat can't change") is always on screen above the
-  messages. A fresh conversation shows one welcome (the page's own text, not a
-  reply); once it has started, the welcome shrinks to one line.
-
-Which view leads, by the status:
-
-| Status | Tabs | Opens on |
-| --- | --- | --- |
-| available | both | Chat with Hannah |
-| `not_configured` (no key) | both; Hannah's tab says it isn't set up | Guided case workflow |
-| couldn't be read (a waking or failing API, or an answer the page can't read) | both; Hannah's tab says so, with "Check again" | Guided case workflow |
-| `disabled`, refused (403), unknown Case or an API without the demo (404), a member | none | Guided case workflow |
-
-The chat never shows a pretend answer: every failure is said in words with a
-retry where one can help. Its turns live in the page's memory only (kept while
-switching tabs, gone on reload).
+`GET …/assistant` reports whether the demo is available for this
+administrator and Case. Until M2-NEW-02 the case page read it to show a "Chat
+with Hannah" tab (with the guided workflow as the other tab); that page and its
+tab are retired (see the status note above).
 
 ## Access
 

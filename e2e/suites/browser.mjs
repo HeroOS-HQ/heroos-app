@@ -3,7 +3,7 @@
 // registration, lifecycle denials, tenant isolation by URL, stale UI after
 // revocation, switching, logout, jurisdiction display, responsive layout,
 // accessibility checks and the CSP investigation.
-import { counts, identityFacts, newFounder, quote, sameCounts } from "./common.mjs";
+import { counts, identityFacts, newFounder, openAccountMenu, quote, sameCounts, signOutFromMenu } from "./common.mjs";
 
 const WIDTHS = [320, 375, 390, 768, 1024, 1440];
 
@@ -140,15 +140,20 @@ export async function run(ctx) {
   check("UI-6", "exactly one Company and Membership were created by the journey", (await counts(ctx)).companies - beforeCreate.companies === 1);
   await shot(page, "r1-ready-390");
   await page.clickText("a", "Open my workspace");
-  await page.waitForText("Coming soon");
-  check("UI-7", "the workspace shows the Company, the administrator role and an unconfirmed jurisdiction",
-    (await visible(page, "[SYNTHETIC E2E] UI Founder Co.")) && (await visible(page, "Administrator")) && (await visible(page, "Jurisdiction not yet confirmed")));
+  await page.waitForText("What can HR do for you today?");
   await shot(page, "r1-workspace-390");
-  await page.clickText("a", "Edit company details");
-  await page.waitForHydrated("#settings-industry");
-  await page.type("#settings-industry", "Hospitality and events");
+  await openAccountMenu(page);
+  const company = (await visible(page, "[SYNTHETIC E2E] UI Founder Co.")) && (await visible(page, "Administrator"));
+  await page.clickText("a", "Company Blueprint");
+  await page.waitForHydrated("#edit-blueprint");
+  check("UI-7", "the workspace names the Company and the administrator role, and the Blueprint says the jurisdiction is waiting to be confirmed",
+    company && (await visible(page, "waiting to be confirmed")));
+  await page.click("#edit-blueprint");
+  await page.waitForHydrated("#bp-industry");
+  await page.type("#bp-industry", "Hospitality and events");
+  await shot(page, "r1-blueprint-unsaved-390");
   await page.clickText("button", "Save changes");
-  await page.waitForText("Changes saved");
+  await page.waitForText("Company Blueprint updated");
   const industry = await fixtures.ownerValue(`SELECT industry FROM company_blueprints WHERE company_id = ${quote(companyId)}`);
   check("UI-8", "settings: the administrator's change is saved through the BFF and the API", industry === "Hospitality and events");
   await shot(page, "r1-settings-saved-390");
@@ -271,7 +276,7 @@ export async function run(ctx) {
   await a.viewport(1440, 900);
   await a.goto(`${webOrigin}/workspaces`);
   await a.waitFor(`location.pathname === "/workspaces/${alpha.companyId}"`, { message: "single workspace redirect" });
-  await a.waitForText("Coming soon");
+  await a.waitForText("What can HR do for you today?");
   for (const path of [``, `/settings`, `/ready?outcome=created`]) {
     await a.goto(`${webOrigin}/workspaces/${beta.companyId}${path}`);
     await a.waitForText("You don't have access to this workspace");
@@ -287,16 +292,20 @@ export async function run(ctx) {
   await a.waitForText("Choose a workspace");
   await shot(a, "chooser-1440");
   await a.goto(`${webOrigin}/workspaces/${alpha.companyId}`);
-  await a.waitForText("Coming soon");
-  await a.clickText("button", "Switch company");
-  await a.waitFor(`document.querySelector("nav[aria-label='Your companies']")`);
+  await a.waitForText("What can HR do for you today?");
+  await openAccountMenu(a);
   await shot(a, "switcher-open-1440");
-  await a.click(`nav[aria-label='Your companies'] a[href="/workspaces/${beta.companyId}"]`);
+  await a.clickText("a", "Switch workspace");
+  await a.waitForText("Choose a workspace");
+  await a.click(`a[href="/workspaces/${beta.companyId}"]`);
   await a.waitFor(`location.pathname === "/workspaces/${beta.companyId}"`);
-  await a.waitForText("Coming soon");
+  await a.waitForText("What can HR do for you today?");
   const betaHtml = await a.html();
   check("UI-20", "after switching to Beta the page holds none of Alpha's private details", !betaHtml.includes("Alpha Holdings LLC") && !betaHtml.includes("Retail and wholesale"));
-  check("UI-21", "in Beta, founder A is a member: no edit link", (await visible(a, "View company details")) && !(await visible(a, "Edit company details")));
+  const memberAsk = await a.eval(`document.getElementById("ask-heroos")?.disabled === true && !document.querySelector('button[aria-label="Cases"]')`);
+  await a.goto(`${webOrigin}/workspaces/${beta.companyId}/settings`);
+  await a.waitForText("HeroOS uses this information");
+  check("UI-21", "in Beta, founder A is a member: Ask HeroOS can't open cases and the Blueprint has no Edit", memberAsk && !(await a.eval(`Boolean(document.getElementById("edit-blueprint"))`)));
   const memberPatch = await a.eval(`fetch("/bff/companies/${beta.companyId}/blueprint", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ industry: "x" }) }).then((r) => r.status)`);
   check("UI-22", "a member's hand-crafted PATCH from the page is refused (403): hiding the link is not the control", memberPatch === 403);
 
@@ -308,18 +317,20 @@ export async function run(ctx) {
   await withSession(dep, ctx.token(deputySubject));
   await dep.viewport(390, 844);
   await dep.goto(`${webOrigin}/workspaces/${alpha.companyId}/settings`);
-  await dep.waitForHydrated("#settings-industry");
+  await dep.waitForHydrated("#edit-blueprint");
+  await dep.click("#edit-blueprint");
+  await dep.waitForHydrated("#bp-industry");
   await fixtures.operator(["set-role", "--company", alpha.companyId, "--membership", deputy.membership_id, "--role", "member"]);
   const industryBefore = await fixtures.ownerValue(`SELECT industry FROM company_blueprints WHERE company_id = ${quote(alpha.companyId)}`);
-  await dep.type("#settings-industry", "Changed after demotion");
+  await dep.type("#bp-industry", "Changed after demotion");
   await dep.clickText("button", "Save changes");
-  await dep.waitForText("You can't change these details");
+  await dep.waitForText("Only company administrators can edit the Blueprint");
   const industryAfter = await fixtures.ownerValue(`SELECT industry FROM company_blueprints WHERE company_id = ${quote(alpha.companyId)}`);
   check("UI-23", "a form left open by a demoted administrator cannot save: refused, nothing written", industryBefore === industryAfter);
   await shot(dep, "stale-demoted-refused-390");
   await dep.goto(`${webOrigin}/workspaces/${alpha.companyId}/settings`);
-  await dep.waitForText("View only");
-  check("UI-24", "reloading shows the read-only profile", !(await dep.eval(`Boolean(document.querySelector("#settings-industry"))`)));
+  await dep.waitForText("HeroOS uses this information");
+  check("UI-24", "reloading shows the read-only Blueprint (no Edit)", !(await dep.eval(`Boolean(document.getElementById("edit-blueprint") || document.getElementById("bp-industry"))`)));
   await fixtures.operator(["revoke-membership", "--company", alpha.companyId, "--membership", deputy.membership_id]);
   await dep.goto(`${webOrigin}/workspaces/${alpha.companyId}`);
   await dep.waitFor(`document.body.innerText.includes("You don't have access to this workspace") || document.body.innerText.includes("No active workspace")`);
@@ -332,15 +343,15 @@ export async function run(ctx) {
   await newFounderWithName(ctx, outSubject, "[SYNTHETIC E2E] Logout Co.");
   await ctx.signIn(out, outSubject);
   await out.goto(`${webOrigin}/workspaces`);
-  await out.waitForText("Logout Co.");
-  await out.clickText("button", "Sign out");
+  await out.waitForText("What can HR do for you today?");
+  await signOutFromMenu(out);
   await out.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && location.pathname === "/" && document.body.innerText.includes("Get started")`, { message: "signed-out homepage" });
   check("UI-26", "sign out returns to the signed-out homepage through the provider's logout", ctx.issuer.events.some((e) => e.type === "logout"));
   await out.eval("history.back()");
   await ctx.sleep(1500);
   await out.waitFor("document.readyState === 'complete'");
   const backText = await out.text();
-  check("UI-27", "Back after logout shows no workspace data (pages are no-store)", !backText.includes("Logout Co."), backText.slice(0, 120));
+  check("UI-27", "Back after logout shows no workspace data (pages are no-store)", !backText.includes("Logout Co.") && !backText.includes("What can HR do for you today?"), backText.slice(0, 120));
   await out.goto(`${webOrigin}/workspaces`);
   await out.waitForText("Please sign in");
   const cookies = await out.cookies([webOrigin]);
@@ -359,15 +370,15 @@ export async function run(ctx) {
     await newFounderWithName(ctx, vercelSubject, "[SYNTHETIC E2E] Shared Device Co.");
     await ctx.signIn(vercel, vercelSubject);
     await vercel.goto(`${webOrigin}/workspaces`);
-    await vercel.waitForText("Shared Device Co.");
+    await vercel.waitForText("What can HR do for you today?");
     const pageCacheControl = vercel.responses.filter((r) => r.url.startsWith(`${webOrigin}/workspaces/`)).at(-1)?.headers["cache-control"];
-    await vercel.clickText("button", "Sign out");
+    await signOutFromMenu(vercel);
     await vercel.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && location.pathname === "/" && document.body.innerText.includes("Get started")`, { message: "signed-out homepage" });
     await vercel.eval("history.back()");
     await ctx.sleep(1500);
     await vercel.waitFor("document.readyState === 'complete'");
     const restored = await vercel.text();
-    check("UI-27v", "with Vercel's observed Cache-Control, Back after logout still shows no workspace data", !restored.includes("Shared Device Co."),
+    check("UI-27v", "with Vercel's observed Cache-Control, Back after logout still shows no workspace data", !restored.includes("Shared Device Co.") && !restored.includes("What can HR do for you today?"),
       `page Cache-Control: ${pageCacheControl}; after Back: ${restored.slice(0, 100).replace(/\n/g, " ")}`);
   } finally {
     ctx.web.htmlCacheControl = null;
@@ -456,7 +467,7 @@ export async function run(ctx) {
   const jf = ctx.jurisdictionFounders;
   if (jf) {
     const states = [
-      ["difc", "Jurisdiction confirmed: DIFC"],
+      ["difc", "Dubai International Financial Centre"],
       ["adgm", "ADGM isn't supported yet"],
       ["notSure", "Your licensing details can be confirmed later"],
       ["otherWithoutAuthority", "Add the licensing authority shown on your business licence"],
@@ -466,9 +477,10 @@ export async function run(ctx) {
       const p = await open();
       await withSession(p, jf[name].token);
       await p.viewport(1024, 900);
-      await p.goto(`${webOrigin}/workspaces/${jf[name].companyId}`);
-      await p.waitForText("Coming soon");
-      check("UI-30", `workspace shows the API's readiness for "${name}"`, await visible(p, text), text);
+      await p.goto(`${webOrigin}/workspaces/${jf[name].companyId}/settings`);
+      await p.waitForText("HeroOS uses this information");
+      // The Blueprint shows the jurisdiction plainly: the API's readiness in its own words, never a "confirmed" badge.
+      check("UI-30", `the Company Blueprint shows the API's readiness for "${name}"`, (await visible(p, text)) && !(await visible(p, "Confirmed")), text);
       if (name === "difc" || name === "adgm") await shot(p, `jurisdiction-${name}-1024`);
       await p.close();
     }
@@ -515,7 +527,7 @@ export async function run(ctx) {
     await repro.viewport(width, 900);
     for (let i = 0; i < 15; i += 1) {
       await repro.goto(`${webOrigin}/workspaces/${rich.companyId}${path}`);
-      await repro.waitForText(path ? "Company details" : "Coming soon");
+      await repro.waitForText(path ? "HeroOS uses this information" : "What can HR do for you today?");
       await ctx.sleep(150);
       loads.push({ width, path, ...JSON.parse(await repro.eval(`JSON.stringify({ csp: (window.__csp ?? []).filter((v) => /style-src/.test(v.directive)).length, svg: (window.__containers ?? []).filter((c) => c.tag.toLowerCase() === "svg"), divs: (window.__containers ?? []).filter((c) => c.tag.toLowerCase() !== "svg").length })`)) });
     }
@@ -630,9 +642,10 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
   const unlabelled = () => page.eval(`[...document.querySelectorAll("input, select, textarea")].filter((el) => el.type !== "hidden" && !el.labels?.length && !el.getAttribute("aria-label") && !el.getAttribute("aria-labelledby")).map((el) => el.id || el.name)`);
 
   const screens = [
-    ["workspace", `/workspaces/${alpha.companyId}`, "Coming soon"],
+    ["ask", `/workspaces/${alpha.companyId}`, "What can HR do for you today?"],
     ["chooser", "/workspaces", "Choose a workspace"],
-    ["settings", `/workspaces/${alpha.companyId}/settings`, "Company details"],
+    ["blueprint", `/workspaces/${alpha.companyId}/settings`, "HeroOS uses this information"],
+    ["space", `/workspaces/${alpha.companyId}/space`, "Your HeroOS access and company overview."],
     ["onboarding", "/onboarding", "Welcome to HeroOS"],
     ["ready", `/workspaces/${alpha.companyId}/ready?outcome=created`, "Your workspace is ready"],
   ];
@@ -656,24 +669,24 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
     }
   }
 
-  // Keyboard: the skip link comes first, focus is visible, the switcher works without a mouse.
+  // Keyboard: the skip link comes first, focus is visible, the account menu works without a mouse.
   await page.viewport(1440, 900);
   await page.goto(`${webOrigin}/workspaces/${alpha.companyId}`);
-  await page.waitForText("Coming soon");
-  await page.waitForHydrated("header button");
+  await page.waitForText("What can HR do for you today?");
+  await page.waitForHydrated('button[aria-label^="Account menu"]');
   await page.press("Tab");
   const first = await page.eval(`document.activeElement?.innerText?.trim()`);
   const outline = await page.eval(`getComputedStyle(document.activeElement).outlineStyle + " " + getComputedStyle(document.activeElement).outlineWidth`);
   check("A11Y-5", "the first Tab stop is \"Skip to content\" and it is visibly focused", first === "Skip to content" && !outline.startsWith("none"), `${first} / ${outline}`);
-  await page.eval(`document.querySelector("header button")?.focus()`);
-  const switcherLabel = await page.eval(`document.activeElement?.innerText?.trim()`);
+  await page.eval(`document.querySelector('button[aria-label^="Account menu"]')?.focus()`);
+  const menuLabel = await page.eval(`document.activeElement?.getAttribute("aria-label") ?? ""`);
   await page.press("Enter");
-  await page.waitFor(`document.querySelector("nav[aria-label='Your companies']")`, { message: "switcher opened by keyboard" });
+  await page.waitFor(`[...document.querySelectorAll('ul[aria-label="Company"] a')].some((a) => a.offsetParent !== null)`, { message: "account menu opened by keyboard" });
   const expanded = await page.eval(`document.activeElement?.getAttribute("aria-expanded")`);
   await page.press("Escape");
-  await page.waitFor(`!document.querySelector("nav[aria-label='Your companies']")`, { message: "switcher closed by Escape" });
+  await page.waitFor(`![...document.querySelectorAll('ul[aria-label="Company"] a')].some((a) => a.offsetParent !== null)`, { message: "account menu closed by Escape" });
   const back = await page.eval(`document.activeElement?.getAttribute("aria-expanded")`);
-  check("A11Y-6", "the company switcher opens with Enter, reports aria-expanded, closes with Escape and returns focus", switcherLabel.startsWith("Switch") && expanded === "true" && back === "false", `${switcherLabel} ${expanded} ${back}`);
+  check("A11Y-6", "the account menu opens with Enter, reports aria-expanded, closes with Escape and returns focus", menuLabel.startsWith("Account menu") && expanded === "true" && back === "false", `${menuLabel} ${expanded} ${back}`);
 
   // Onboarding by keyboard: Enter submits, errors are announced and focused.
   await page.goto(`${webOrigin}/onboarding`);

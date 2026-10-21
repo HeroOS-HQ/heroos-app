@@ -9,7 +9,7 @@
 // specialist review instead of screened. An API with the default setting never
 // collects the sensitive screening. PostgreSQL rows, RLS and logs are checked
 // too. Synthetic data only.
-import { newFounder, openFullCaseDetails, quote } from "./common.mjs";
+import { closeCaseStatus, newFounder, openCaseStatus, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
 
 const TITLE = "[SYNTHETIC E2E] Intake journey";
 const NARRATIVE = "[SYNTHETIC E2E] A team member posted rude remarks about a colleague after a shift ended.";
@@ -88,6 +88,7 @@ export async function run(ctx) {
   await page.waitForText("Jurisdiction confirmed for this case");
   await openFullCaseDetails(page);
   const afterJurisdiction = await page.text();
+  await closeCaseStatus(page);
   check("INTAKE-2", "the case jurisdiction is confirmed against the company's operator confirmation, never chosen freely",
     JSON.stringify(options) === JSON.stringify(["Yes, UAE Federal (MOHRE)", "No, a different jurisdiction applies", "Not sure"]) &&
       afterJurisdiction.includes("Based on your company's confirmed jurisdiction and your confirmation for this case."),
@@ -103,9 +104,10 @@ export async function run(ctx) {
   await page.click(radio("context.policy_awareness", "yes"));
   await page.click(radio("evidence.witnesses", "yes"));
   await page.clickText("button", "Save answers");
-  await page.waitForText("Caution: Conduct outside work");
+  // A caution is a Warning in the case conversation (M2-NEW-02): its own title, with the Warning label.
+  await page.waitFor(`[...document.querySelectorAll('article[aria-labelledby]')].some((a) => a.innerText.includes("Conduct outside work") && a.querySelector("h3")?.textContent === "HeroOS, Warning")`, { message: "the caution as a Warning" });
   check("INTAKE-3", "a follow-up appears only after the answer that needs it, and off-duty conduct without a stated work connection is cautioned",
-    beforeFollowUp === false && (await page.text()).includes("Caution: Conduct outside work"));
+    beforeFollowUp === false && (await page.text()).includes("Conduct outside work"));
 
   await page.clickText("button", "Continue to Safety screening");
   await page.waitFor(`Boolean(document.querySelector(${JSON.stringify(radio(SCREENING[0], "no"))}))`, { message: "screening group" });
@@ -142,7 +144,7 @@ export async function run(ctx) {
 
   await page.goto(`${webOrigin}${casePath}`);
   await page.waitForText("On hold: specialist review needed");
-  await page.clickText("button", "Sign out");
+  await signOutFromMenu(page);
   await page.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && location.pathname === "/"`, { message: "signed out" });
   await ctx.signIn(page, fed.subject);
   await page.goto(`${webOrigin}${casePath}`);
@@ -169,7 +171,10 @@ export async function run(ctx) {
   await page.click(radio("screening.sick_leave", "no"));
   await page.clickText("button", "Save answers");
   await page.waitForText("Hold kept after answers changed");
+  // The hold, when it was first placed and the current screening are in the case status (M2-NEW-02).
+  await openCaseStatus(page);
   const kept = await page.text();
+  await closeCaseStatus(page);
   check("INTAKE-9", "a corrected answer is saved but never releases the hold: the case stays held and the history says so",
     kept.includes("On hold: specialist review needed") && kept.includes("don't release the hold") &&
       kept.includes("Current screening") && !kept.includes("Hold lifted"),
@@ -226,7 +231,7 @@ export async function run(ctx) {
   const difcText = await difcPage.text();
   const difcUrl = await difcPage.eval("location.pathname");
   check("INTAKE-13", "in the browser the DIFC case explains the hold without UAE Federal guidance",
-    difcLoaded && difcText.includes("isn't available for DIFC cases yet") && !difcText.includes("Caution:"), `${difcUrl} ${difcText.slice(0, 300)}`);
+    difcLoaded && difcText.includes("isn't available for DIFC cases yet") && !difcText.includes("Caution:") && !/\bWarning\b/.test(difcText), `${difcUrl} ${difcText.slice(0, 300)}`);
   await ctx.screenshot(difcPage, "intake-difc-held-1440");
   await difcPage.close();
 

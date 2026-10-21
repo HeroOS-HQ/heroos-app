@@ -10,23 +10,28 @@ import {
   SessionExpiredView,
   SignedOutView,
 } from "@/components/app/state-views";
-import { WorkspaceHome } from "@/components/workspace/workspace-home";
-import { loadWorkspace } from "@/lib/server/app-state";
+import { type AskMode, AskWorkspace } from "@/components/ask/ask-workspace";
+import { ASK_WORKFLOW } from "@/lib/ask/model";
+import { loadCases } from "@/lib/server/app-state";
 
-export const metadata: Metadata = { title: "Dashboard · HeroOS" };
+export const metadata: Metadata = { title: "Ask HeroOS · HeroOS" };
 
-/** WORKSPACE_READY for one Company (its dashboard); the URL id is authorized by the API on every request. */
-export default function WorkspacePage({ params }: PageProps<"/workspaces/[companyId]">) {
+/**
+ * Ask HeroOS, the signed-in home of one Company (approved Oct 20 design,
+ * Page 1). The URL id is only a resource identifier: the API authorizes every
+ * request. `?cases=open` opens the Cases drawer (the old case-list URLs lead here).
+ */
+export default function AskPage({ params, searchParams }: PageProps<"/workspaces/[companyId]">) {
   return (
     <Suspense fallback={<LoadingView layout="full" />}>
-      <WorkspaceContent params={params} />
+      <AskContent params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
 
-async function WorkspaceContent({ params }: Pick<PageProps<"/workspaces/[companyId]">, "params">) {
-  const { companyId } = await params;
-  const state = await loadWorkspace(companyId);
+async function AskContent({ params, searchParams }: Pick<PageProps<"/workspaces/[companyId]">, "params" | "searchParams">) {
+  const [{ companyId }, query] = await Promise.all([params, searchParams]);
+  const state = await loadCases(companyId, ASK_WORKFLOW);
   switch (state.kind) {
     case "not_configured":
       return <NotConfiguredView />;
@@ -38,11 +43,21 @@ async function WorkspaceContent({ params }: Pick<PageProps<"/workspaces/[company
       return <AccessDeniedView />;
     case "api_unavailable":
       return <ApiUnavailableView retryHref={`/workspaces/${encodeURIComponent(companyId)}`} />;
-    case "workspace_ready":
-      return (
-        <CompanyShell current="dashboard" details={state.details} workspaces={state.workspaces}>
-          <WorkspaceHome details={state.details} />
-        </CompanyShell>
-      );
+    default:
+      break;
   }
+  // Administrators open cases; members can't (yet), and an API without workflows can't either.
+  const mode: AskMode = state.kind === "cases_ready" ? "ready" : state.kind === "admin_only" ? "members" : "unavailable";
+  const cases = state.kind === "cases_ready" ? state.cases : null;
+  return (
+    <CompanyShell
+      cases={cases}
+      details={state.details}
+      initialCasesOpen={query.cases === "open"}
+      quiet={false}
+      workspaces={state.workspaces}
+    >
+      <AskWorkspace companyId={state.details.company.id} mode={mode} returning={(cases?.length ?? 0) > 0} />
+    </CompanyShell>
+  );
 }

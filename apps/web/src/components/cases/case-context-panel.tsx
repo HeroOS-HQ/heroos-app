@@ -11,7 +11,7 @@ import { CautionCard, HoldCard } from "./conversation";
 
 const sectionHeading = "text-xs font-bold uppercase tracking-[0.14em] text-hero-blue-ink";
 
-const SCREENING_NOW: Record<string, string> = {
+export const SCREENING_NOW: Record<string, string> = {
   not_applicable: "not available",
   disabled: "not enabled in this environment",
   not_started: "not started",

@@ -155,6 +155,8 @@ the access token server-side in a sealed `HttpOnly` cookie; its settings are in
 [docs/operations/demo-authentication-deployment.md](docs/operations/demo-authentication-deployment.md).
 Sign-up, founder onboarding, workspace discovery and Company settings (M1-10D):
 [Customer Onboarding and Workspace UI](docs/architecture/web-onboarding.md).
+The signed-in workspace (Ask HeroOS, Company Blueprint, Company Space; M2-NEW-02):
+[Signed-in Workspace](docs/architecture/signed-in-workspace.md).
 
 `make e2e-check` runs the real web, API and PostgreSQL together, signed in
 through a local OpenID Provider and driven by Chrome; everything it uses is

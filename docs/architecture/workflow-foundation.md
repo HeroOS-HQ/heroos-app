@@ -126,6 +126,10 @@ M2-01 adds the smallest reusable part of it (migration `75ec6db8b6c1`, "D1"):
 
 ## 5. Web (`apps/web`)
 
+> Since M2-NEW-02 the signed-in pages are JJ's approved Ask HeroOS, Company
+> Blueprint and Company Space ([Signed-in Workspace](signed-in-workspace.md)):
+> the routes and layout below are the M2-01 record.
+
 - Routes: `/workspaces/[companyId]/cases` (list), `/cases/new` (create),
   `/cases/[caseId]` (guided workspace). The workspace home's Disciplinary card
   links to the list and says "Initial facts only"; Probation and Recruitment

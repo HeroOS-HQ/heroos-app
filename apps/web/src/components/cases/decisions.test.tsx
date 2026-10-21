@@ -13,6 +13,7 @@ import {
   HIGH_RISK_HOLD,
   RECORD_ID,
   view,
+  workspaceHeader,
 } from "@/test/workflow-fixtures";
 
 import { CaseWorkspace } from "./case-workspace";
@@ -39,8 +40,7 @@ type Overrides = Parameters<typeof view>[0];
 const workspace = (overrides: Overrides, fetcher?: ReturnType<typeof fetcherOf>) =>
   render(
     <CaseWorkspace
-      cases={[]}
-      companyId={COMPANY_ID}
+      header={workspaceHeader()}
       fetcher={fetcher as unknown as typeof fetch}
       initialView={view({ company: "uae_federal", revision: 5, progression: apiProgression(), ...overrides })}
     />,
@@ -340,18 +340,24 @@ describe("Decisions & history", () => {
     expect(section().getByText("Only company administrators can add or correct records.")).toBeInTheDocument();
   });
 
+  /** The case's full details: in the case status, folded away (M2-NEW-02). */
+  const fullDetails = () => {
+    fireEvent.click(screen.getByRole("button", { name: /Case status$/ }));
+    return within(document.querySelector("details#case-full-details") as HTMLElement);
+  };
+
   it("falls back to the earlier histories against an API without M2-04", () => {
     workspace({});
     expect(section().getByText("Decision records aren't available yet")).toBeInTheDocument();
-    const details = within(screen.getByRole("complementary", { name: "Case details" }));
-    expect(details.getByRole("region", { name: "Case history" })).toBeInTheDocument();
+    expect(fullDetails().getByRole("region", { name: "Case history" })).toBeInTheDocument();
   });
 
-  it("moves the case history out of the side panel when the unified history exists", () => {
+  it("moves the case history out of the full details when the unified history exists", () => {
     workspace({ decisions: apiDecisions(), timeline: apiTimeline() });
-    const details = within(screen.getByRole("complementary", { name: "Case details" }));
+    const details = fullDetails();
     expect(details.queryByRole("region", { name: "Case history" })).toBeNull();
     expect(details.getByRole("link", { name: "See the case history" })).toHaveAttribute("href", "#case-history");
+    fireEvent.keyDown(document, { key: "Escape" });
     expect(history().getByText("Case created")).toBeInTheDocument();
   });
 });

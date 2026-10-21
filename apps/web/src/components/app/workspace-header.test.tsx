@@ -1,0 +1,142 @@
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
+
+import type { Membership, Workspace, WorkspaceDetails } from "@/lib/server/heroos-api";
+import { parseCaseSummary } from "@/lib/workflows/model";
+import { COMPANY_ID } from "@/test/fixtures";
+import { apiCaseSummary, CASE_ID, OTHER_CASE_ID } from "@/test/workflow-fixtures";
+
+import { caseWhen, groupCases } from "./cases-panel";
+import { CompanyShell } from "./company-shell";
+
+const COMPANY_B = "d3e0b000-0000-4000-8000-000000000001";
+const ADMIN: Membership = { companyId: COMPANY_ID, membershipId: "m", role: "company_admin", canUpdateBlueprint: true };
+const details = (membership: Membership | null = ADMIN): WorkspaceDetails => ({
+  company: { id: COMPANY_ID, name: "Gamma Trading" },
+  membership,
+  blueprint: null,
+  cases: [],
+});
+const ONE: Workspace[] = [{ companyId: COMPANY_ID, name: "Gamma Trading", membershipId: "m", role: "company_admin" }];
+const TWO: Workspace[] = [...ONE, { companyId: COMPANY_B, name: "Delta Foods", membershipId: "n", role: "member" }];
+const summary = (overrides: Record<string, unknown> = {}) => parseCaseSummary(apiCaseSummary(overrides))!;
+const CASES = [summary(), summary({ id: OTHER_CASE_ID, title: "[SYNTHETIC] Other case" })];
+
+function shell({
+  cases = CASES as typeof CASES | null,
+  workspaces = ONE,
+  current,
+  initialCasesOpen = false,
+  membership = ADMIN as Membership | null,
+}: {
+  cases?: typeof CASES | null;
+  workspaces?: Workspace[];
+  current?: "blueprint" | "space";
+  initialCasesOpen?: boolean;
+  membership?: Membership | null;
+} = {}) {
+  return render(
+    <CompanyShell cases={cases} current={current} details={details(membership)} initialCasesOpen={initialCasesOpen} workspaces={workspaces}>
+      <p>Page</p>
+    </CompanyShell>,
+  );
+}
+
+const menuButton = () => screen.getByRole("button", { name: "Account menu: Gamma Trading" });
+
+describe("the workspace header", () => {
+  it("has three destinations only: Ask HeroOS (the mark), and the Company Blueprint and Company Space in the account menu", () => {
+    shell({ current: "blueprint" });
+    const header = within(screen.getByRole("banner"));
+    for (const link of header.getAllByRole("link", { name: "HeroOS: ask a new question" })) {
+      expect(link).toHaveAttribute("href", `/workspaces/${COMPANY_ID}`);
+    }
+    fireEvent.click(menuButton());
+    expect(menuButton()).toHaveAttribute("aria-expanded", "true");
+    const pages = within(header.getByRole("list", { name: "Company" }));
+    expect(pages.getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      [expect.stringContaining("Company Blueprint"), `/workspaces/${COMPANY_ID}/settings`],
+      [expect.stringContaining("Company Space"), `/workspaces/${COMPANY_ID}/space`],
+    ]);
+    expect(pages.getByRole("link", { current: "page" })).toHaveTextContent("Company Blueprint");
+    // No dashboard, HR Services or "coming soon" navigation, and no permanent sidebar.
+    expect(document.body.textContent).not.toMatch(/Dashboard|HR Services|Team & Access|Coming soon/);
+    expect(screen.queryByRole("navigation", { name: "Company" })).toBeNull();
+    // Signing out is a POST.
+    const signOut = header.getByRole("button", { name: "Sign out" });
+    expect(signOut.closest("form")).toHaveAttribute("action", "/auth/logout");
+    expect(signOut.closest("form")).toHaveAttribute("method", "post");
+  });
+
+  it("names the account by the API's answer, never by an invented person", () => {
+    shell();
+    fireEvent.click(menuButton());
+    const header = within(screen.getByRole("banner"));
+    expect(header.getByText("Administrator")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Daniel|Haddad/);
+  });
+
+  it("closes the account menu with Escape (focus back on its button) or a click elsewhere", async () => {
+    shell();
+    fireEvent.click(menuButton());
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(menuButton()).toHaveAttribute("aria-expanded", "false");
+    await waitFor(() => expect(menuButton()).toHaveFocus());
+    fireEvent.click(menuButton());
+    fireEvent.pointerDown(screen.getByText("Page"));
+    expect(menuButton()).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("offers another workspace only when the account has one", () => {
+    const { unmount } = shell();
+    fireEvent.click(menuButton());
+    expect(screen.queryByRole("link", { name: "Switch workspace" })).toBeNull();
+    unmount();
+    shell({ workspaces: TWO });
+    fireEvent.click(menuButton());
+    expect(screen.getByRole("link", { name: "Switch workspace" })).toHaveAttribute("href", "/workspaces");
+  });
+
+  it("has a Cases control only for those who can see cases", () => {
+    const { unmount } = shell();
+    expect(screen.getByRole("button", { name: "Cases" })).toHaveAttribute("aria-haspopup", "dialog");
+    unmount();
+    shell({ cases: null, membership: { ...ADMIN, role: "member", canUpdateBlueprint: false } });
+    expect(screen.queryByRole("button", { name: "Cases" })).toBeNull();
+  });
+
+  it("opens the Cases drawer from the old case-list links (?cases=open), and closes it with Escape", async () => {
+    shell({ initialCasesOpen: true });
+    const drawer = await screen.findByRole("dialog", { name: "Cases" });
+    expect(within(drawer).getAllByRole("link", { name: /SYNTHETIC/ })).toHaveLength(2);
+    expect(within(drawer).getByRole("link", { name: /Attendance concern/ })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`);
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Cases" })).toBeNull();
+  });
+
+  it("starts with the skip link, gives the page one main region and says it's a demonstration environment", () => {
+    shell();
+    expect(screen.getAllByRole("link")[0]).toHaveTextContent("Skip to content");
+    expect(screen.getByRole("main")).toHaveTextContent("Page");
+    expect(screen.getByText(/Temporary demonstration environment/)).toBeInTheDocument();
+  });
+});
+
+describe("the Cases drawer's times", () => {
+  const now = new Date(2026, 9, 21, 15, 30);
+  it("groups today's cases first, newest first, then the rest", () => {
+    const today = summary({ id: CASE_ID, title: "A", updated_at: new Date(2026, 9, 21, 9, 12).toISOString() });
+    const later = summary({ id: OTHER_CASE_ID, title: "B", updated_at: new Date(2026, 9, 21, 11, 0).toISOString() });
+    const old = summary({ id: "c4e0a000-0000-4000-8000-0000000000c3", title: "C", updated_at: new Date(2026, 9, 16, 9, 0).toISOString() });
+    expect(groupCases([today, old, later], now).map((group) => [group.label, group.cases.map((item) => item.title)])).toEqual([
+      ["Today", ["B", "A"]],
+      ["Earlier", ["C"]],
+    ]);
+  });
+
+  it("says the time today, the day this year and the year before that", () => {
+    expect(caseWhen(new Date(2026, 9, 21, 9, 12).toISOString(), now)).toBe("09:12");
+    expect(caseWhen(new Date(2026, 9, 16, 9, 0).toISOString(), now)).toBe("16 Oct");
+    expect(caseWhen(new Date(2025, 11, 2, 9, 0).toISOString(), now)).toBe("2 Dec 2025");
+  });
+});

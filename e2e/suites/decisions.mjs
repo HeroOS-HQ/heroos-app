@@ -10,7 +10,7 @@
 // corrections, forged actors and unsafe categories, a record that can't move a
 // stage or release a hold, an API without rules, and paging. The database, the
 // logs and the schema are checked too. Synthetic data only.
-import { newFounder, quote } from "./common.mjs";
+import { newFounder, quote, signOutFromMenu } from "./common.mjs";
 
 const TITLE = "[SYNTHETIC E2E] Decisions journey";
 const NARRATIVE = "[SYNTHETIC E2E] A team member repeatedly missed the shift handover checklist.";
@@ -199,7 +199,7 @@ export async function run(ctx) {
 
   await page.goto(`${webOrigin}${casePath}`);
   await page.waitForText("Decisions & history");
-  await page.clickText("button", "Sign out");
+  await signOutFromMenu(page);
   await page.waitFor(`location.origin === ${JSON.stringify(webOrigin)} && location.pathname === "/"`, { message: "signed out" });
   await ctx.signIn(page, fed.subject);
   await page.goto(`${webOrigin}${casePath}`);

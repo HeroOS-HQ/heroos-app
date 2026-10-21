@@ -16,6 +16,24 @@ export const PROGRESS_COPY: Record<ProgressStatus, { label: string; tone: Tone }
   coming_later: { label: "Coming later", tone: "muted" },
 };
 
+/**
+ * The quiet dot beside a Case status in the workspace (Cases drawer, case
+ * pill). It supports the API's words and never replaces them: dark pink when
+ * the case waits for a specialist (Expert Review), grey while HeroOS or the
+ * environment has to act, blue when the next move is the employer's.
+ */
+export function caseStatusDot(code: string): string {
+  switch (code) {
+    case "held_for_specialist_review":
+      return "bg-[#a92f6c]";
+    case "awaiting_jurisdiction":
+    case "screening_unavailable":
+      return "bg-hero-control";
+    default:
+      return "bg-hero-blue";
+  }
+}
+
 /** Tone of a Case status chosen by the API; unknown codes stay neutral. */
 export function caseStatusTone(code: string): Tone {
   switch (code) {

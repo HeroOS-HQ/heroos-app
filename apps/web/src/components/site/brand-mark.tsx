@@ -37,3 +37,38 @@ export function BrandMark({ className, compact = false }: { className?: string; 
     </span>
   );
 }
+
+/**
+ * The signed-in workspace's symbol: JJ's approved logo from the Oct 20 design
+ * package (PR #52, `public/design-review/oct20`), copied byte for byte to
+ * `/branding/heroos-symbol.png`. Never redrawn, recoloured or reshaped. The
+ * public site keeps the speech-bubble `BrandMark` above.
+ */
+export const WORKSPACE_SYMBOL = "/branding/heroos-symbol.png";
+
+/** The workspace symbol alone, filling the square box its caller sizes. */
+export function LogoSymbol({ className }: { className: string }) {
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img alt="" aria-hidden="true" className={`shrink-0 ${className}`} height={512} src={WORKSPACE_SYMBOL} width={512} />
+  );
+}
+
+/** Symbol + wordmark at one height, as in the approved signed-in header. */
+export function WorkspaceBrandMark({ className }: { className?: string }) {
+  return (
+    <span className={`inline-flex shrink-0 items-center gap-0.5 sm:gap-1 ${className ?? ""}`}>
+      <span className="sr-only">HeroOS</span>
+      <LogoSymbol className="size-5 min-[360px]:size-[1.625rem] sm:size-8" />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        alt=""
+        aria-hidden="true"
+        className="h-5 w-auto shrink-0 min-[360px]:h-[1.625rem] sm:h-8"
+        height={144}
+        src="/branding/heroos-logo-wordmark.png"
+        width={480}
+      />
+    </span>
+  );
+}

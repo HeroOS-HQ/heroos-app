@@ -1,4 +1,5 @@
-import { parseWorkflowView, type WorkflowView } from "@/lib/workflows/model";
+import type { WorkspaceHeaderData } from "@/components/app/workspace-header";
+import { type CaseSummary, parseWorkflowView, type WorkflowView } from "@/lib/workflows/model";
 
 import { COMPANY_ID } from "./fixtures";
 
@@ -625,4 +626,9 @@ export function apiEntry(id: string, overrides: Record<string, unknown> = {}): R
 
 export function apiTimeline(entries: Record<string, unknown>[] = [apiEntry("created")], overrides: Record<string, unknown> = {}) {
   return { entries, next_before: null, total: entries.length, ...overrides };
+}
+
+/** The workspace header's data for the case page in tests: an administrator of one Company. */
+export function workspaceHeader(cases: CaseSummary[] = []): WorkspaceHeaderData {
+  return { companyId: COMPANY_ID, companyName: "Gamma Trading", roleLabel: "Administrator", multipleWorkspaces: false, cases };
 }

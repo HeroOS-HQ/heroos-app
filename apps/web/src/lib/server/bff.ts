@@ -1,5 +1,6 @@
 import "server-only";
 
+import { ASK_QUESTION, ASK_STEP, ASK_WORKFLOW } from "@/lib/ask/model";
 import { parseAssistantRequest } from "@/lib/assistant/model";
 import { TEMPLATE_KEY } from "@/lib/documents/model";
 import { parsePreviewRequest } from "@/lib/documents/requests";
@@ -8,6 +9,7 @@ import { ENTRY_ID } from "@/lib/workflows/decisions";
 import { KEY } from "@/lib/workflows/model";
 import {
   parseAnswersSave,
+  parseAskStart,
   parseCaseCreate,
   parseCorrectionRequest,
   parseDecisionRequest,
@@ -23,6 +25,7 @@ import {
   createWorkflowCase,
   getAssistantStatus,
   getCaseDocuments,
+  getCaseWorkflow,
   getCaseHistory,
   getDocumentForm,
   previewDocument,
@@ -216,6 +219,68 @@ export async function handleCaseCreate(
   const result = await createWorkflowCase(guarded.accessToken, config, companyId, workflowKey, parsed.value, deps.fetch);
   if (!result.ok) return workflowFailure(result.failure, result.answerKeys);
   return json(200, { case: result.data });
+}
+
+/**
+ * POST /bff/companies/{id}/ask: Ask HeroOS (lib/ask/model.ts). The one seam
+ * between the Ask page and HeroOS; M2-NEW-05/06 repoint it at the AI gateway.
+ * Today it opens a case of the reference workflow and saves the founder's
+ * words as its first answer, through the existing workflow API:
+ *
+ * 1. `POST /companies/{id}/workflows/disciplinary/cases` (`requestKey`: a
+ *    retry opens the same case once);
+ * 2. `GET …/cases/{caseId}/workflow` for the revision to save against;
+ * 3. `PUT …/workflow/steps/initial_facts/answers` with the words exactly as
+ *    written (`submissionKey`: applied once).
+ *
+ * 200 `{caseId, narrativeSaved}`. A case that opened but couldn't take the
+ * words (a changed definition, a lost save) is still a case: the page says so
+ * and the founder adds them in the case. Failures to open one map like every
+ * workflow write; the API enforces the administrator role.
+ */
+export async function handleAskStart(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  const parsed = parseAskStart(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+  const { text, title, requestKey, submissionKey } = parsed.value;
+  const token = guarded.accessToken;
+
+  const created = await createWorkflowCase(
+    token,
+    config,
+    companyId,
+    ASK_WORKFLOW,
+    { title, request_key: requestKey },
+    deps.fetch,
+  );
+  if (!created.ok) return workflowFailure(created.failure, created.answerKeys);
+  const caseId = created.data.id;
+
+  const view = await getCaseWorkflow(token, config, companyId, caseId, deps.fetch);
+  const step = view.ok
+    ? view.data.steps.find(
+        (item) => item.key === ASK_STEP && item.available && item.questions.some((question) => question.key === ASK_QUESTION),
+      )
+    : undefined;
+  if (!view.ok || step === undefined) return json(200, { caseId, narrativeSaved: false });
+
+  const saved = await saveStepAnswers(
+    token,
+    config,
+    companyId,
+    caseId,
+    ASK_STEP,
+    { expected_revision: view.data.workflow.revision, submission_key: submissionKey, answers: { [ASK_QUESTION]: text } },
+    deps.fetch,
+  );
+  return json(200, { caseId, narrativeSaved: saved.ok });
 }
 
 /**
