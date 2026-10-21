@@ -277,7 +277,9 @@ retrieval, refused redirects, and clamped temperature (≤ 0.3), completion
 budget (≤ 2,048 tokens) and timeout (≤ 30 s). The gateway asks for
 temperature 0.0 (understanding) and 0.2 (response), 1,200 tokens each.
 Provider and model are server configuration only. There is no automatic
-fallback to another provider. CI uses a scripted fake (`tests/fixtures/gateway.py`).
+fallback to another provider. Changing either (or the model's version) is a
+controlled change, evaluated before it serves founders (§13). CI uses a
+scripted fake (`tests/fixtures/gateway.py`).
 
 **Automated tests never reach a real provider** (`app/assistant/live.py`,
 added in the M2-NEW-05 closeout after a test harness left the gateway enabled
@@ -326,15 +328,55 @@ become production content.
 **Privacy and activation gate.** Enabled, the gateway sends a founder's
 words, the company view and normalized approved knowledge for this turn to
 the configured provider. It never sends the source documents, the mapping,
-the validation report or the bundle itself. Real customer use needs, first:
-JJ's decisions on the AI provider and model, its training/data use, retention,
-processing location and input data categories (PRIV-009, PRIV-010, PRIV-011,
-PRIV-012, PRIV-021 in `docs/privacy/decision-register.md`, all open), the
-provider's business terms, the third-party inventory entry, and an
-approved knowledge bundle. Until then, only synthetic testing in a
-non-production environment, with `HEROOS_AI_GATEWAY_APPROVAL` naming the
+the validation report or the bundle itself.
+
+Real customer use needs three kinds of approval, each from its own authority:
+
+- **Technical authority** (the Technical Lead): the provider and model
+  architecture and the exact runtime configuration tested for activation,
+  after the exact-model evaluation below.
+- **Product / domain authority** (JJ): HeroOS's methodology, approved
+  content and business behavior, including an approved knowledge bundle.
+- **Legal / privacy authority**: whether the data processing is acceptable.
+  That covers the provider and model, training and data use, retention,
+  processing location and input data categories: PRIV-009, PRIV-010,
+  PRIV-011, PRIV-012 and PRIV-021 in `docs/privacy/decision-register.md`.
+
+The register still records those privacy decisions as open. A technical
+direction has since been given in conversation and isn't in the register
+yet, so it doesn't satisfy this gate:
+
+- PRIV-009: a production direction is set, but the exact model isn't final;
+- PRIV-010: minimal or zero provider retention;
+- PRIV-011: no provider or base-model training on HeroOS customer HR data;
+- PRIV-012 and PRIV-013 are deferred.
+
+Customer use also needs the provider's business terms and the third-party
+inventory entry.
+
+Until all of that is in place, only synthetic testing in a non-production
+environment is allowed, with `HEROOS_AI_GATEWAY_APPROVAL` naming the
 authorization for that test. The page shows the API's notice ("use
 fictional scenarios only") while the knowledge is development content.
+
+**Exact-model validation; a model change is a controlled change.** CI's
+scripted provider proves the deterministic safety and integration behavior.
+It doesn't prove a live model's conversational quality. Different providers,
+models, versions, revisions and inference settings differ in:
+
+- intent and requested-action recognition;
+- structured extraction and output reliability;
+- ambiguity and clarification handling;
+- grounding, wording and latency.
+
+Before an external production model serves founders, its exact configuration
+goes through HeroOS's conversational regression evaluation. The same applies
+before any replacement, whether a new version of the same model, another
+model of the same family, or another provider. Normal CI never calls a live
+model. The evaluation contract, its three layers and the runtime identity the
+evaluation records are in
+[conversation-evaluation.md §14.2](conversation-evaluation.md#142-production-model-and-provider-validation).
+Deterministic outcomes stay authoritative and model-independent throughout.
 
 **Token budget.** A founder turn is roughly 4–8K tokens across both phases
 with the current bundle. That doesn't fit a free tier with an 8K tokens per
