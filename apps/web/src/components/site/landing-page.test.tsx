@@ -14,13 +14,13 @@ describe("LandingPage", () => {
     expect(screen.getByText(ENVIRONMENT_NOTICE)).toBeInTheDocument();
   });
 
-  it("shows the approved speech-bubble logo (symbol and wordmark) in the header and footer, and no extra hero sentence", () => {
+  it("shows the current HeroOS logo (symbol and wordmark, as in the signed-in app) in the header and footer, never the old speech bubble, and no extra hero sentence", () => {
     const { container } = render(<LandingPage />);
 
     for (const area of ["header", "footer"]) {
       const images = [...container.querySelectorAll(`${area} img`)];
       expect(images.map((image) => image.getAttribute("src"))).toEqual([
-        "/branding/heroos-logo-symbol.png",
+        "/branding/heroos-symbol.png",
         "/branding/heroos-logo-wordmark.png",
       ]);
       for (const image of images) expect(image).toHaveAttribute("alt", "");

@@ -38,11 +38,12 @@ served them were removed.
 
 The production code never imports the design-review package
 (`security-boundaries.test.ts`). The approved logo symbol is copied byte for
-byte to `/branding/heroos-symbol.png` (`LogoSymbol`, `WorkspaceBrandMark` in
-`components/site/brand-mark.tsx`). Every signed-in top bar uses it: the
-workspace header and `AppShell` (loading, choosing a workspace, onboarding,
-the sign-in states). The public site and the favicon keep the speech-bubble
-logo.
+byte to `/branding/heroos-symbol.png` (`LogoSymbol`, `BrandMark` in
+`components/site/brand-mark.tsx`). It is the one logo everywhere: the public
+site's header and footer, the workspace header and `AppShell` (loading,
+choosing a workspace, onboarding, the sign-in states). Only the favicon and
+app icons still carry the earlier speech-bubble symbol (separate files), and
+the frozen design-review package keeps its own copy.
 
 Text fields inside a rounded control (the Ask composer, Search cases) show
 focus on the control's rounded border (`focus-within`) and draw no outline of

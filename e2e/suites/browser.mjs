@@ -784,6 +784,22 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
   await anonymous.press("Escape");
   await anonymous.waitFor(`!document.querySelector("nav[aria-label='Mobile']")`, { message: "mobile menu closed by Escape" });
   check("A11Y-11", "the mobile menu opens with Enter, offers Sign in, and closes with Escape", menuLinks.includes("/auth/login"), JSON.stringify(menuLinks));
+  // The public homepage carries the signed-in app's current HeroOS logo, and nothing of the old one.
+  for (const width of [1440, 390]) {
+    await anonymous.viewport(width, 900);
+    await anonymous.goto(`${webOrigin}/`);
+    await anonymous.waitForText("Get started");
+    const brand = await anonymous.eval(`({
+      header: [...document.querySelectorAll("header img")].map((img) => img.getAttribute("src")),
+      footer: [...document.querySelectorAll("footer img")].map((img) => img.getAttribute("src")),
+      symbolShown: [...document.querySelectorAll('header img[src="/branding/heroos-symbol.png"]')].some((img) => img.getBoundingClientRect().width > 0),
+      old: document.documentElement.outerHTML.includes("heroos-logo-symbol"),
+    })`);
+    const current = (srcs) => JSON.stringify(srcs) === JSON.stringify(["/branding/heroos-symbol.png", "/branding/heroos-logo-wordmark.png"]);
+    check("UI-40", `homepage @${width}px: header and footer show the current HeroOS symbol and wordmark; no old speech-bubble logo on the page`,
+      current(brand.header) && current(brand.footer) && brand.symbolShown && !brand.old, JSON.stringify(brand));
+    await ctx.screenshotOf(anonymous, `homepage-header-${width}`, "header");
+  }
   await page.viewport(720, 900, { deviceScaleFactor: 2 });
   for (const path of [`/workspaces/${alpha.companyId}`, "/onboarding", `/workspaces/${alpha.companyId}/settings`]) {
     await page.goto(`${webOrigin}${path}`);
