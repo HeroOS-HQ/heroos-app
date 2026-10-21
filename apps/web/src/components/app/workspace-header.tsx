@@ -2,7 +2,7 @@
 
 import { type ReactNode, useCallback, useRef, useState, useSyncExternalStore } from "react";
 
-import { WorkspaceBrandMark } from "@/components/site/brand-mark";
+import { BrandMark } from "@/components/site/brand-mark";
 import { ClockIcon } from "@/components/site/icons";
 import type { CaseSummary } from "@/lib/workflows/model";
 
@@ -60,7 +60,7 @@ export function WorkspaceHeader({
       <header className="sticky top-0 z-30 grid h-16 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2 bg-[#fbfaf8]/85 px-2 backdrop-blur-md sm:grid-cols-[1fr_auto_1fr] sm:px-5">
         <div className="flex items-center gap-1 sm:gap-1.5">
           <a aria-label="HeroOS: ask a new question" className="hidden min-h-11 items-center rounded-lg px-1 sm:inline-flex" href={ask}>
-            <WorkspaceBrandMark />
+            <BrandMark />
           </a>
           {data.cases !== null ? (
             <>
@@ -84,7 +84,7 @@ export function WorkspaceHeader({
         <div className="flex min-w-0 justify-center">
           {center ?? (
             <a aria-label="HeroOS: ask a new question" className="inline-flex min-h-11 items-center sm:hidden" href={ask}>
-              <WorkspaceBrandMark />
+              <BrandMark />
             </a>
           )}
         </div>
