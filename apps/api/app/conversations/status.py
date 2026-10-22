@@ -4,6 +4,8 @@
 status
 ├── lifecycle        the Case's: in_progress, or paused for a whole-matter hold
 ├── workflow         the Case's workflow (key and title)
+├── position         the Case's formal workflow position (M2-NEW-08): the employer's pathway,
+│                    the stage in progress or next, the steps the progression rules hold
 ├── attention
 │   ├── needs_information   the latest turn's checks need an answer (or the jurisdiction does)
 │   ├── jurisdiction        needs_confirmation: jurisdiction-specific guidance waits for it
@@ -33,6 +35,12 @@ programme, and every jurisdiction-specific decision), while the shared
 guidance the approved runtime marks shared continues. The employer lifts it
 by confirming one answer.
 
+The workflow position (M2-NEW-08, ``app.conversations.progress``) is what the
+employer recorded in the Case: the pathway (their decision), the stage in
+progress or next, and the transitions the progression rules hold for
+specialist review. Such a held transition (sticky, M2-03) is not a decision's
+Expert Review (current, M2-NEW-07) and neither pauses the Case.
+
 Whether HeroOS's Expert Review *service* is available is a current capability
 (``expert_review_service_available``), never read from a historical record:
 an old record's ``service_available`` stays what was true then.
@@ -43,6 +51,7 @@ from dataclasses import dataclass
 from typing import Final, Literal, cast
 
 from app.conversations.checkpoint import Reviews
+from app.conversations.progress import Position
 
 Lifecycle = Literal["in_progress", "paused"]
 JurisdictionAttention = Literal["needs_confirmation"]
@@ -83,6 +92,8 @@ class ConversationStatus:
     expert_review: ExpertReview
     checks: Checks
     latest_outcome: LatestOutcome
+    # The Case's formal workflow position (None: no Case).
+    position: Position | None = None
 
 
 def project(
@@ -96,6 +107,7 @@ def project(
     latest_outcome: str | None,
     checks: Checks,
     action_titles: Mapping[str, str],
+    position: Position | None = None,
 ) -> ConversationStatus:
     """``case_hold``: the attached Case's intake holds the whole matter (None: no Case).
 
@@ -131,4 +143,5 @@ def project(
         ),
         checks=checks,
         latest_outcome=outcome,
+        position=position,
     )

@@ -24,6 +24,7 @@ from app.companies.jurisdiction import (
 from app.workflows import conversation
 from app.workflows.answers import validate_answers
 from app.workflows.conditions import DISCIPLINARY_INTAKE
+from app.workflows.conversation import CASE_RECORD, record_title
 from app.workflows.definition import (
     CASE_JURISDICTION_KEY,
     DISCIPLINARY_V1,
@@ -272,9 +273,15 @@ def test_no_message_promises_an_expert_or_names_an_internal_rule() -> None:
     assert [t for t in texts + _questions() if identifier.search(t)] == []
 
 
-def test_welcome_says_the_workflow_is_guided_not_ai() -> None:
+def test_the_versioned_welcome_is_historical_and_the_case_record_says_what_is_current() -> None:
+    # v2's own welcome stays with its version (definition semantics are unchanged)...
     assert "not an AI assistant" in DISCIPLINARY_V2.welcome
     assert "doesn't analyse" in DISCIPLINARY_V2.welcome
+    # ...but a Case's record presents the current product (M2-NEW-08): Ask HeroOS is where the
+    # founder talks to HeroOS, and the Case is the formal record the employer controls.
+    assert "not an AI assistant" not in CASE_RECORD and "guided workflow" not in CASE_RECORD
+    assert "Ask HeroOS" in CASE_RECORD and "doesn't make employment decisions" in CASE_RECORD
+    assert record_title(DISCIPLINARY_V2) == "Your Disciplinary case"
 
 
 # --- validation -----------------------------------------------------------------------

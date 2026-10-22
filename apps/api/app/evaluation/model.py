@@ -63,7 +63,10 @@ PathwayOwnership = Literal[
 NextStep = Literal[
     "continue_methodology", "answer_question", "establish_prerequisite", "consider_caution",
     "obtain_specialist_review", "confirm_jurisdiction", "choose_matter", "seek_specialist_advice",
+    "complete_case_step",
 ]  # fmt: skip
+# The prefix of a stage checklist answer (a Case fact the employer saves in a started stage).
+CHECKLIST_PREFIX: Final = "progress."
 RequirementKind = Literal["fact", "confirmation", "jurisdiction", "insistence"]
 FollowUpState = Literal["not_applicable", "pending", "applied", "reconfirm"]
 
@@ -98,6 +101,29 @@ class TrustedFactState:
     def not_engine_trusted(self) -> int:
         """Conversational facts not (or not yet) trusted for execution."""
         return len([k for k in self.conversational if k not in self.engine])
+
+
+@dataclass(frozen=True, slots=True)
+class CaseProgress:
+    """The attached Case's formal progression, as authoritative evaluation input (M2-NEW-08).
+
+    Read from the Case's own records, never from the conversation: the stages its
+    employer completed (progress events) and the stage checklist answers the
+    employer saved, for the jurisdiction the Case's progression runs under. Only an
+    employer decision's prerequisite rule reads them, and only when the evaluation
+    resolves that same jurisdiction; anywhere else no stage is completed and no
+    checklist answer is known. The AI can't write any of it: the employer records
+    a pathway, a stage and a checklist answer through the Case's own controls.
+    """
+
+    # The Case's resolved jurisdiction (its intake's); None while unresolved.
+    jurisdiction: str | None
+    completed: frozenset[str] = frozenset()
+    # Checklist fact key (``progress.<stage>.<item>``) -> the employer's saved answer.
+    checklist: Mapping[str, str] = field(default_factory=dict)
+
+    def applies(self, jurisdiction: str | None) -> bool:
+        return jurisdiction is not None and self.jurisdiction == jurisdiction
 
 
 @dataclass(frozen=True, slots=True)
@@ -188,6 +214,10 @@ class ActionEvaluation:
     conditions: tuple[str, ...]
     notes: tuple[Note, ...] = ()
     scope: Literal["action"] = "action"
+    # M2-NEW-08: asked about only hypothetically ("what if I dismissed them?"): evaluated so
+    # the answer is accurate, never recorded as the employer's intention (no active review,
+    # never carried as still requested).
+    hypothetical: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -225,6 +255,8 @@ class ConversationEvaluation:
     next_step: NextStep | None = None
     multiple_matters: bool = False
     provenance: Provenance | None = None
+    # M2-NEW-08: the Case's formal progression the prerequisites read (None: no Case).
+    case_progress: CaseProgress | None = None
     schema: str = EVALUATION_SCHEMA
 
     @property
@@ -279,6 +311,7 @@ class ConversationEvaluation:
                     "review": a.review is not None and a.review.required,
                     "next_step": a.next_step,
                     "conditions": list(a.conditions),
+                    "hypothetical": a.hypothetical,
                 }  # fmt: skip
                 for a in self.actions
             ],
@@ -306,6 +339,15 @@ class ConversationEvaluation:
             "presentation": self.presentation,
             "next_step": self.next_step,
             "multiple_matters": self.multiple_matters,
+            # M2-NEW-08 (additive): the Case progression the prerequisites read, by stage key.
+            "case_progress": None
+            if self.case_progress is None
+            else {
+                "jurisdiction": self.case_progress.jurisdiction,
+                "applied": self.case_progress.applies(self.jurisdiction),
+                "completed": sorted(self.case_progress.completed),
+                "checklist_answers": len(self.case_progress.checklist),
+            },
             "provenance": None
             if provenance is None
             else {

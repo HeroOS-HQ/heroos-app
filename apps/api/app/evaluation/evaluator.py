@@ -29,7 +29,14 @@ Per turn, in order:
 5. **Actions**, each on its own: the approved availability (review required
    -> escalate; not available -> block), its mandatory-prerequisite rules,
    the Conditions linked to it, and its coverage. A safeguard that can't be
-   evaluated keeps the step ``unknown``, never clear.
+   evaluated keeps the step ``unknown``, never clear. A prerequisite rule may
+   read the attached Case's formal progression (M2-NEW-08, ``CaseProgress``):
+   the stages its employer completed and the stage checklist answers they
+   saved, only under the jurisdiction the Case's progression runs under. The
+   founder's words never satisfy one; what is missing there is recorded
+   through the Case (``complete_case_step``), never asked in the chat. A step
+   asked about only hypothetically is evaluated the same way and marked so:
+   it is never the employer's intention.
 6. **Presentation** by fixed precedence over the requested steps and the
    matter-level cautions: ESCALATE > BLOCK > UNKNOWN > WARN > ALLOW, mapped to
    Expert Review, Block, Warning, Warning, Guidance. Ordinary missing context
@@ -42,8 +49,10 @@ from typing import Final
 
 from app.evaluation.facts import candidate
 from app.evaluation.model import (
+    CHECKLIST_PREFIX,
     PRESENTATIONS,
     ActionEvaluation,
+    CaseProgress,
     Caution,
     ConditionEvaluation,
     ConversationEvaluation,
@@ -63,6 +72,7 @@ from app.evaluation.snapshot import (
     BoundRule,
     ExecutionRuntime,
     ExecutionSnapshot,
+    Stages,
     WorkflowExecution,
 )
 from app.knowledge.bundle import Condition
@@ -102,6 +112,10 @@ class EvaluationRequest:
     pathway_candidate: str | None = None
     # Candidates the founder declined this turn.
     declined: frozenset[str] = frozenset()
+    # M2-NEW-08: the attached Case's formal progression (None: no Case).
+    progress: CaseProgress | None = None
+    # M2-NEW-08: decisions asked about only hypothetically (option ids; never an intention).
+    hypothetical: tuple[str, ...] = ()
 
 
 def _jurisdiction(
@@ -155,10 +169,11 @@ def _run(
     answers: Mapping[str, object],
     two_state: Mapping[str, TwoState],
     reconfirm: bool,
+    completed: Stages = frozenset(),
 ) -> _Result:
     """One bound rule on the trusted answers (three-valued; unknown never clears)."""
-    truth = rule.truth(answers)
-    missing = tuple(dict.fromkeys(execution.fact_key(k) for k in rule.unknown(answers)))
+    truth = rule.truth(answers, completed)
+    missing = tuple(dict.fromkeys(execution.fact_key(k) for k in rule.unknown(answers, completed)))
     if truth is Tri.FALSE:
         return _Result("not_fired", None, "not_applicable", (), ("not_met",))
     if truth is Tri.UNKNOWN:
@@ -179,7 +194,7 @@ def _run(
             return _Result("fired", rule.follow_up_action, "reconfirm", (), ("met", "reconfirm"))
         return _Result("fired", rule.action, "pending", (), ("met",))
     if rule.follow_up_when == "condition_specific" and rule.follow_up_truth is not None:
-        follow = rule.follow_up_truth(answers)
+        follow = rule.follow_up_truth(answers, completed)
         if follow is Tri.TRUE:
             return _Result("fired", rule.follow_up_action, "applied", (), ("met", "follow_up_met"))
         if follow is Tri.UNKNOWN:
@@ -261,6 +276,8 @@ def _action(
     notes: list[Note] = []
     provisional = False
     review_reasons: list[str] = []
+    # A prerequisite the Case's own record (a stage, a checklist answer) must establish.
+    case_step = False
     if jurisdiction is None:
         gate = GATE[state]
         results.append((gate, f"jurisdiction:{state}"))
@@ -280,12 +297,22 @@ def _action(
             review_reasons.append(reason)
         elif availability == "not_available":
             results.append(("block", f"not_available:{reason}"))
+        progress = request.progress
+        own = progress is not None and progress.applies(jurisdiction)
+        # The Case's formal progression, only under the jurisdiction it runs under: anywhere
+        # else no stage is completed and no checklist answer is known (never another's).
+        completed = progress.completed if own and progress is not None else frozenset()
+        prerequisite = {**answers, **(progress.checklist if own and progress is not None else {})}
         for rule in execution.action_rules.get((action, jurisdiction), ()):
-            outcome = _run(rule, execution, answers, request.two_state, request.reconfirm)
+            outcome = _run(
+                rule, execution, prerequisite, request.two_state, request.reconfirm, completed
+            )
             if outcome.status == "not_fired" or outcome.action is None:
                 continue
             results.append((outcome.action, f"rule:{rule.key}"))  # type: ignore[arg-type]
-            missing += outcome.missing
+            # A checklist answer is the Case's to record, never a question for the chat.
+            missing += [k for k in outcome.missing if not k.startswith(CHECKLIST_PREFIX)]
+            case_step |= rule.reads_case_progress
             provisional |= rule.provisional
             if rule.note is not None:
                 notes.append(rule.note)
@@ -316,6 +343,9 @@ def _action(
         else None
     )
     unique_missing = tuple(dict.fromkeys(missing))
+    next_step = _next_step(disposition, unique_missing)
+    if case_step and next_step == "establish_prerequisite" and not unique_missing:
+        next_step = "complete_case_step"
     return ActionEvaluation(
         action=action,
         title=option.title,
@@ -324,9 +354,10 @@ def _action(
         missing=unique_missing,
         provisional=provisional,
         review=review,
-        next_step=_next_step(disposition, unique_missing),
+        next_step=next_step,
         conditions=linked,
         notes=tuple(dict.fromkeys(notes)),
+        hypothetical=action in request.hypothetical and action not in request.requested,
     )
 
 
@@ -354,6 +385,8 @@ def _requirements(
     found: list[MissingRequirement] = []
     seen: set[str] = set()
     requested = tuple(a.action for a in actions)
+    # Only an intended step asks whether the employer still intends to go ahead.
+    intended = {a.action for a in actions if not a.hypothetical}
     if state in ("conversation_conflict", "case_not_sure", "company_unconfirmed"):
         found.append(
             MissingRequirement(JURISDICTION, "jurisdiction", "employment jurisdiction", requested)
@@ -370,6 +403,8 @@ def _requirements(
             seen.add(key)
             title = execution.conditions[evaluation.condition].title
             holding = tuple(a for a in evaluation.linked_actions if a in requested)
+            if holding and not intended & set(holding):
+                continue  # a "what if" is never asked whether they still intend it
             found.append(MissingRequirement(key, "insistence", title, holding))
     keys = [k for a in actions for k in a.missing] + [k for c in conditions for k in c.missing]
     for key in keys:
@@ -458,7 +493,11 @@ def evaluate_conversation(
 
     state, jurisdiction = _jurisdiction(execution, request)
     answers = _answers(execution, request.facts)
-    requested = tuple(a for a in dict.fromkeys(request.requested) if a in execution.options)
+    requested = tuple(
+        a
+        for a in dict.fromkeys((*request.requested, *request.hypothetical))
+        if a in execution.options
+    )
     relevant = _relevant(execution, request, jurisdiction)
     conditions = tuple(_condition(execution, c, jurisdiction, answers, request) for c in relevant)
     by_id = {c.condition: c for c in conditions}
@@ -507,6 +546,14 @@ def evaluate_conversation(
         next_step = "consider_caution"
     else:
         next_step = _next_step(disposition, tuple(m.key for m in missing))
+        held = [a for a in actions if a.disposition == disposition]
+        if (
+            next_step == "establish_prerequisite"
+            and held
+            and all(a.next_step == "complete_case_step" for a in held)
+            and not any(m.kind != "insistence" for m in missing)
+        ):
+            next_step = "complete_case_step"
     return ConversationEvaluation(
         availability="ready",
         matter="supported",
@@ -526,4 +573,5 @@ def evaluate_conversation(
         next_step=next_step,
         multiple_matters=request.multiple_matters,
         provenance=execution.provenance,
+        case_progress=request.progress,
     )

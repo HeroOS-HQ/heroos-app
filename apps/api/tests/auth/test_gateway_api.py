@@ -64,10 +64,12 @@ CONVERSATION_FIELDS = {"id", "title", "case", "created_at", "updated_at", "revis
 MESSAGE_FIELDS = {
     "sequence", "author", "text", "safe_next_step", "conversation_state", "outcome", "created_at",
 }  # fmt: skip
-STATUS_FIELDS = {"lifecycle", "workflow", "attention", "checks", "latest_outcome"}
+STATUS_FIELDS = {"lifecycle", "workflow", "attention", "checks", "latest_outcome", "position"}
+# M2-NEW-08: the Case's formal position, as its employer recorded it (labels; never the AI's).
+POSITION_FIELDS = {"state", "label", "pathway", "stage", "stage_in_progress", "held_steps"}
 # Every key the browser may ever see in a turn's response (anything else is internal).
 PUBLIC_KEYS = (
-    TURN_FIELDS | CONVERSATION_FIELDS | MESSAGE_FIELDS | STATUS_FIELDS
+    TURN_FIELDS | CONVERSATION_FIELDS | MESSAGE_FIELDS | STATUS_FIELDS | POSITION_FIELDS
     | {"key", "kind", "message", "items", "needs_information", "jurisdiction", "expert_review",
        "active", "scope", "actions", "service_available"}
 )  # fmt: skip
@@ -193,9 +195,13 @@ def test_the_response_carries_nothing_internal(
     confirm_jurisdiction(stored_sessions, seed.company_a, "uae_federal")
     answered = send(client, admin_alice, seed.company_a)
     assert keys(answered.json()) <= PUBLIC_KEYS
+    # The AI's pathway candidate (``less_serious`` here) never reaches the browser: the only
+    # pathway it may see is the one the employer recorded in the Case (none yet).
+    assert answered.json()["conversation"]["status"]["position"]["pathway"] is None
     for private in (
         bundle.runtime_digest, bundle.bundle_id, "approved_knowledge", "knowledge_status",
-        "pathway", "topics", "fact_key", "EX0", "EX-", "rule-", "fake-model", "Standard explained",
+        "pathway_candidate", "less_serious", "Less serious", "topics", "fact_key", "EX0", "EX-",
+        "rule-", "fake-model", "Standard explained",
         "question_target", "heroos.assistant-checkpoint", "heroos.conversation-evaluation",
         "engine_trusted", "employee_aware", "opt-", str(seed.alice), "continuation",
     ):  # fmt: skip

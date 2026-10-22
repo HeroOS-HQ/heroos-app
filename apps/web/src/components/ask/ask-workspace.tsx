@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 
 import { AdviserMark, PersonAvatar } from "@/components/app/workspace-chrome";
 import type { GatewayStatus } from "@/lib/ask/conversation";
-import { ASK_TEXT_MAX, parseAskStarted, provisionalCaseTitle } from "@/lib/ask/model";
+import { ASK_TEXT_MAX, GREETING_REPLY, isGreeting, parseAskStarted, provisionalCaseTitle } from "@/lib/ask/model";
 
 import { AskConversation } from "./ask-conversation";
 import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
@@ -37,6 +37,8 @@ type Status =
   | { kind: "idle" }
   | { kind: "opening"; text: string; at: Date }
   | { kind: "failed"; reason: Failure }
+  /** A greeting: HeroOS says hello and asks what's happening (no case is opened). */
+  | { kind: "greeted" }
   /** The case opened, but the founder's words didn't reach it. */
   | { kind: "partial"; caseHref: string };
 
@@ -133,6 +135,12 @@ function AskCaseOpening({
 
   async function send() {
     if (!canSend || inFlight.current) return;
+    if (isGreeting(value)) {
+      // Nothing to open a case for yet: "Hi" is never saved as what happened.
+      setText("");
+      setStatus({ kind: "greeted" });
+      return;
+    }
     if (attempt.current?.text !== value) {
       attempt.current = {
         text: value,
@@ -190,6 +198,12 @@ function AskCaseOpening({
         placeholder={PLACEHOLDER[mode]}
         value={text}
       />
+      {status.kind === "greeted" ? (
+        <p className="ws-rise mt-3 rounded-2xl border border-hero-border bg-white px-4 py-3 text-left text-[0.9375rem] text-hero-navy" id="ask-status" role="status">
+          <span className="font-extrabold">HeroOS: </span>
+          {GREETING_REPLY}
+        </p>
+      ) : null}
       {status.kind === "failed" || status.kind === "partial" ? (
         <AskAlert>
           {status.kind === "partial" ? (

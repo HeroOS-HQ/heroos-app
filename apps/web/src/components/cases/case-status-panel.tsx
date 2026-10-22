@@ -29,7 +29,7 @@ type Next = CaseTarget & { title: string; detail: string | null };
 /** The next official step, in the guided workflow's order: a hold, then intake answers, then progression. */
 export function nextOfficialStep(view: WorkflowView): Next | null {
   const hold = view.intake.hold;
-  if (hold) return { title: hold.title, detail: null, target: "guided-conversation" };
+  if (hold) return { title: hold.title, detail: null, target: "next-steps" };
   const open = view.steps.find(
     (step) => step.available && step.questions.some((question) => view.missing.includes(question.key)),
   );
@@ -160,7 +160,7 @@ export function CaseStatusPanel({
             {view.progression && view.progression.escalations.length > 0 ? (
               <p className="tone-expert mt-2.5 flex flex-wrap items-center gap-2 text-[0.875rem] font-semibold text-(--tone-ink)">
                 <OutcomeLabel outcome="expert" />
-                Specialist review needed
+                Specialist review needed before: {view.progression.escalations.map((item) => item.label).join(", ")}
               </p>
             ) : null}
           </section>

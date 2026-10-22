@@ -12,6 +12,11 @@ import type { Conversation } from "@/lib/ask/conversation";
  *   Review is a requirement, never a ticket: nothing here says it was sent.
  * - Checks that can't run now are a technical note, never the Case's status.
  *
+ * - Position (M2-NEW-08) is where the Case's formal workflow stands, as its
+ *   employer recorded it: the pathway (their decision, never HeroOS's) and the
+ *   stage in progress or next. A Case step the progression rules hold for
+ *   specialist review is its own note, apart from a decision's Expert Review.
+ *
  * The outcome of each turn stays on that turn (its own Guidance, Warning,
  * Block or Expert Review per step), so it isn't repeated here.
  */
@@ -43,6 +48,8 @@ export function ConversationContext({ companyId, conversation }: { companyId: st
   const needs = status.attention.needsInformation;
   const jurisdiction = status.attention.jurisdiction === "needs_confirmation";
   const unavailable = status.checks === "unavailable";
+  const position = status.position;
+  const held = position?.heldSteps ?? [];
   if (conversation.case === null && review === null && !unavailable) return null;
   const caseHref = conversation.case
     ? `/workspaces/${encodeURIComponent(companyId)}/cases/${encodeURIComponent(conversation.case.id)}`
@@ -63,12 +70,30 @@ export function ConversationContext({ companyId, conversation }: { companyId: st
           </a>
         </p>
       ) : null}
-      {review || needs || jurisdiction ? (
+      {position && position.state !== "unavailable" ? (
+        <p className="mt-1 text-[0.8125rem] text-hero-muted">
+          {position.pathway ? (
+            <>
+              <span className="font-semibold text-hero-navy">{position.pathway}</span> (your decision)
+            </>
+          ) : (
+            "No pathway recorded yet"
+          )}
+          {position.stage ? ` · ${position.stage}${position.stageInProgress ? " in progress" : " is next"}` : ` · ${position.label}`}
+        </p>
+      ) : null}
+      {review || needs || jurisdiction || held.length > 0 ? (
         <ul aria-label="Needs attention" className={`flex flex-wrap gap-2 ${conversation.case ? "mt-2" : ""}`}>
           {review ? (
             <li className={`${chip} tone-expert border-transparent bg-(--tone-chip) text-(--tone-ink)`}>
               <PeopleIcon className="size-3.5 shrink-0" />
               {review}
+            </li>
+          ) : null}
+          {held.length > 0 ? (
+            <li className={`${chip} tone-expert border-transparent bg-(--tone-chip) text-(--tone-ink)`}>
+              <PeopleIcon className="size-3.5 shrink-0" />
+              Specialist review needed before: {held.join(", ")}
             </li>
           ) : null}
           {jurisdiction ? (

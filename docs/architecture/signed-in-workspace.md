@@ -11,6 +11,8 @@
 [Workflow Case Foundation](workflow-foundation.md),
 [Hannah AI demo](hannah-ai-demo.md), [Security Boundaries](security-boundaries.md)
 
+> **Current architecture (M2-NEW-08):** Ask HeroOS reads the Case's workflow position, the Case is chat-first (its formal steps appear inline in the conversation) and requested decisions can need the Case's formal record. See [disciplinary-reference-workflow.md](disciplinary-reference-workflow.md). This document stays the record of what its own milestone built.
+
 ## 1. What it is
 
 The signed-in product is three areas, one quiet header, and no permanent
@@ -205,3 +207,22 @@ the demo's API and BFF remain ([Hannah AI demo](hannah-ai-demo.md)).
   - `browser` (Blueprint editing, a demoted administrator, switching
     workspaces, the account menu by keyboard, responsive layout of the three
     pages).
+
+## 10. M2-NEW-08: the chat-first Case
+
+- **Ask HeroOS is the Case's conversation.** A conversation with a Case shows the Case's position under its title (the pathway "(your decision)", the stage in progress or next) and its next formal step inline (`components/ask/case-steps.tsx`), one at a time:
+  - the employee's jurisdiction and the safety screening (never collected by the AI);
+  - the pathway choice;
+  - a stage checklist question;
+  - start or complete, with "I understand" for a caution;
+  - a refusal in the API's words.
+
+  Each button calls the Case's existing route and only the founder's click takes it.
+- **The Case page is the record and review surface.** In order:
+  1. "Continue with HeroOS";
+  2. the case notices (hold, cautions, jurisdiction);
+  3. "Case details" folded until "Review case details";
+  4. Next steps, Decisions & history, Documents.
+
+  The guided conversation thread, and its "not an AI assistant" welcome, isn't shown.
+- **A greeting** ("Hi Hannah") is answered as one and never opens a Case, with or without the AI gateway.

@@ -69,6 +69,17 @@ export async function openFullCaseDetails(page) {
   await page.waitFor(`document.getElementById("case-full-details")?.open === true`, { message: "full case details open" });
 }
 
+/**
+ * Unfolds the case's "Case details" (M2-NEW-08: the Case is chat-first, so its
+ * structured answers are secondary, folded until asked for) as a person would,
+ * by its button; does nothing if they are already open.
+ */
+export async function openCaseDetails(page) {
+  await page.waitForHydrated('button[aria-controls="case-details-body"]');
+  await page.eval(`(() => { const b = document.querySelector('button[aria-controls="case-details-body"]'); if (b.getAttribute("aria-expanded") !== "true") b.click(); return true; })()`);
+  await page.waitFor(`Boolean(document.getElementById("case-details-body"))`, { message: "case details open" });
+}
+
 /** Opens the account menu (M2-NEW-02: the way to the Blueprint, Company Space, another workspace and sign out). */
 export async function openAccountMenu(page) {
   await page.waitForHydrated('button[aria-label^="Account menu"]');

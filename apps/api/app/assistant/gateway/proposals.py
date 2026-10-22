@@ -137,6 +137,9 @@ class UnderstandingProposal:
     # M2-NEW-07: decisions the founder says (now) they no longer consider; kept only when
     # ``check_evidence`` finds their own explicit words.
     withdrawn: tuple[RequestedAction, ...] = ()
+    # M2-NEW-08: decisions the founder asks about only hypothetically ("what if I dismissed
+    # them?"). Evaluated so the answer is accurate, never the employer's intention.
+    hypothetical: tuple[RequestedAction, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -265,7 +268,9 @@ def parse_understanding(
     _fields(
         data,
         _UNDERSTANDING_FIELDS,
-        frozenset({"case_summary", "requested_actions", "withdrawn_actions"}),
+        frozenset(
+            {"case_summary", "requested_actions", "withdrawn_actions", "hypothetical_actions"}
+        ),
         "$",
     )
     if data["schema_version"] != UNDERSTANDING_SCHEMA:
@@ -306,6 +311,7 @@ def parse_understanding(
     summary = _text(data.get("case_summary"), MAX_SUMMARY_CHARS, "$.case_summary", nullable=True)
     actions = _actions(data, "requested_actions", workflow, current_turn)
     withdrawn = _actions(data, "withdrawn_actions", workflow, current_turn)
+    hypothetical = _actions(data, "hypothetical_actions", workflow, current_turn)
     return UnderstandingProposal(
         intent=intent,
         workflow=None if workflow is None else workflow.key,
@@ -316,6 +322,7 @@ def parse_understanding(
         summary=summary,
         actions=actions,
         withdrawn=withdrawn,
+        hypothetical=hypothetical,
     )
 
 
@@ -353,6 +360,19 @@ _WITHDRAWAL: Final = re.compile(
     r"|decided\s+(?:not|against)|don't\s+want\s+to|do\s+not\s+want\s+to|not\s+anymore"
     r"|changed\s+(?:my|our)\s+mind|dropp(?:ed|ing))\b"
 )
+# Words that make a question about a decision hypothetical ("what if...", "in theory"): such a
+# question is evaluated, never recorded as what the employer intends (M2-NEW-08).
+_HYPOTHETICAL: Final = re.compile(
+    r"\b(?:what\s+(?:if|would\s+happen\s+if|happens\s+if)|hypothetical(?:ly)?|in\s+theory"
+    r"|theoretically|suppos(?:e|ing)|imagine|say\s+(?:i|we)\s+(?:did|wanted|were|decided)"
+    r"|if\s+(?:i|we)\s+(?:were\s+to|ever)|just\s+(?:curious|wondering|asking)"
+    r"|in\s+general|in\s+principle)\b"
+)
+
+
+def hypothetical(excerpt: str) -> bool:
+    """The founder's own words ask about a decision only hypothetically."""
+    return _HYPOTHETICAL.search(normalized(excerpt)) is not None
 
 
 def normalized(text: str) -> str:
@@ -387,14 +407,24 @@ def check_evidence(
             source = messages[fact.source_turn] if fact.source_turn < len(messages) else ""
         if excerpt in source:
             kept.append(fact)
+
     # A requested decision needs the founder's own words too (it only ever adds checks).
-    actions = tuple(
-        a
-        for a in proposal.actions
-        if normalized(a.excerpt)
-        and a.source_turn < len(messages)
-        and normalized(a.excerpt) in messages[a.source_turn]
-    )
+    def cited(action: RequestedAction) -> bool:
+        excerpt = normalized(action.excerpt)
+        return (
+            bool(excerpt)
+            and action.source_turn < len(messages)
+            and (excerpt in messages[action.source_turn])
+        )
+
+    supported = [a for a in proposal.actions if cited(a)]
+    # A "what if" in the founder's own words is never an intention, whatever the model read.
+    actions = tuple(a for a in supported if not hypothetical(a.excerpt))
+    intended = {a.action for a in actions}
+    hypotheticals: dict[str, RequestedAction] = {}
+    for item in (*supported, *(h for h in proposal.hypothetical if cited(h))):
+        if item.action not in intended:
+            hypotheticals.setdefault(item.action, item)
     # A withdrawal only from the current message, in the founder's own explicit words, and
     # never of a decision the same message asks about (withdrawing only removes checks).
     current = len(messages) - 1
@@ -409,7 +439,7 @@ def check_evidence(
         and _WITHDRAWAL.search(normalized(a.excerpt))
     )
     dropped = (
-        len(proposal.facts) - len(kept) + len(proposal.actions) - len(actions)
+        len(proposal.facts) - len(kept) + len(proposal.actions) - len(supported)
         + len(proposal.withdrawn) - len(withdrawn)
     )  # fmt: skip
     return (
@@ -423,6 +453,7 @@ def check_evidence(
             summary=proposal.summary,
             actions=actions,
             withdrawn=withdrawn,
+            hypothetical=tuple(hypotheticals.values()),
         ),
         dropped,
     )
@@ -460,6 +491,7 @@ def without_contradicted(
         summary=proposal.summary,
         actions=proposal.actions,
         withdrawn=proposal.withdrawn,
+        hypothetical=proposal.hypothetical,
     )
 
 

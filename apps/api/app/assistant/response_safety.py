@@ -50,6 +50,17 @@ as a possibility the employer decides on, so what must never pass is sharper:
 - ``legal_certainty``: the law stated as certain ("the law clearly says...",
   "by law you must...").
 
+M2-NEW-08 adds, now that Ask HeroOS reads the Case's workflow position:
+
+- ``action_claim`` also covers HeroOS (or "I") claiming a formal workflow step
+  only the employer takes in the Case ("I've started the investigation", "I
+  completed the stage", "HeroOS selected the serious pathway", "I approved
+  the dismissal"). Saying what the employer recorded stays allowed ("your
+  company has recorded the serious pathway");
+- ``misconduct_finding``: the conduct classified or treated as proven ("this
+  sounds like serious misconduct", "this is gross misconduct", "misconduct
+  has been proven"). A serious concern is never a finding.
+
 Explaining an approved option stays allowed ("suspension may be one of the
 options the approved process considers after the investigation"; "whether
 termination without notice is available depends on the conditions and
@@ -72,6 +83,7 @@ Check = Literal[
 GatewayCheck = Literal[
     "action_claim", "sanction_recommendation", "procedural_certainty", "jurisdiction_certainty",
     "authorization", "review_promise", "monitoring_promise", "document_claim", "legal_certainty",
+    "misconduct_finding",
 ]  # fmt: skip
 
 
@@ -311,7 +323,37 @@ SPECIALIST = (
 DEADLINE = r"(?:deadlines?|dates?|timelines?|time\s+limits?|timeframes?|it)"
 DOCUMENT = r"(?:letters?|notices?|documents?|memos?|warnings?|emails?\s+to\s+the\s+employee)"
 
+FORMAL_STEP = (
+    r"(?:(?:the\s+|a\s+|your\s+|this\s+)?(?:\w+\s+){0,2}(?:stages?|investigation|pathway|route"
+    r"|hearing|meeting)\b|(?:the\s+|a\s+|your\s+|this\s+)?(?:dismissal|suspension|deduction"
+    r"|termination|warning|sanction|penalty|outcome)\b)"
+)
+MISCONDUCT = r"(?:(?:serious|gross|clear|major|minor)\s+)?misconduct\b"
+
 _GATEWAY_FRAMES: Final[tuple[tuple[GatewayCheck, str], ...]] = (
+    # "I've started the investigation." / "HeroOS has completed the stage." / "I approved the
+    # dismissal." (M2-NEW-08: only the employer takes a formal step, in the Case.)
+    (
+        "action_claim",
+        r"\b(?:I|HeroOS)(?:'ve|\s+have|\s+has)?(?:\s+(?:just|already|now|also))?\s+(?:started"
+        r"|began|begun|opened|completed|finished|closed|selected|chose|chosen|picked|set|approved"
+        rf"|authori[sz]ed|signed\s+off|classified|confirmed)\s+{FORMAL_STEP}",
+    ),
+    # "This sounds like serious misconduct." / "Misconduct has been proven."
+    (
+        "misconduct_finding",
+        r"\b(?:this|that|it|the\s+(?:conduct|behaviou?r|incident|absence)|their\s+(?:conduct"
+        r"|behaviou?r)|what\s+(?:they|he|she)\s+did|the\s+employee)\s+(?:is|was|sounds\s+like"
+        r"|looks\s+like|seems\s+like|amounts\s+to|constitutes|counts\s+as|qualifies\s+as"
+        r"|would\s+be|will\s+be|is\s+guilty\s+of|committed)\s+(?:a\s+|an\s+)?(?:clear\s+"
+        r"|definite\s+|obvious\s+|likely\s+|probably\s+)?(?:case\s+of\s+|act\s+of\s+)?"
+        rf"{MISCONDUCT}",
+    ),
+    (
+        "misconduct_finding",
+        rf"\b{MISCONDUCT}\s+(?:is|was|has\s+been|have\s+been)\s+(?:now\s+|clearly\s+)?"
+        r"(?:proven|proved|established|confirmed)\b",
+    ),
     # "I've created the case." / "I've opened a case and added the facts."
     (
         "action_claim",
@@ -436,7 +478,8 @@ GATEWAY_PATTERNS: Final[tuple[tuple[GatewayCheck, re.Pattern[str]], ...]] = (
 # The most misleading first: an action or promise HeroOS can't keep, then an outcome.
 GATEWAY_PRIORITY: Final[tuple[GatewayCheck, ...]] = (
     "action_claim", "document_claim", "review_promise", "monitoring_promise", "authorization",
-    "sanction_recommendation", "procedural_certainty", "legal_certainty", "jurisdiction_certainty",
+    "misconduct_finding", "sanction_recommendation", "procedural_certainty", "legal_certainty",
+    "jurisdiction_certainty",
 )  # fmt: skip
 
 # A frame is not a problem when it is negated, conditional or open just before it.

@@ -7,7 +7,10 @@ Nothing here is HeroOS content. It extends the fictional knowledge package
   cap of 9 days that warns first and blocks once the employer insists, a
   caution about the employee's chance to explain, and mandatory
   prerequisites for a suspension and a warning), added to the synthetic rule
-  bundle in memory;
+  bundle in memory. M2-NEW-08: the fictional penalty notice's prerequisites
+  read the Case's formal record instead (a completed meeting or check-in
+  stage, and that stage's checklist answer that the employee was heard), so
+  only the employer's own Case steps can satisfy them;
 - a second, invented workflow, ``synthetic_probation`` ("Trial period
   review"), structurally unlike Disciplinary: no pathways, its own facts,
   definition and rule bundle, a number-against-a-number rule, a
@@ -87,6 +90,17 @@ def _yes(fact: str) -> dict[str, Any]:
 
 # --- Disciplinary: conversation rules on the synthetic rule bundle ---------------------------
 
+# The synthetic progression's own stages and checklists (tests/fixtures/rule_bundles).
+CASE_INVESTIGATION: Final[dict[str, Any]] = {
+    "any": [{"stage_completed": "test_meeting"}, {"stage_completed": "test_check_in"}]
+}
+CASE_RESPONSE: Final[dict[str, Any]] = {
+    "any": [
+        _yes("progress.test_meeting.meeting_held"),
+        _yes("progress.test_check_in.employee_heard"),
+    ]
+}
+
 DISCIPLINARY_CONVERSATION: Final[dict[str, Any]] = {
     "facts": [
         {"key": "proposed_suspension_days", "kind": "count", "max": 365},
@@ -134,6 +148,14 @@ DISCIPLINARY_CONVERSATION: Final[dict[str, Any]] = {
                             "require",
                             _yes("given_opportunity_to_explain"),
                         ),
+                    ],
+                },
+                {
+                    # M2-NEW-08: prerequisites only the Case's own record establishes.
+                    "action": "opt-outcome",
+                    "rules": [
+                        _rule("outcome_investigation", "block", "require", CASE_INVESTIGATION),
+                        _rule("outcome_response", "block", "require", CASE_RESPONSE),
                     ],
                 },
             ],
@@ -540,6 +562,13 @@ def profile_data(
                         "prerequisites": {
                             "employee_response": "suspension_response",
                             "completed_investigation": "suspension_investigation",
+                        },
+                    },
+                    {
+                        "action": "opt-outcome",
+                        "prerequisites": {
+                            "employee_response": "outcome_response",
+                            "completed_investigation": "outcome_investigation",
                         },
                     },
                 ],

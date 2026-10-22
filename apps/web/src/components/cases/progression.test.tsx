@@ -75,7 +75,7 @@ describe("Next steps (workflow progression)", () => {
     workspace(apiProgression(), fetcher);
 
     expect(nextSteps().getByText("Synthetic test rules")).toBeInTheDocument();
-    expect(nextSteps().getByText(/doesn't classify the incident, suggest a pathway or validate your choice/)).toBeInTheDocument();
+    expect(nextSteps().getByText(/it's your decision\. HeroOS can explain the choices in Ask HeroOS, but it doesn't classify the incident, choose a pathway for you or validate your choice/)).toBeInTheDocument();
     const record = nextSteps().getByRole("button", { name: "Record my decision" });
     expect(record).toBeDisabled();
     fireEvent.click(nextSteps().getByRole("radio", { name: /Less serious/ }));
@@ -234,10 +234,13 @@ describe("Next steps (workflow progression)", () => {
     );
     expect(nextSteps().getByText("Mark complete: Test stage 3")).toBeInTheDocument();
     expect(nextSteps().getByText(/hasn't contacted anyone/)).toBeInTheDocument();
-    // The hold is visible at the top of Next steps and in the case header, not only further down.
+    // The step's hold is visible at the top of Next steps, not only further down...
     expect(nextSteps().getAllByText("Specialist review needed")[0]).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Specialist review needed\. Case status$/ })).toHaveTextContent("Specialist review needed");
-    fireEvent.click(screen.getByRole("button", { name: /Case status$/ }));
+    // ...and it is that step's, never the whole Case's status (M2-NEW-08): the header keeps the Case's own.
+    const pill = screen.getByRole("button", { name: /Case status$/ });
+    expect(pill).not.toHaveTextContent("Specialist review needed");
+    fireEvent.click(pill);
+    expect(screen.getByText(/^Specialist review needed before: /)).toBeInTheDocument();
     const details = within(document.querySelector("details#case-full-details") as HTMLElement);
     expect(details.getByRole("heading", { name: "Progression history" })).toBeInTheDocument();
     expect(details.getByText("Pathway recorded: Less serious (your decision)")).toBeInTheDocument();

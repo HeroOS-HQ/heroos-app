@@ -47,6 +47,15 @@ const API_STATUS = {
   },
   checks: "ready",
   latest_outcome: "guidance",
+  // M2-NEW-08: where the Case's formal workflow stands (the employer's records).
+  position: {
+    state: "in_stage",
+    label: "Stage in progress",
+    pathway: "Serious misconduct",
+    stage: "Investigation",
+    stage_in_progress: true,
+    held_steps: [],
+  },
 };
 const STATUS = {
   lifecycle: "in_progress",
@@ -58,6 +67,14 @@ const STATUS = {
   },
   checks: "ready",
   latestOutcome: "guidance",
+  position: {
+    state: "in_stage",
+    label: "Stage in progress",
+    pathway: "Serious misconduct",
+    stage: "Investigation",
+    stageInProgress: true,
+    heldSteps: [],
+  },
 };
 const API_CONVERSATION = {
   id: CONVERSATION_ID,

@@ -97,7 +97,7 @@ def test_the_conversation_section_parses_and_is_optional() -> None:
     rule = program.rule("fictional_cap")
     assert rule is not None and rule.follow_up is not None
     assert rule.follow_up.when == "employer_insists" and rule.follow_up.action == "block"
-    assert set(program.actions) == {"opt-suspension", "opt-warning"}
+    assert set(program.actions) == {"opt-suspension", "opt-warning", "opt-outcome"}
     count = bundle.conversation.fact("proposed_suspension_days")
     assert count is not None and count.kind == "count" and count.maximum == 365
     without = disciplinary_rule_bundle()
@@ -180,6 +180,68 @@ def _cap(data: dict[str, Any]) -> dict[str, Any]:
     ],  # fmt: skip
 )
 def test_the_conversation_section_is_strict(change: Any, code: str) -> None:
+    data = disciplinary_rule_bundle()
+    change(data)
+    with pytest.raises(RuleBundleError) as refused:
+        parse(data)
+    assert refused.value.code == code
+
+
+# --- M2-NEW-08: prerequisites read the Case's formal record --------------------------------------
+
+
+def _prerequisite(data: dict[str, Any], code: str = "uae_federal") -> dict[str, Any]:
+    """The fictional penalty notice's first prerequisite rule in ``code``'s programme."""
+    actions = data["conversation"]["jurisdictions"][code]["actions"]
+    entry = next(a for a in actions if a["action"] == "opt-outcome")
+    rule: dict[str, Any] = entry["rules"][0]
+    return rule
+
+
+def test_a_prerequisite_may_read_its_own_jurisdictions_stages_and_checklists() -> None:
+    bundle = parse(disciplinary_rule_bundle())
+    assert bundle.conversation is not None
+    rules = bundle.conversation.jurisdictions["uae_federal"].actions["opt-outcome"]
+    assert {r.rule.key for r in rules} == {"outcome_investigation", "outcome_response"}
+    assert predicates.stage_keys(rules[0].rule.trigger) == ("test_meeting", "test_check_in")
+    assert "progress.test_meeting.meeting_held" in predicates.fact_keys(rules[1].rule.trigger)
+
+
+@pytest.mark.parametrize(
+    ("change", "code"),
+    [
+        # A Condition's rule never reads a stage: only an employer decision's prerequisite may.
+        (
+            lambda d: _cap(d).update(when={"stage_completed": "test_meeting"}),
+            "stage_referenced_in_conversation",
+        ),
+        # A Condition's rule never reads a stage checklist answer either.
+        (
+            lambda d: _cap(d).update(
+                when={"answer": "progress.test_meeting.meeting_held", "in": ["yes"]}
+            ),
+            "unknown_answer_referenced",
+        ),
+        # A stage the programme doesn't have.
+        (
+            lambda d: _prerequisite(d).update(require={"stage_completed": "test_nowhere"}),
+            "unknown_stage_referenced",
+        ),
+        # Another jurisdiction's stage, or its checklist: never.
+        (
+            lambda d: _prerequisite(d).update(require={"stage_completed": "test_difc_review"}),
+            "unknown_stage_referenced",
+        ),
+        (
+            lambda d: _prerequisite(d).update(
+                require={"answer": "progress.test_difc_review.difc_check", "in": ["yes"]}
+            ),
+            "unknown_answer_referenced",
+        ),
+    ],
+    ids=["condition_stage", "condition_checklist", "unknown_stage", "difc_stage", "difc_checklist"],
+)
+def test_a_prerequisite_reads_only_its_own_programmes_record(change: Any, code: str) -> None:
     data = disciplinary_rule_bundle()
     change(data)
     with pytest.raises(RuleBundleError) as refused:

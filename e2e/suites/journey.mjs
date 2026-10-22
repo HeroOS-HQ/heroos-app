@@ -12,7 +12,7 @@
 // stops everything, persistence after a reload and a new sign-in, and a phone.
 // Then what the product refuses, checked against the real API and database.
 // Synthetic data only: no rule or template here is HeroOS or legal guidance.
-import { closeCaseStatus, newFounder, openCaseStatus, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
+import { closeCaseStatus, newFounder, openCaseDetails, openCaseStatus, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
 
 const AUTHORITY = "[SYNTHETIC DEMO] Free Zone Authority";
 const COMPANY = "[SYNTHETIC DEMO] Example Trading LLC";
@@ -82,13 +82,15 @@ export async function run(ctx) {
   await page.type("#ask-heroos", NARRATIVE);
   await page.click('button[aria-label="Send"]');
   await page.waitFor(`/^\\/workspaces\\/[^/]+\\/cases\\/[0-9a-f-]{36}$/.test(location.pathname)`, { message: "the new case opens" });
+  await openCaseDetails(page);
   await page.waitForHydrated("#q-incident-narrative");
   const caseId = await page.eval("location.pathname.split('/').pop()");
   const casePath = `${companyPath}/cases/${caseId}`;
   const welcome = await text();
   const asked = await page.eval(`document.getElementById("q-incident-narrative").value`);
-  check("JOURNEY-2", "Ask HeroOS is the company's home; the founder's words open a case with a guided (not AI) conversation, the words already its first answer",
-    home.includes("Explain the situation in your own words.") && welcome.includes("not an AI assistant") && welcome.includes("What happened?") && asked === NARRATIVE,
+  check("JOURNEY-2", "Ask HeroOS is the company's home; the founder's words open a case whose record leads back to Ask HeroOS (no second conversation), the words already its first answer",
+    home.includes("Explain the situation in your own words.") && welcome.includes("Ask HeroOS") && !welcome.includes("not an AI assistant") &&
+      welcome.includes("What happened?") && asked === NARRATIVE,
     `${home.slice(0, 200)} | ${welcome.slice(0, 200)}`);
   await shot(page, "journey-03-new-case");
 

@@ -73,7 +73,9 @@ class Reviews:
 
     History stays in each turn's evaluation record. A decision's review ends only
     when a later evaluation of that decision no longer requires one, or when the
-    founder explicitly withdraws it; a turn about something else changes nothing.
+    founder explicitly withdraws it; a turn about something else changes nothing,
+    and neither does a decision asked about only hypothetically (M2-NEW-08): a
+    "what if" is never the employer's intention.
     """
 
     actions: tuple[str, ...] = ()
@@ -103,7 +105,9 @@ class Reviews:
         return self.advance(
             matter=evaluation.matter,
             evaluated=[
-                (a.action, a.review is not None and a.review.required) for a in evaluation.actions
+                (a.action, a.review is not None and a.review.required)
+                for a in evaluation.actions
+                if not a.hypothetical
             ],
             matter_review=any(r.required and r.scope == "matter" for r in evaluation.reviews),
             withdrawn=withdrawn,
@@ -121,7 +125,7 @@ class Reviews:
                 evaluated=[
                     (str(a["action"]), bool(a.get("review")))
                     for a in (actions if isinstance(actions, list) else [])
-                    if isinstance(a, dict) and "action" in a
+                    if isinstance(a, dict) and "action" in a and not a.get("hypothetical")
                 ],
                 matter_review=any(
                     isinstance(r, dict) and r.get("scope") == "matter"

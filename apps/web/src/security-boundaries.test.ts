@@ -32,6 +32,7 @@ describe("browser/server boundary", () => {
       "components/ask/ask-conversation.tsx",
       "components/ask/ask-parts.tsx",
       "components/ask/ask-workspace.tsx",
+      "components/ask/case-steps.tsx",
       "components/ask/conversation-history.tsx",
       "components/blueprint/blueprint-page.tsx",
       "components/cases/answers-form.tsx",
@@ -44,6 +45,7 @@ describe("browser/server boundary", () => {
       "components/cases/document-form.tsx",
       "components/cases/documents-panel.tsx",
       "components/cases/progression-panel.tsx",
+      "components/cases/use-case-request.ts",
       "components/onboarding/onboarding-wizard.tsx",
       "components/site/icons.tsx",
       "components/site/reveal.tsx",
@@ -80,9 +82,10 @@ describe("browser/server boundary", () => {
     expect(bff).toMatch(/sessionFromRequest\(request, config/);
     // The reads (M2-04: an older page of the case history; M2-04C: a Case's
     // templates and one template's form; M2-NEW-07: the stored Ask HeroOS
-    // conversations) are GET-only.
+    // conversations; M2-NEW-08: a Case's view for Ask HeroOS's inline steps) are GET-only.
     const reads = {
       "app/bff/companies/[companyId]/cases/[caseId]/history/route.ts": "handleHistoryPage",
+      "app/bff/companies/[companyId]/cases/[caseId]/workflow/route.ts": "handleCaseWorkflow",
       "app/bff/companies/[companyId]/cases/[caseId]/documents/route.ts": "handleDocumentsList",
       "app/bff/companies/[companyId]/cases/[caseId]/documents/[templateKey]/route.ts": "handleDocumentForm",
       "app/bff/companies/[companyId]/cases/[caseId]/assistant/route.ts": "handleAssistantStatus",
@@ -123,6 +126,7 @@ describe("browser/server boundary", () => {
     const guardRead = bff.slice(bff.indexOf("function guardRead"));
     expect(guardRead).toMatch(/^[\s\S]*?isSameOriginRequest\(request, config\)[\s\S]*?sessionFromRequest\(request, config/);
     for (const handler of [
+      "handleCaseWorkflow",
       "handleDocumentsList",
       "handleDocumentForm",
       "handleAssistantStatus",

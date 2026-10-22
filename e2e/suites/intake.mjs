@@ -9,7 +9,7 @@
 // specialist review instead of screened. An API with the default setting never
 // collects the sensitive screening. PostgreSQL rows, RLS and logs are checked
 // too. Synthetic data only.
-import { closeCaseStatus, newFounder, openCaseStatus, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
+import { closeCaseStatus, newFounder, openCaseDetails, openCaseStatus, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
 
 const TITLE = "[SYNTHETIC E2E] Intake journey";
 const NARRATIVE = "[SYNTHETIC E2E] A team member posted rude remarks about a colleague after a shift ended.";
@@ -66,6 +66,7 @@ export async function run(ctx) {
   await page.viewport(1440, 900);
   await ctx.signIn(page, fed.subject);
   await page.goto(`${webOrigin}${casePath}`);
+  await openCaseDetails(page);
   await page.waitForHydrated("#q-incident-narrative");
   const opened = await page.text();
   check("INTAKE-1", "a new case in a UAE Federal Company asks the initial facts and offers four question groups; the screening waits for the case jurisdiction",
@@ -165,6 +166,7 @@ export async function run(ctx) {
 
   // Correcting the answer is saved, but it doesn't release the hold.
   await page.goto(`${webOrigin}${casePath}`);
+  await openCaseDetails(page);
   await page.waitForHydrated("#q-incident-narrative");
   await page.clickText("button", "4. Safety screening");
   await page.waitFor(`Boolean(document.querySelector(${JSON.stringify(radio("screening.sick_leave", "no"))}))`, { message: "screening group" });

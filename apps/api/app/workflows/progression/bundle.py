@@ -58,7 +58,17 @@ compare whole numbers (``compare``) and carry a ``follow_up``:
 ``{"action", "when": "employer_insists"}`` (a two-state caution: stronger
 only once the employer explicitly insists) or ``{"action", "when":
 "condition_specific", "if": P}``. Conversation rules never read a sensitive
-answer or a stage. A bundle without the section has no conversation rules.
+answer. A bundle without the section has no conversation rules.
+
+**Prerequisites read the Case's formal record (M2-NEW-08).** An employer
+decision's prerequisite rule (``actions``, never a Condition's rule) may also
+read the attached Case's formal progression in that same jurisdiction's
+programme: ``{"stage_completed": "<stage>"}`` and a stage checklist answer
+(``progress.<stage>.<item>``). Only the employer records those, through the
+Case's own controls; without a Case no stage is completed and no checklist
+answer is known, so such a prerequisite is never satisfied by the founder's
+words. A stage or checklist item of another jurisdiction's programme is
+refused.
 """
 
 import hashlib
@@ -586,7 +596,10 @@ def _conversation_rule(raw: object, where: str) -> ConversationRule:
 
 
 def _conversation(
-    raw: object, readable: frozenset[str], sensitive: frozenset[str]
+    raw: object,
+    readable: frozenset[str],
+    sensitive: frozenset[str],
+    progressions: Mapping[str, JurisdictionProgram],
 ) -> ConversationRules:
     """The optional conversation section: typed facts and per-jurisdiction rules."""
     where = "$.conversation"
@@ -632,18 +645,28 @@ def _conversation(
         keys = [r.rule.key for r in everything]
         if len(set(keys)) != len(keys):
             raise RuleBundleError("duplicate_rule", at)
+        # A prerequisite may read this jurisdiction's programme: its stages and checklists.
+        progression = progressions.get(code, JurisdictionProgram(code, ()))
+        stages = {s.key for p in progression.pathways for s in p.stages}
+        checklist = set(progression.checklist_items())
         for index, item in enumerate(everything):
+            prerequisite = index >= len(rules)
             triggers = [item.rule.trigger] + (
                 [item.follow_up.trigger]
                 if item.follow_up is not None and item.follow_up.trigger is not None
                 else []
             )
             for trigger in triggers:
-                if predicates.stage_keys(trigger):
+                referenced = set(predicates.stage_keys(trigger))
+                if referenced and not prerequisite:
                     raise RuleBundleError("stage_referenced_in_conversation", f"{at}[{index}]")
+                if not referenced <= stages:
+                    raise RuleBundleError("unknown_stage_referenced", f"{at}[{index}]")
                 for fact in predicates.fact_keys(trigger):
                     if fact in sensitive:
                         raise RuleBundleError("sensitive_answer_referenced", f"{at}[{index}]")
+                    if prerequisite and fact in checklist:
+                        continue
                     if fact not in readable and fact not in declared:
                         raise RuleBundleError("unknown_answer_referenced", f"{at}[{index}]")
                 if not set(predicates.compared_keys(trigger)) <= numeric:
@@ -793,7 +816,7 @@ def parse_bundle(
     conversation = (
         None
         if data.get("conversation") is None
-        else _conversation(data["conversation"], readable, sensitive)
+        else _conversation(data["conversation"], readable, sensitive, programs)
     )
     if conversation is not None:
         for code, rules_program in conversation.jurisdictions.items():
