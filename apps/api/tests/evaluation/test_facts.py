@@ -293,3 +293,30 @@ def test_continued_values_are_revalidated(execution: WorkflowExecution) -> None:
     )
     engine = trust(execution, "ok", prior=prior).facts.engine
     assert engine == {"given_opportunity_to_explain": "yes", "headcount": 12}
+
+
+# --- a confirmation asked as the fact's own question again (robustness pass) ----------------
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("No.", "no"),
+        ("Yes", "yes"),  # a direct answer, even against the earlier reading
+        ("Not sure", "not_sure"),
+        ("No, he hasn't", None),  # more than the answer: never trusted
+        ("yes thats right", None),
+        ("I think so", None),
+    ],
+)
+def test_a_reask_is_answered_directly_never_as_yes_thats_right(
+    execution: WorkflowExecution, reply: str, expected: str | None
+) -> None:
+    """HeroOS asked the fact's own question again (no candidate): the answer means what it says
+    about that question; "yes" never confirms the earlier reading of "no"."""
+    asked = Asked("confirm", "employee_aware_of_relevant_policy", None)
+    result = trust(execution, reply, prior=PriorState(asked=(asked,)))
+    assert result.facts.engine.get("employee_aware_of_relevant_policy") == expected
+    assert result.answered is (expected is not None)
+    if expected is not None:
+        assert result.facts.sources["employee_aware_of_relevant_policy"] == "confirmation"

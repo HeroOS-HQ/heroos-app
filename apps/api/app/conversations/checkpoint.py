@@ -35,6 +35,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Final
 
+from app.assistant.gateway.memory import (
+    MAX_REMEMBERED,
+    OUTCOMES,
+    AskRecord,
+    ConversationMemory,
+)
 from app.assistant.gateway.service import snapshot_versions
 from app.db.models.assistant import MAX_CHECKPOINT_BYTES
 from app.evaluation.continuation import (
@@ -152,6 +158,9 @@ class Checkpoint:
     # the server's canonical reading), shown for the employer to save to the Case with one
     # explicit action. A reading, never a trusted fact: nothing is saved until they do.
     noted: Mapping[str, Value] = field(default_factory=dict)
+    # What the conversation covered (``app.assistant.gateway.memory``): for the next turn's
+    # questions and wording only, never trusted.
+    memory: ConversationMemory = field(default_factory=ConversationMemory)
 
 
 def encode(checkpoint: Checkpoint) -> dict[str, object]:
@@ -183,6 +192,14 @@ def encode(checkpoint: Checkpoint) -> dict[str, object]:
     }
     if checkpoint.noted:
         data["noted"] = dict(sorted(checkpoint.noted.items())[:MAX_FACTS])
+    memory = checkpoint.memory
+    if memory.said or memory.asked:
+        data["memory"] = {
+            "said": dict(list(memory.said.items())[-MAX_REMEMBERED:]),
+            "asked": {
+                k: [r.times, r.last] for k, r in list(memory.asked.items())[-MAX_REMEMBERED:]
+            },
+        }
     if len(_json(data)) > MAX_CHECKPOINT_BYTES:  # pragma: no cover - bounded by the limits above
         raise ValueError("checkpoint exceeds its bound")
     return data
@@ -221,6 +238,37 @@ def _reviews(data: object) -> Reviews | None:
     return Reviews(tuple(actions), matter)
 
 
+def _memory(data: object) -> ConversationMemory | None:
+    """The stored memory, or None for anything malformed (an absent one is empty)."""
+    if data is None:
+        return ConversationMemory()
+    if not isinstance(data, dict) or set(data) != {"said", "asked"}:
+        return None
+    said, asked = data["said"], data["asked"]
+    if (
+        not isinstance(said, dict)
+        or len(said) > MAX_REMEMBERED
+        or not all(_key(k) and _value(v) for k, v in said.items())
+        or not isinstance(asked, dict)
+        or len(asked) > MAX_REMEMBERED
+    ):
+        return None
+    records: dict[str, AskRecord] = {}
+    for key, entry in asked.items():
+        if (
+            not _key(key)
+            or not isinstance(entry, list)
+            or len(entry) != 2
+            or not isinstance(entry[0], int)
+            or isinstance(entry[0], bool)
+            or not 0 < entry[0] <= 1000
+            or entry[1] not in OUTCOMES
+        ):
+            return None
+        records[key] = AskRecord(entry[0], entry[1])
+    return ConversationMemory(said=dict(said), asked=records)
+
+
 def decode(data: object) -> Checkpoint | None:
     """The stored checkpoint, or None for anything it can't vouch for (never raises)."""
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
@@ -232,8 +280,10 @@ def decode(data: object) -> Checkpoint | None:
     actions, voided, revision = data.get("actions"), data.get("voided"), data.get("case_revision")
     company, reviews = data.get("company_jurisdiction"), _reviews(data.get("reviews"))
     noted = data.get("noted", {})
+    memory = _memory(data.get("memory"))
     if (
-        not isinstance(versions, str)
+        memory is None
+        or not isinstance(versions, str)
         or (workflow is not None and not _key(workflow))
         or (jurisdiction is not None and jurisdiction not in _JURISDICTION_ANSWERS)
         or (company is not None and not _value(company))
@@ -296,6 +346,7 @@ def decode(data: object) -> Checkpoint | None:
         company_jurisdiction=company,
         reviews=reviews,
         noted=dict(noted),
+        memory=memory,
     )
 
 

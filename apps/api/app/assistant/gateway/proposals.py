@@ -43,9 +43,17 @@ from app.evaluation.facts import parse_yes_no
 UNDERSTANDING_SCHEMA: Final = "heroos.understanding/1"
 RESPONSE_SCHEMA: Final = "heroos.response/1"
 
-Intent = Literal["supported_hr", "other_hr", "unclear", "unsupported", "confidential_request"]
+Intent = Literal[
+    "supported_hr", "other_hr", "unclear", "unsupported", "confidential_request", "conversational",
+]  # fmt: skip
 INTENTS: Final[tuple[Intent, ...]] = (
-    "supported_hr", "other_hr", "unclear", "unsupported", "confidential_request",
+    "supported_hr", "other_hr", "unclear", "unsupported", "confidential_request", "conversational",
+)  # fmt: skip
+# How the current message relates to the question HeroOS asked last turn (the model's reading;
+# it only steers what HeroOS asks next and how it acknowledges, never a fact).
+PreviousAnswer = Literal["answered", "does_not_know", "not_answered", "no_question"]
+PREVIOUS_ANSWERS: Final[tuple[PreviousAnswer, ...]] = (
+    "answered", "does_not_know", "not_answered", "no_question",
 )  # fmt: skip
 Confidence = Literal["high", "medium", "low"]
 CONFIDENCES: Final[tuple[Confidence, ...]] = ("high", "medium", "low")
@@ -141,6 +149,11 @@ class UnderstandingProposal:
     # M2-NEW-08: decisions the founder asks about only hypothetically ("what if I dismissed
     # them?"). Evaluated so the answer is accurate, never the employer's intention.
     hypothetical: tuple[RequestedAction, ...] = ()
+    # Whether the current message answers HeroOS's last question (orchestration only).
+    previous_answer: PreviousAnswer = "no_question"
+    # Server-set: a message with no matter of its own continued the conversation's matter
+    # (``app.assistant.gateway.service``); never from the model.
+    continued: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -270,7 +283,13 @@ def parse_understanding(
         data,
         _UNDERSTANDING_FIELDS,
         frozenset(
-            {"case_summary", "requested_actions", "withdrawn_actions", "hypothetical_actions"}
+            {
+                "case_summary",
+                "requested_actions",
+                "withdrawn_actions",
+                "hypothetical_actions",
+                "previous_question_answer",
+            }
         ),
         "$",
     )
@@ -315,6 +334,7 @@ def parse_understanding(
     actions = _actions(data, "requested_actions", workflow, current_turn)
     withdrawn = _actions(data, "withdrawn_actions", workflow, current_turn)
     hypothetical = _actions(data, "hypothetical_actions", workflow, current_turn)
+    previous = data.get("previous_question_answer", "no_question")
     return UnderstandingProposal(
         intent=intent,
         workflow=None if workflow is None else workflow.key,
@@ -326,6 +346,7 @@ def parse_understanding(
         actions=actions,
         withdrawn=withdrawn,
         hypothetical=hypothetical,
+        previous_answer=_code(previous, PREVIOUS_ANSWERS, "$.previous_question_answer"),
     )
 
 
@@ -466,6 +487,7 @@ def check_evidence(
             actions=actions,
             withdrawn=withdrawn,
             hypothetical=tuple(hypotheticals.values()),
+            previous_answer=proposal.previous_answer,
         ),
         dropped,
     )
@@ -504,6 +526,7 @@ def without_contradicted(
         actions=proposal.actions,
         withdrawn=proposal.withdrawn,
         hypothetical=proposal.hypothetical,
+        previous_answer=proposal.previous_answer,
     )
 
 

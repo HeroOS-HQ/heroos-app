@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from app.assistant.gateway.memory import AskRecord, ConversationMemory
 from app.assistant.gateway.service import snapshot_versions
 from app.conversations.bridge import NARRATIVE_KEY
 from app.conversations.checkpoint import (
@@ -66,6 +67,20 @@ def test_a_checkpoint_round_trips_as_plain_bounded_codes(snapshot: ExecutionSnap
     assert decode(encode(Checkpoint(""))) == Checkpoint("")
 
 
+def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
+    snapshot: ExecutionSnapshot,
+) -> None:
+    memory = ConversationMemory(
+        said={POLICY: "yes", "misconduct_level": "stated"},
+        asked={POLICY: AskRecord(2, "unanswered"), "jurisdiction": AskRecord(1, "not_sure")},
+    )
+    checkpoint = Checkpoint(snapshot_versions(snapshot), trusted_state(), memory=memory)
+    assert decode(encode(checkpoint)) == checkpoint
+    older = stored(snapshot)
+    assert "memory" not in older and decode(older) is not None
+    assert decode(older).memory == ConversationMemory()  # type: ignore[union-attr]
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -84,6 +99,11 @@ def test_a_checkpoint_round_trips_as_plain_bounded_codes(snapshot: ExecutionSnap
         {"voided": [f"k{i}" for i in range(30)]},
         {"case_revision": "1"},
         {"case_revision": True},
+        {"memory": {"said": {}}},
+        {"memory": {"said": {"x": "a value with spaces"}, "asked": {}}},
+        {"memory": {"said": {}, "asked": {"x": [0, "answered"]}}},
+        {"memory": {"said": {}, "asked": {"x": [1, "maybe"]}}},
+        {"memory": {"said": {}, "asked": {"x": [True, "answered"]}}},
     ],
 )
 def test_anything_it_cant_vouch_for_is_rejected(

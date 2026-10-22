@@ -309,7 +309,8 @@ def knowledge_view(bundle: KnowledgeBundle, plan: TurnPlan) -> KnowledgeView:
             "id": t.id,
             "about": t.label,
             "mode": t.mode,
-            **({"ask": t.question} if t.question else {}),
+            # A deterministic check's question: HeroOS asks it itself, in these words.
+            **({"heroos_asks_after_your_reply": t.question} if t.question else {}),
         }
         for t in plan.targets
     ]

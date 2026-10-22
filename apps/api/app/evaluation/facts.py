@@ -15,8 +15,13 @@
      deterministically against that fact's schema ("Yes." -> ``yes``,
      "Eight." -> ``8``; "I sort of spoke to him" and "basically all week"
      parse to nothing);
-  2. a **confirmation**: HeroOS asked "is it <canonical value>?" (the server
-     canonicalized what the founder said) and the founder answered yes;
+  2. a **confirmation** of what the founder said in passing, when a decision
+     needs it: HeroOS asks that fact's own question again ("So I can rely on it
+     for this step: has a disciplinary sanction already been issued for this same
+     incident?") and the answer is parsed as in (1), so it means what it says
+     about the question, never "yes, that's right"; or, for a fact with no
+     question of its own, HeroOS asks "is it <canonical value>?" (the server
+     canonicalized what the founder said) and the founder answers yes;
   3. the **Company Blueprint** (e.g. the number of employees).
 
   Earlier engine-trusted values come back through the encrypted continuation
@@ -321,6 +326,13 @@ def trust_facts(
             answer = canonical(schema, message)
             if answer is not None:
                 engine[asked.key], sources[asked.key] = answer, "direct_answer"
+                answered = asked.key
+        elif asked.kind == "confirm" and schema is not None and asked.candidate is None:
+            # The fact's own question asked again (HeroOS had a reading of what the founder
+            # said): a direct answer to that question, never "yes, that's right".
+            answer = canonical(schema, message)
+            if answer is not None:
+                engine[asked.key], sources[asked.key] = answer, "confirmation"
                 answered = asked.key
         elif asked.kind == "confirm" and schema is not None:
             reply = parse_yes_no(message)

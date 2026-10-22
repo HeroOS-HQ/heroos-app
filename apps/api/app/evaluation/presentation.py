@@ -125,14 +125,26 @@ def display(schema: FactSchema | None, value: Value) -> str:
     return str(value).replace("_", " ")
 
 
+QUESTION_WORDS: Final = frozenset({"whether", "what", "which", "how", "when", "who", "where", "if"})
+
+
 def requirement_question(
     requirement: MissingRequirement,
     *,
     schema: FactSchema | None,
     action_titles: dict[str, str],
     jurisdiction: str | None,
+    prompt: str | None = None,
 ) -> str:
-    """A plain, server-owned question for one missing requirement."""
+    """A plain, server-owned question for one missing requirement.
+
+    ``prompt``: the definition's own question for the fact, when it has one (natural English,
+    found live: the label assembled into "Could you tell me more about this: whether ...?"
+    read as a form). A confirmation is then the same direct question again, saying why, and
+    the founder's answer is parsed against the question itself (``app.evaluation.facts``): a
+    "yes" means yes to what was asked, never "yes, that's right" to a reading. A fact with no
+    question of its own is confirmed as before ("is it <value>?").
+    """
     if requirement.kind == "insistence":
         held = [action_titles[a] for a in requirement.actions if a in action_titles]
         target = held[0].lower() if held else "this step"
@@ -145,11 +157,18 @@ def requirement_question(
             if name
             else "Which legal entity employs this person?"
         )
+    if prompt is not None:
+        if requirement.kind == "confirmation":
+            return f"So I can rely on it for this step: {prompt[:1].lower() + prompt[1:]}"
+        return prompt
     label = requirement.label.rstrip(".")
     lowered = label[:1].lower() + label[1:]
     if requirement.kind == "confirmation" and requirement.candidate is not None:
+        # No question of its own: "yes" confirms the server's canonical reading.
         return f"Just to confirm: {lowered}: {display(schema, requirement.candidate)}?"
-    return f"Could you tell me more about this: {lowered}?"
+    if label.split(" ", 1)[0].lower() in QUESTION_WORDS:
+        return f"Could you tell me {lowered}?"
+    return f"Could you tell me about {lowered}?"
 
 
 def _note_text(note: Note) -> str:

@@ -148,8 +148,9 @@ def concurrent_turn(
     message: str,
     proposal: Any,
     action: Callable[[], None],
+    targets: tuple[str, ...] = ("q1",),
 ) -> tuple[Any, ScriptedProvider]:
-    chat = ScriptedProvider(proposal, response(SAFE, ["q1"]))
+    chat = ScriptedProvider(proposal, response(SAFE, list(targets)))
     service = AskConversations(
         During(gateway(founder.evaluation, chat), action),  # type: ignore[arg-type]
         policy="disabled",
@@ -210,7 +211,13 @@ def test_a_prerequisite_recorded_meanwhile_turns_a_stale_block_into_guidance(
     other = add_admin(db, alice_context.company_id)
     again = "And now, can I give him a written warning?"
     result, chat = concurrent_turn(
-        db, founder, again, warn(again, 2), lambda: form_save(db, other, case_id, {QUESTION: "yes"})
+        db,
+        founder,
+        again,
+        warn(again, 2),
+        lambda: form_save(db, other, case_id, {QUESTION: "yes"}),
+        # The Case already holds the answer when the turn starts: nothing is asked about it.
+        targets=(),
     )
     assert len(chat.calls) == 2  # no third request to reconcile
     # The current, authoritative result is recorded; the stale Block's words are discarded.

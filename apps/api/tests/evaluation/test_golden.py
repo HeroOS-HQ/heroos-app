@@ -370,7 +370,7 @@ def test_j_over_the_cap_warns_then_blocks_only_on_explicit_insistence(
     assert warned.facts.sources["proposed_suspension_days"] == "confirmation"
     assert warned.missing[0].kind == "insistence"
     targets = chat.provider.phase("response")[0].data["approved_knowledge"]["question_targets"]  # type: ignore[union-attr]
-    assert "go ahead" in targets[0]["ask"]  # the server's own question
+    assert "go ahead" in targets[0]["heroos_asks_after_your_reply"]  # the server's own question
     # Tone and repetition are not insistence.
     shouted = chat.say(
         "I WANT TO SUSPEND HIM FOR 20 DAYS!!!",
@@ -484,7 +484,7 @@ def test_o_no_jurisdiction_specific_result_while_unresolved(artifacts: Artifacts
     assert kind(conflicted) == "block"
     assert evaluation(conflicted).missing[0].kind == "jurisdiction"
     targets = chat.provider.phase("response")[0].data["approved_knowledge"]["question_targets"]  # type: ignore[union-attr]
-    assert "UAE Federal" in targets[0]["ask"]
+    assert "UAE Federal" in targets[0]["heroos_asks_after_your_reply"]
     answered = chat.say("Yes.", understood("Yes.", uncertainties=["jurisdiction_conflict"]))
     assert evaluation(answered).jurisdiction == FED
     assert evaluation(answered).jurisdiction_state == "resolved"

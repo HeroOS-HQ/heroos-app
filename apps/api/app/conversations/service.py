@@ -60,6 +60,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.assistant.gateway.memory import ConversationMemory
 from app.assistant.gateway.service import (
     AiGateway,
     CaseContext,
@@ -235,6 +236,12 @@ def _noted(stored: object | None) -> dict[str, str]:
     return {} if checkpoint is None else {k: str(v) for k, v in checkpoint.noted.items()}
 
 
+def _memory(stored: object | None) -> ConversationMemory:
+    """What the conversation covered (said, not known, asked; never trusted), from its record."""
+    checkpoint = decode(stored)
+    return ConversationMemory() if checkpoint is None else checkpoint.memory
+
+
 class _Resume:
     """The gateway's ``resume``: the persisted state, for the snapshot the turn took."""
 
@@ -400,6 +407,7 @@ class AskConversations:
                 resume=state,
                 case=loaded.case_context,
                 noted=_noted(loaded.stored),
+                memory=_memory(loaded.stored),
             ),
         )
 
@@ -582,6 +590,7 @@ class AskConversations:
                 resume=fresh,
                 case=fresh_context,
                 noted=_noted(conversation.checkpoint),
+                memory=_memory(conversation.checkpoint),
             ),
             reply,
         )
@@ -700,6 +709,7 @@ class AskConversations:
                         reviews=reviews,
                     ),
                     noted=noted,
+                    memory=reply.memory,
                 )
             )
         conversation.checkpoint = stored

@@ -68,6 +68,18 @@ from typing import Final, Literal
 
 from app.assistant.gateway.catalog import EMPTY_CATALOG, RoutingCatalog, routing_catalog
 from app.assistant.gateway.grounding import check_grounding, internal_labels
+from app.assistant.gateway.memory import (
+    JURISDICTION as MEMORY_JURISDICTION,
+)
+from app.assistant.gateway.memory import (
+    MAX_UNANSWERED,
+    ConversationMemory,
+    carry,
+    conversation_view,
+    record,
+    resolve,
+    said_values,
+)
 from app.assistant.gateway.planning import QuestionTarget, TurnPlan, plan_turn
 from app.assistant.gateway.projection import (
     JURISDICTION_NAMES,
@@ -76,9 +88,11 @@ from app.assistant.gateway.projection import (
     knowledge_view,
 )
 from app.assistant.gateway.prompts import (
+    LIGHT_INSTRUCTION,
     RESPONSE_INSTRUCTION,
     UNDERSTANDING_INSTRUCTION,
     data_message,
+    regeneration_turns,
     repair_turns,
 )
 from app.assistant.gateway.proposals import (
@@ -140,6 +154,7 @@ MIN_CALL_SECONDS: Final = 3.0
 MAX_PROVIDER_CALLS: Final = 4
 UNDERSTANDING_TOKENS: Final = 1200
 RESPONSE_TOKENS: Final = 1200
+LIGHT_TOKENS: Final = 400
 UNDERSTANDING_TEMPERATURE: Final = 0.0
 RESPONSE_TEMPERATURE: Final = 0.2
 # The founder's earlier messages the understanding phase sees (newest kept first).
@@ -148,6 +163,8 @@ MAX_FOUNDER_CHARS: Final = 6000
 # The recent conversation the response phase sees.
 MAX_CONVERSATION_TURNS: Final = 6
 MAX_CONVERSATION_CHARS: Final = 6000
+# HeroOS's last reply, for the understanding phase (what was actually asked).
+MAX_PREVIOUS_REPLY_CHARS: Final = 1500
 
 GatewayReason = Literal["disabled", "not_configured", "knowledge_unavailable"]
 FailureKind = Literal[
@@ -163,6 +180,8 @@ MATTERS: Final[Mapping[str, Matter]] = {
     "unsupported": "outside_product_scope",
     "unclear": "unclear",
     "confidential_request": "confidential_request",
+    # Thanks, a goodbye, a reaction or a question about HeroOS itself: nothing to evaluate.
+    "conversational": "unclear",
 }
 # Outcomes a failed or replaced model reply must never hide.
 SAFETY_OUTCOMES: Final = frozenset({"warning", "block", "expert_review"})
@@ -192,6 +211,32 @@ CONFIDENTIAL: Final = (
 UNCLEAR: Final = (
     "Tell me a little more about what's happening at work, in your own words: who's involved "
     "and what happened. Then I can see how HeroOS's approved guidance can help."
+)
+CONVERSATIONAL: Final = (
+    "Thanks. I'm here whenever you want to talk through a workplace conduct or disciplinary "
+    "situation."
+)
+# The same refusal again, shorter: the founder already read the full one (found live: the
+# fixed text repeated word for word to every follow-up).
+OUTSIDE_HR_AGAIN: Final = (
+    "That one is still outside HeroOS's approved guidance, so a qualified HR or employment "
+    "specialist is the right person for it. If there's a conduct or disciplinary side to it, "
+    "I can help with that."
+)
+OUTSIDE_AGAIN: Final = (
+    "That's still outside what HeroOS can help with, so I'll leave that one there. If a "
+    "workplace conduct or disciplinary situation comes up, tell me about it and we can work "
+    "through it."
+)
+# What HeroOS is, for a reply to a question about HeroOS itself (no approved guidance in it).
+SCOPE: Final = (
+    "HeroOS helps employers in the United Arab Emirates handle workplace conduct and "
+    "disciplinary matters fairly and step by step, using approved guidance for the company's "
+    "confirmed employment jurisdiction (UAE Federal or DIFC). One conversation is one case: "
+    "the founder describes what happened, HeroOS asks what it needs, explains what the "
+    "approved guidance says and which safeguards apply, and the employer makes every decision "
+    "and takes every formal step in the case. HeroOS doesn't give general legal advice, "
+    "can't take actions for the employer and doesn't prepare or send documents."
 )
 GREETING: Final = (
     "Hi! What can HR help you with today? Tell me what's happening at work in your own words."
@@ -325,6 +370,8 @@ class FounderTurn:
     # noted readings, Case question key -> canonical value). Already said, so never asked again
     # (and noted again until saved or contradicted); never trusted.
     noted: Mapping[str, str] = field(default_factory=dict)
+    # What the conversation already covered (``memory``): said, not known, asked. Never trusted.
+    memory: ConversationMemory = field(default_factory=ConversationMemory)
 
 
 @dataclass(frozen=True, slots=True)
@@ -422,6 +469,8 @@ class GatewayReply:
     # The trusted state the next turn starts from (what ``continuation`` carries, unsealed).
     next_state: ContinuationState | None = None
     basis: TurnBasis | None = field(default=None, repr=False, compare=False)
+    # What the conversation covered after this turn (a persisted conversation keeps it).
+    memory: ConversationMemory = field(default_factory=ConversationMemory)
 
 
 Reconciliation = Literal["kept", "refreshed", "relaxed", "held"]
@@ -464,6 +513,8 @@ class _Turn:
     reconfirm: bool
     # M2-NEW-08: the Case position the reply's wording rests on.
     case: tuple[object, ...] = ()
+    # What the conversation covered, after the founder's message (before HeroOS's reply).
+    memory: ConversationMemory = field(default_factory=ConversationMemory)
 
 
 def _label(target: QuestionTarget) -> str:
@@ -540,6 +591,33 @@ def _asked_again(result: "_Turn", requirement: MissingRequirement) -> bool:
     )
 
 
+def _settled(result: "_Turn") -> frozenset[str]:
+    """What HeroOS never asks again this turn: trusted, said (or noted), not known, answered,
+    or not answered too often (``ConversationMemory.settled``)."""
+    facts = result.evaluation.facts
+    return result.memory.settled() | frozenset(facts.engine) | frozenset(facts.conversational)
+
+
+def _ignored(result: "_Turn", requirement: MissingRequirement) -> bool:
+    """Whether the founder already said they don't know this, or left it unanswered too often.
+
+    The requirement stays (its safeguard still holds the step); only the question stops: HeroOS
+    may say why it matters, never append the same question again. The jurisdiction question
+    counts as answered once the founder replied to it in any way the server could read.
+    """
+    if requirement.kind not in ("fact", "confirmation", "jurisdiction"):
+        return False
+    key = MEMORY_JURISDICTION if requirement.kind == "jurisdiction" else requirement.key
+    asked = result.memory.asked.get(key)
+    if asked is None:
+        return False
+    if asked.last == "not_sure" or (
+        asked.last == "answered" and requirement.kind == "jurisdiction"
+    ):
+        return True
+    return asked.last == "unanswered" and asked.times >= MAX_UNANSWERED
+
+
 def _strictness(result: "_Turn") -> int:
     return STRICTNESS[None if result.card is None else result.card.kind]
 
@@ -547,6 +625,7 @@ def _strictness(result: "_Turn") -> int:
 def _for_employee(
     bundle: KnowledgeBundle, understanding: UnderstandingProposal,
     company: CompanyBlueprintContext, plan: TurnPlan, result: "_Turn",
+    known: frozenset[str] = frozenset(),
 ) -> TurnPlan:  # fmt: skip
     """The plan again, shared guidance only, when this employee's jurisdiction is unresolved.
 
@@ -558,7 +637,7 @@ def _for_employee(
     unresolved = result.evaluation.jurisdiction_state in ("case_not_sure", "case_different")
     if not unresolved or plan.query.jurisdiction is None:
         return plan
-    return plan_turn(bundle, understanding, company, employee_unresolved=True)
+    return plan_turn(bundle, understanding, company, employee_unresolved=True, known=known)
 
 
 def uncertainty(fresh: "_Turn", prepared: "_Turn") -> Uncertainty | None:
@@ -631,25 +710,121 @@ def snapshot_versions(snapshot: ExecutionSnapshot) -> str:
 
 
 def _with_noted(
-    execution: WorkflowExecution, facts: TrustedFactState, noted: Mapping[str, str]
+    execution: WorkflowExecution,
+    facts: TrustedFactState,
+    noted: Mapping[str, str],
+    carried: Mapping[str, str] | None = None,
+    hedged: Collection[str] = (),
 ) -> TrustedFactState:
-    """The conversation's noted readings count as said (ESTABLISHED_CONVERSATIONAL), never trusted.
+    """The conversation's noted readings, and what the founder said earlier (``carried``,
+    from the conversation's memory), count as said (ESTABLISHED_CONVERSATIONAL), never trusted.
 
     Found live: a reading noted on one turn and not re-proposed by the next turn's understanding
-    was asked for again, and dropped from the noted list. The founder's newest statement still
-    wins: a key this turn read, or trusts, is left as it is.
+    was asked for again, and dropped from the noted list; a fact said early in a long
+    conversation was asked again once the understanding no longer saw that message. The
+    founder's newest statement still wins: a key this turn read, trusts, or hedges is left as it
+    is (a correction that reduces certainty reduces it).
     """
     said = dict(facts.conversational)
+    for key, value in (carried or {}).items():
+        if key not in said and key not in facts.engine and key not in hedged:
+            said[key] = value
     for question_key, value in noted.items():
         schema = next(
             (s for s in execution.schemas.values() if question_key in (s.key, s.question)), None
         )
         if schema is None or schema.key in said or schema.key in facts.engine:
             continue
+        if schema.key in hedged:
+            continue
         said[schema.key] = value
     if len(said) == len(facts.conversational):
         return facts
     return dataclasses.replace(facts, conversational=dict(sorted(said.items())))
+
+
+def _fact_labels(snapshot: ExecutionSnapshot, bundle: KnowledgeBundle) -> dict[str, str]:
+    """Fact key -> label: the knowledge's, else (a Case question) the schema's own."""
+    labels = {f.key: f.label for f in bundle.facts}
+    for execution in snapshot.workflows.values():
+        labels.update({k: s.label for k, s in execution.schemas.items() if k not in labels})
+    return labels
+
+
+_SENTENCE_END: Final = re.compile(r"(?<=[.!?])\s+")
+
+
+def _previous_reply(turn: FounderTurn) -> str | None:
+    """HeroOS's last reply (as the conversation holds it), bounded."""
+    text = next((t.content for t in reversed(turn.history) if t.role != "user"), None)
+    return None if text is None else text[:MAX_PREVIOUS_REPLY_CHARS]
+
+
+def _previous_question(turn: FounderTurn) -> str | None:
+    """The question(s) HeroOS's last reply ended with: what the founder's message may answer.
+
+    Only the trailing question, never HeroOS's statements: a claim HeroOS made is never
+    something the understanding phase reads (it can't become the founder's fact).
+    """
+    reply = _previous_reply(turn)
+    if reply is None:
+        return None
+    sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s]
+    asked: list[str] = []
+    while sentences and sentences[-1].rstrip().endswith("?") and len(asked) < 2:
+        asked.insert(0, sentences.pop())
+    return " ".join(asked) or None
+
+
+def _continued(
+    snapshot: ExecutionSnapshot, read: ReadResult, understanding: UnderstandingProposal
+) -> UnderstandingProposal:
+    """A message with no matter of its own in a conversation that has one continues it.
+
+    Found live: "ok", "sort of", "thats about it" or "thanks" in the middle of a disciplinary
+    matter were read as unclear (or as unsupported) and got a fixed "tell me what's happening"
+    paragraph, word for word, as if the matter had never been described. Nothing new is
+    trusted here: the matter's own evaluation runs on its trusted state, and the reply answers
+    what the founder said. A new HR matter or a request outside HeroOS is never continued.
+    """
+    ongoing = None if read.state is None else read.state.workflow
+    if ongoing is None or snapshot.execution(ongoing) is None:
+        return understanding
+    no_matter = understanding.intent in ("unclear", "conversational") or (
+        understanding.intent == "supported_hr" and understanding.workflow is None
+    )
+    if not no_matter:
+        return understanding
+    return dataclasses.replace(
+        understanding,
+        intent="supported_hr",
+        workflow=ongoing,
+        pathway=None,
+        topics=(),
+        continued=True,
+    )
+
+
+def _known(
+    snapshot: ExecutionSnapshot, understanding: UnderstandingProposal, read: ReadResult,
+    turn: FounderTurn,
+) -> frozenset[str]:  # fmt: skip
+    """What the conversation already covered beyond this turn's understanding (for planning)."""
+    known = set(turn.memory.settled()) | (set() if read.state is None else set(read.state.engine))
+    execution = snapshot.execution(understanding.workflow) if understanding.workflow else None
+    if execution is not None:
+        known |= {execution.question_facts.get(q, q) for q in turn.noted}
+    return frozenset(known)
+
+
+def _with_question(reply: str, question: str) -> str:
+    """The reply with the server's question as its one question (its own trailing questions
+    are left out: the server's wording is what the founder's answer is read against)."""
+    sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s]
+    while sentences and sentences[-1].rstrip().endswith("?"):
+        sentences.pop()
+    kept = " ".join(sentences)
+    return f"{kept} {question}".strip() if kept else question
 
 
 def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
@@ -842,7 +1017,8 @@ class AiGateway:
             k in schemas and schemas[k].kind != "blueprint" and schemas[k].valid(v)
             for k, v in state.engine.items()
         ) and all(
-            a.kind != "confirm" or (a.key in schemas and schemas[a.key].valid(a.candidate))
+            a.kind != "confirm"
+            or (a.key in schemas and (a.candidate is None or schemas[a.key].valid(a.candidate)))
             for a in asked
         )
         if not valid:
@@ -875,26 +1051,43 @@ class AiGateway:
             matter = "unclear"
         started = time.perf_counter_ns()
         trust = None
+        hedged: frozenset[str] = frozenset()
+        stated: set[str] = set()
+        current = len(_recent_founder_messages(turn)) - 1
         request = EvaluationRequest(matter=matter, workflow=workflow)
         if matter == "supported" and execution is not None:
-            current = len(_recent_founder_messages(turn)) - 1
-            stated = [
+            stated_facts = [
                 StatedFact(f.fact_key, f.value, f.excerpt, f.establishes, f.source_turn == current)
                 for f in understanding.facts
                 if f.provenance != "company_blueprint"
             ]
             trust = trust_facts(
                 execution,
-                stated=stated,
+                stated=stated_facts,
                 message=turn.message,
                 prior=prior,
                 blueprint=_blueprint_values(company),
             )
+            # The current message touched these without stating them (hedged, inferred or
+            # contradicted): what was said about them before no longer stands.
+            hedged = frozenset(
+                f.fact_key
+                for f in understanding.facts
+                if f.source_turn == current and f.fact_key not in trust.facts.conversational
+            )
+            stated = {
+                f.fact_key
+                for f in understanding.facts
+                if f.source_turn == current and f.fact_key in trust.facts.conversational
+            } | {
+                k for k, s in trust.facts.sources.items() if s in ("direct_answer", "confirmation")
+            }
             requested = [a.action for a in understanding.actions]
             hypothetical = tuple(a.action for a in understanding.hypothetical)
-            if trust.answered and read.state is not None:
+            if (trust.answered or understanding.continued) and read.state is not None:
                 # A direct answer keeps the steps it was about under evaluation (unless the
-                # founder withdrew one in the same message).
+                # founder withdrew one in the same message); so does a message with no matter of
+                # its own ("ok", "thanks"): it never drops the decision under discussion.
                 withdrawn = {a.action for a in understanding.withdrawn}
                 requested += [
                     a
@@ -910,7 +1103,13 @@ class AiGateway:
                 ),
                 jurisdiction_conflict="jurisdiction_conflict" in understanding.uncertainties,
                 clarification=trust.jurisdiction,
-                facts=_with_noted(execution, trust.facts, turn.noted),
+                facts=_with_noted(
+                    execution,
+                    trust.facts,
+                    turn.noted,
+                    carry(execution, trust.facts, turn.memory, hedged=hedged),
+                    hedged,
+                ),
                 requested=tuple(dict.fromkeys(requested)),
                 topics=understanding.topics if plan is None else plan.query.topics,
                 two_state=trust.two_state,
@@ -934,7 +1133,20 @@ class AiGateway:
         if execution is not None and execution.rule_bundle is not None:
             telemetry.rule_bundle = execution.rule_bundle.version
         case = () if turn.case is None else turn.case.signature
-        return _Turn(evaluation, card, trust, prior, reconfirm, case)
+        memory = resolve(
+            turn.memory,
+            previous=prior.asked,
+            facts=None if trust is None else evaluation.facts,
+            stated=stated,
+            answered=trust is not None and trust.answered,
+            does_not_know=understanding.previous_answer == "does_not_know",
+            jurisdiction_answered=trust is not None and trust.answered,
+            said={} if trust is None or execution is None else said_values(
+                execution, evaluation.facts
+            ),
+            hedged=hedged,
+        )  # fmt: skip
+        return _Turn(evaluation, card, trust, prior, reconfirm, case, memory)
 
     def _targets(
         self,
@@ -948,37 +1160,58 @@ class AiGateway:
         still needs (chat-first) and the methodology's, for the reply to choose from."""
         evaluation = result.evaluation
         execution = None if evaluation.workflow is None else snapshot.execution(evaluation.workflow)
+        settled = _settled(result)
+        # Never what the conversation already covered (found live: a fact said early on, or one
+        # the founder said they don't know, was asked again and again).
+        planned = tuple(t for t in plan.targets if t.fact_key not in settled)
         if execution is None:
-            return plan.targets
+            return planned
         if not evaluation.missing:
             unanswered = (
                 {a.key for a in result.prior.asked if a.kind == "fact"}
                 if result.trust is not None and not result.trust.answered
                 else set()
             )
-            optional = _case_targets(execution, case, evaluation, plan.targets, unanswered)
-            return (*optional, *plan.targets)
-        requirement = evaluation.missing[0]
+            optional = _case_targets(execution, case, evaluation, planned, unanswered | settled)
+            return (*optional, *planned)
+        requirement = next(
+            (
+                r
+                for r in evaluation.missing
+                # The founder answered this exact question with something else (or with what
+                # they don't know), or left it unanswered too often: never the same question
+                # again at once (found live: it was re-appended turn after turn). The reply
+                # answers what they said; the next requirement, if any, is asked instead.
+                if not (_asked_again(result, r) or _ignored(result, r))
+            ),
+            None,
+        )
+        if requirement is None:
+            return planned
         if (
             requirement.kind == "jurisdiction"
             and evaluation.jurisdiction_state == "company_unconfirmed"
         ):
-            return plan.targets  # a Blueprint step, not a conversation answer
-        if _asked_again(result, requirement):
-            # The founder answered this exact question with something else (or with what they
-            # don't know): never the same question again at once (found live: it was re-appended
-            # turn after turn). The reply answers what they said; HeroOS may come back to it later.
-            return plan.targets
+            return planned  # a Blueprint step, not a conversation answer
         schema = execution.schemas.get(requirement.key)
+        definition_question = (
+            None
+            if schema is None or schema.question is None
+            else execution.definition.question(schema.question)
+        )
         titles = {a.action: a.title for a in evaluation.actions}
         question = requirement_question(
             requirement,
             schema=schema,
             action_titles=titles,
             jurisdiction=company.jurisdiction.employment_jurisdiction,
+            prompt=None if definition_question is None else definition_question.prompt,
         )
         kind = {"fact": "fact", "confirmation": "confirm"}.get(requirement.kind, requirement.kind)
         candidate = requirement.candidate
+        if requirement.kind == "confirmation" and definition_question is not None:
+            # Its own question asked again: the answer is a direct one (no candidate to confirm).
+            candidate = None
         if requirement.kind == "insistence":
             candidate = requirement.actions[0] if requirement.actions else None
         return (
@@ -1020,10 +1253,7 @@ class AiGateway:
             )
         )
         asked_before = () if read.state is None else read.state.asked
-        facts = {f.key: f.label for f in bundle.facts}
-        # A Case question no knowledge fact holds is labelled by its own schema (chat-first).
-        for execution in snapshot.workflows.values():
-            facts.update({k: s.label for k, s in execution.schemas.items() if k not in facts})
+        facts = _fact_labels(snapshot, bundle)
         labels = [ASKED_LABELS.get(a.kind, facts.get(a.key, "")) for a in asked_before]
 
         if is_greeting(turn.message):
@@ -1041,7 +1271,7 @@ class AiGateway:
 
         understanding = self._understand(
             provider, company, founder, [lbl for lbl in labels if lbl], telemetry, deadline,
-            view.catalog,
+            view.catalog, _previous_question(turn),
         )  # fmt: skip
         # A bare answer can only answer the one question HeroOS just asked.
         answering = (
@@ -1056,23 +1286,35 @@ class AiGateway:
             understanding, lambda f: contradicted(f.value, f.excerpt)
         )
         telemetry.facts_rejected = dropped
+        # Thanks, a reaction or a goodbye in the middle of a matter: answered, never asked a
+        # required question on its way out.
+        conversational = understanding.intent == "conversational"
+        understanding = _continued(snapshot, read, understanding)
 
-        fixed = self._routed(understanding, view.catalog)
+        fixed = self._routed(understanding, view.catalog, turn)
         if fixed is not None:
             text, state = fixed
             result = self._evaluate(snapshot, company, turn, understanding, None, read, telemetry)
+            if state == "clarifying":
+                # Answered in words, not a fixed text (found live: "ok", "thanks, bye" and
+                # "what is this thing for?" got the same canned paragraph, again and again).
+                text = (
+                    self._light(provider, company, turn, founder, view, telemetry, deadline) or text
+                )
             return self._reply(
                 company, snapshot, text, None, state, (), understanding, None, result, turn,
                 fixed=True,
             )  # fmt: skip
 
-        plan = plan_turn(bundle, understanding, company)
+        execution = snapshot.execution(understanding.workflow) if understanding.workflow else None
+        known = _known(snapshot, understanding, read, turn)
+        plan = plan_turn(bundle, understanding, company, known=known)
         status = plan.context.status
         telemetry.knowledge_status = status.value
         if status is KnowledgeStatus.BUNDLE_UNAVAILABLE:
             raise GatewayFailure("knowledge_unavailable")
         result = self._evaluate(snapshot, company, turn, understanding, plan, read, telemetry)
-        plan = _for_employee(bundle, understanding, company, plan, result)
+        plan = _for_employee(bundle, understanding, company, plan, result, known=known)
         status = plan.context.status
         telemetry.knowledge_status = status.value
         if status in (KnowledgeStatus.UNSUPPORTED, KnowledgeStatus.SOURCE_CONFLICT):
@@ -1085,6 +1327,11 @@ class AiGateway:
         plan = dataclasses.replace(
             plan, targets=self._targets(snapshot, plan, result, company, turn.case)
         )
+        if conversational:
+            # The founder is thanking, reacting or leaving: no question is forced on them.
+            plan = dataclasses.replace(
+                plan, targets=tuple(t for t in plan.targets if t.question is None)
+            )
         knowledge = knowledge_view(bundle, plan)
         decided, decided_texts = outcome_view(result.evaluation, result.card)
         case_view, case_texts = (
@@ -1096,20 +1343,58 @@ class AiGateway:
             # M2-NEW-08: where the Case stands, as its employer recorded it (read-only).
             **({"case_progress": case_view} if turn.case is not None else {}),
             "company_context": company_view(company),
-            "established_facts": [
-                {"about": facts[f.fact_key], "value": f.value} for f in plan.established
-            ],
+            # What the conversation already covered: known, not known, asked (server-owned).
+            "conversation_state": conversation_view(
+                execution,
+                facts,
+                result.evaluation.facts if result.trust else None,
+                result.memory,
+                result.prior.asked,
+                [(f.fact_key, f.value) for f in plan.established],
+            ),
             "jurisdiction_note": self._jurisdiction_note(plan),
             "conversation": _recent_conversation(turn),
             "current_message": turn.message,
         }
         offered = [t.id for t in plan.targets]
+
+        def check(proposal: ResponseProposal) -> tuple[Literal["safety", "grounding"], str] | None:
+            texts = [proposal.reply] + (
+                [proposal.safe_next_step] if proposal.safe_next_step else []
+            )
+            return self._checked(
+                texts, result, knowledge.texts, decided_texts, case_texts, founder, plan, view
+            )
+
+        turns = [data_message(sections)]
         try:
             proposal = self._phase(
-                provider, RESPONSE_INSTRUCTION, [data_message(sections)], RESPONSE_TEMPERATURE,
+                provider, RESPONSE_INSTRUCTION, turns, RESPONSE_TEMPERATURE,
                 RESPONSE_TOKENS, lambda text: parse_response(text, offered), "b", telemetry,
                 deadline, fail_soft=True,
             )  # fmt: skip
+            problem = None if proposal is None else check(proposal)
+            if (
+                proposal is not None
+                and problem is not None
+                and telemetry.calls < MAX_PROVIDER_CALLS
+            ):
+                # One rewrite with the reason (a fixed code, never text): found live, a reply
+                # that restated the founder's own "3 days" or skipped their question for a
+                # canned fallback. The rewrite passes every check again or the fallback stands.
+                telemetry.repairs.append(f"b:{problem[1]}")
+                try:
+                    rewritten = self._phase(
+                        provider, RESPONSE_INSTRUCTION,
+                        regeneration_turns(turns, proposal.reply, problem[1]),
+                        RESPONSE_TEMPERATURE, RESPONSE_TOKENS,
+                        lambda text: parse_response(text, offered), "c", telemetry, deadline,
+                        fail_soft=True, repair=False,
+                    )  # fmt: skip
+                except GatewayFailure:
+                    rewritten = None  # the server's own reply stands, as without the rewrite
+                if rewritten is not None and check(rewritten) is None:
+                    proposal, problem = rewritten, None
         except GatewayFailure as failure:
             if result.card is None or result.card.kind not in SAFETY_OUTCOMES:
                 raise
@@ -1122,41 +1407,28 @@ class AiGateway:
             telemetry.outcome = "invalid_output_fallback"
             telemetry.wording = "fallback_invalid"
             return self._fallback(company, snapshot, "invalid", understanding, plan, result, turn)
-
-        texts = [proposal.reply] + ([proposal.safe_next_step] if proposal.safe_next_step else [])
-        problem: str | None = next(
-            (p for p in (gateway_problem(t) for t in texts) if p is not None), None
-        )
-        if problem is None:
-            problem = outcome_contradiction(texts, result.evaluation)
         if problem is not None:
-            telemetry.safety = problem
+            family, code = problem
+            if family == "grounding":
+                telemetry.grounding = code
+                telemetry.wording = "fallback_grounding"
+                return self._fallback(company, snapshot, "legal", understanding, plan, result, turn)
+            telemetry.safety = code
             telemetry.wording = "fallback_safety"
             return self._fallback(
-                company, snapshot, FALLBACK_FAMILY[problem], understanding, plan, result, turn
+                company, snapshot, FALLBACK_FAMILY[code], understanding, plan, result, turn
             )
-        grounding = check_grounding(
-            texts,
-            knowledge=(*knowledge.texts, *decided_texts, *case_texts),
-            founder=founder,
-            jurisdiction=plan.context.jurisdiction,
-            prohibited=plan.context.prohibited_behaviors,
-            labels=view.labels,
-            instructions=RESPONSE_INSTRUCTION + UNDERSTANDING_INSTRUCTION,
-        )
-        if grounding is not None:
-            telemetry.grounding = grounding
-            telemetry.wording = "fallback_grounding"
-            return self._fallback(company, snapshot, "legal", understanding, plan, result, turn)
         reply = proposal.reply
         # A target counts as asked only if the reply asks something: a claim with no question
         # in the words would make the founder's next message a "direct answer" to nothing.
         used = [t for t in plan.targets if t.id in proposal.target_ids] if "?" in reply else []
         required = next((t for t in plan.targets if t.question is not None), None)
-        if required is not None and required not in used:
-            # A deterministic check needs this answer: ask it in the server's words.
-            reply = f"{reply} {required.question}"
-            used.append(required)
+        if required is not None:
+            # A deterministic check needs this answer: always asked in the server's words (its
+            # meaning is what the answer is parsed against), as the reply's one question (found
+            # live: the model's own question and the server's, one after the other).
+            reply = _with_question(reply, required.question or "")
+            used = [required]
         step = proposal.safe_next_step
         fixed_step = next_step_text(result.evaluation) if result.evaluation.ready else None
         if result.card is not None and result.card.kind in SAFETY_OUTCOMES:
@@ -1166,6 +1438,70 @@ class AiGateway:
             company, snapshot, reply, step, "responded", tuple(used), understanding, plan,
             result, turn,
         )  # fmt: skip
+
+    def _checked(
+        self, texts: Sequence[str], result: _Turn, knowledge: Sequence[str],
+        decided: Sequence[str], case: Sequence[str], founder: Sequence[str], plan: TurnPlan,
+        view: _SnapshotView,
+    ) -> tuple[Literal["safety", "grounding"], str] | None:  # fmt: skip
+        """The first reply-safety, contradiction or grounding check the texts fail."""
+        problem: str | None = next(
+            (p for p in (gateway_problem(t) for t in texts) if p is not None), None
+        )
+        if problem is None:
+            problem = outcome_contradiction(list(texts), result.evaluation)
+        if problem is not None:
+            return "safety", problem
+        grounding = check_grounding(
+            texts,
+            knowledge=(*knowledge, *decided, *case),
+            founder=founder,
+            jurisdiction=plan.context.jurisdiction,
+            prohibited=plan.context.prohibited_behaviors,
+            labels=view.labels,
+            instructions=RESPONSE_INSTRUCTION + UNDERSTANDING_INSTRUCTION,
+        )
+        return None if grounding is None else ("grounding", grounding)
+
+    def _light(
+        self, provider: StructuredChatProvider, company: CompanyBlueprintContext,
+        turn: FounderTurn, founder: Sequence[str], view: _SnapshotView, telemetry: Telemetry,
+        deadline: _Deadline,
+    ) -> str | None:  # fmt: skip
+        """A short reply in the model's words to a message with no matter to work on yet (a
+        start, a reaction, thanks, a goodbye, a question about HeroOS), or None for the fixed
+        text. It carries no approved guidance and passes the reply-safety and grounding checks;
+        a provider failure fails the turn, as everywhere else."""
+        coverage = list(view.catalog.coverage())
+        sections = {
+            "heroos_scope": {"what_heroos_does": SCOPE, "approved_guidance_covers": coverage},
+            "company_context": company_view(company),
+            "conversation": _recent_conversation(turn),
+            "current_message": turn.message,
+        }
+        proposal = self._phase(
+            provider, LIGHT_INSTRUCTION, [data_message(sections)], RESPONSE_TEMPERATURE,
+            LIGHT_TOKENS, lambda text: parse_response(text, []), "l", telemetry, deadline,
+            fail_soft=True,
+        )  # fmt: skip
+        if proposal is None or gateway_problem(proposal.reply) is not None:
+            telemetry.wording = "fixed_light"
+            return None
+        grounding = check_grounding(
+            [proposal.reply],
+            knowledge=(SCOPE, *coverage),
+            founder=founder,
+            jurisdiction=None,
+            prohibited=(),
+            labels=view.labels,
+            instructions=LIGHT_INSTRUCTION + UNDERSTANDING_INSTRUCTION,
+        )
+        if grounding is not None:
+            telemetry.grounding = grounding
+            telemetry.wording = "fixed_light"
+            return None
+        telemetry.wording = "light"
+        return proposal.reply
 
     # --- commit-time reconciliation (M2-NEW-07) ---------------------------------------
 
@@ -1201,10 +1537,11 @@ class AiGateway:
         telemetry = Telemetry(provider="-", model="-")
         read = turn.resume(snapshot)
         routed = self._routed(understanding, self._view(snapshot).catalog) is not None
-        plan = None if routed else plan_turn(bundle, understanding, company)
+        known = _known(snapshot, understanding, read, turn)
+        plan = None if routed else plan_turn(bundle, understanding, company, known=known)
         result = self._evaluate(snapshot, company, turn, understanding, plan, read, telemetry)
         if plan is not None:
-            plan = _for_employee(bundle, understanding, company, plan, result)
+            plan = _for_employee(bundle, understanding, company, plan, result, known=known)
         if _signature(result) == _signature(basis.result):
             refreshed = self._reply(
                 company, snapshot, reply.reply, reply.safe_next_step, reply.state, basis.asked,
@@ -1237,12 +1574,15 @@ class AiGateway:
     def _understand(
         self, provider: StructuredChatProvider, company: CompanyBlueprintContext,
         founder: Sequence[str], asked_labels: Sequence[str], telemetry: Telemetry,
-        deadline: _Deadline, catalog: RoutingCatalog,
+        deadline: _Deadline, catalog: RoutingCatalog, previous: str | None = None,
     ) -> UnderstandingProposal:  # fmt: skip
         sections = {
             "routing_catalog": catalog.model_view(),
             "company_context": company_view(company),
             "previous_question_about": list(asked_labels),
+            # The question HeroOS's last reply ended with, so an answer is read against what was
+            # actually asked (context only: never a source for a fact).
+            **({"previous_heroos_question": previous} if previous else {}),
             "founder_messages": [{"turn": i, "text": text} for i, text in enumerate(founder)],
             # For a date the founder gives relatively ("yesterday"); a reading, never trusted.
             "today": datetime.now(UTC).date().isoformat(),
@@ -1260,13 +1600,15 @@ class AiGateway:
     def _phase[P: (UnderstandingProposal, ResponseProposal)](
         self, provider: StructuredChatProvider, system: str, turns: list[ChatTurn],
         temperature: float, tokens: int, parse: Callable[[str], P], name: str,
-        telemetry: Telemetry, deadline: _Deadline, *, fail_soft: bool,
+        telemetry: Telemetry, deadline: _Deadline, *, fail_soft: bool, repair: bool = True,
     ) -> P | None:  # fmt: skip
         """One request and at most one schema repair. Transport failures are never retried."""
         completion = self._call(provider, system, turns, temperature, tokens, telemetry, deadline)
         try:
             return parse(completion.text)
         except ProposalError as first:
+            if not repair:
+                return None
             telemetry.repairs.append(name)
             # The fixed structural code only (never the output).
             logger.info("AI gateway output repaired (phase=%s, code=%s)", name, first.code)
@@ -1303,15 +1645,23 @@ class AiGateway:
     # --- replies the server composes ---------------------------------------------------
 
     def _routed(
-        self, understanding: UnderstandingProposal, catalog: RoutingCatalog
-    ) -> tuple[str, ConversationState] | None:
+        self, understanding: UnderstandingProposal, catalog: RoutingCatalog,
+        turn: FounderTurn | None = None,
+    ) -> tuple[str, ConversationState] | None:  # fmt: skip
         coverage = ", ".join(catalog.coverage())
+        previous = None if turn is None else _previous_reply(turn)
         if understanding.intent == "other_hr":
-            return OUTSIDE_HR.format(coverage=coverage), "outside_approved_guidance"
+            text = OUTSIDE_HR.format(coverage=coverage)
+            again = previous in (text, OUTSIDE_HR_AGAIN)
+            return (OUTSIDE_HR_AGAIN if again else text), "outside_approved_guidance"
         if understanding.intent == "unsupported":
-            return OUTSIDE.format(coverage=coverage), "outside_approved_guidance"
+            text = OUTSIDE.format(coverage=coverage)
+            again = previous in (text, OUTSIDE_AGAIN)
+            return (OUTSIDE_AGAIN if again else text), "outside_approved_guidance"
         if understanding.intent == "confidential_request":
             return CONFIDENTIAL, "outside_approved_guidance"
+        if understanding.intent == "conversational":
+            return CONVERSATIONAL, "clarifying"
         if understanding.intent == "unclear" or understanding.workflow is None:
             return UNCLEAR, "clarifying"
         return None
@@ -1418,6 +1768,7 @@ class AiGateway:
             hypothetical_actions=tuple(a.action for a in evaluation.actions if a.hypothetical),
         )
         next_state = self._next_state(result, asked)
+        memory = record(result.memory, [(t.kind, t.fact_key) for t in asked if t.fact_key])
         return GatewayReply(
             reply=text,
             safe_next_step=step,
@@ -1433,6 +1784,7 @@ class AiGateway:
             outcome=result.card,
             next_state=next_state,
             basis=TurnBasis(snapshot, understanding, result, plan, asked, fixed),
+            memory=memory,
         )
 
     @staticmethod
