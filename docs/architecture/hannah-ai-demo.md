@@ -245,7 +245,13 @@ nowhere else. With the switch on:
 - The model gets this demo's fixed instruction and the recent turns only: no
   Blueprint, Case, facts or approved knowledge, and no tools.
 
-It needs only `HEROOS_CHAT_ONLY_DEMO=true` and `GROQ_API_KEY`;
-`HEROOS_HANNAH_DEMO_ENABLED` stays as it is. The model and limits are this
+It needs `HEROOS_CHAT_ONLY_DEMO=true` and `GROQ_API_KEY` on the API, and
+`HEROOS_CHAT_ONLY_DEMO=true` on the web server too (server only, never
+`NEXT_PUBLIC_`). The web's copy makes Ask fail closed: when the status can't be
+read, or doesn't say `chat_only` (an API without the switch), Ask shows only
+"HeroOS couldn't connect just now. Please refresh and try again." with a
+Refresh link. It shows no box, so nothing can be sent and no case can open.
+With the web's copy off, a failed status read falls back to the case-opening
+Ask, as it always has. `HEROOS_HANNAH_DEMO_ENABLED` stays as it is. The model and limits are this
 demo's (`HEROOS_HANNAH_MODEL` and the `HEROOS_HANNAH_*_LIMIT` ceilings, shared
 with it). Use fictional scenarios only: the founder's words go to GroqCloud.

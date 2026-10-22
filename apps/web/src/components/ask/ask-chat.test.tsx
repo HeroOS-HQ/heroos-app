@@ -16,7 +16,12 @@ const QUESTION = "I'm sorry you're dealing with that. Has the employee contacted
 
 const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-function setup(status: GatewayStatus = CHAT_ONLY, responses: (Response | Error)[] = [], conversationId: string | null = null) {
+function setup(
+  status: GatewayStatus | null = CHAT_ONLY,
+  responses: (Response | Error)[] = [],
+  conversationId: string | null = null,
+  chatOnlyDemo = false,
+) {
   const queue = [...responses];
   const fetcher = vi.fn<(input: string, init?: RequestInit) => Promise<Response>>(async () => {
     const next = queue.shift() ?? new Error("no response queued");
@@ -26,6 +31,7 @@ function setup(status: GatewayStatus = CHAT_ONLY, responses: (Response | Error)[
   const navigate = vi.fn();
   render(
     <AskWorkspace
+      chatOnlyDemo={chatOnlyDemo}
       companyId={COMPANY_ID}
       conversation={status}
       conversationId={conversationId}
@@ -102,6 +108,33 @@ describe("AskWorkspace with the chat-only demo", () => {
     expect(box()).toBeDisabled();
     expect(box()).toHaveAttribute("placeholder", "HeroOS can't answer right now.");
     expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["the status couldn't be read", null],
+    ["the API answers without the demo", { available: true, reason: null, notice: null } satisfies GatewayStatus],
+  ])("fails closed with the web's switch on when %s: no box, no request, no case", (_, status) => {
+    const { fetcher, navigate } = setup(status, [], "11111111-2222-4333-8444-555555555555", true);
+    expect(screen.getByRole("alert")).toHaveTextContent("HeroOS couldn't connect just now. Please refresh and try again.");
+    expect(screen.getByRole("link", { name: "Refresh" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}`);
+    // Neither the case-opening Ask nor the stored conversation: nothing to type in or send.
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("with the web's switch on, the API's chat-only status still opens the chat", async () => {
+    const { fetcher } = setup(CHAT_ONLY, [reply(200, { reply: "Hi! What can I help you with today?" })], null, true);
+    ask("Hi Hannah");
+    expect(await screen.findByText("Hi! What can I help you with today?")).toBeInTheDocument();
+    expect(callOf(fetcher, 0).url).toBe(`/bff/companies/${COMPANY_ID}/assistant/chat`);
+  });
+
+  it("with both switches off, a failed status read still gives the case-opening Ask (M2-NEW-08 unchanged)", () => {
+    setup(null);
+    expect(box()).toBeEnabled();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("never loads a stored conversation from the address", () => {

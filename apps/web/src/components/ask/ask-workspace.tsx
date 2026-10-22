@@ -31,7 +31,9 @@ import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
  *
  * Ahead of both, while the API's staging chat-only demo is on (its status says
  * `chatOnly`): a plain conversation with HeroOS's model (`ask-chat.tsx`) that
- * never opens a case, stores nothing and ignores `?conversation=`.
+ * never opens a case, stores nothing and ignores `?conversation=`. With the
+ * web's own switch on too (`chatOnlyDemo`), Ask fails closed: without that
+ * status it only says HeroOS couldn't connect (no box, so nothing to send).
  */
 
 /** Who may ask: administrators open cases; for everyone else the box says why it can't. */
@@ -85,6 +87,7 @@ export function AskWorkspace({
   returning,
   conversation = null,
   conversationId = null,
+  chatOnlyDemo = false,
   fetcher,
   navigate,
 }: {
@@ -96,6 +99,8 @@ export function AskWorkspace({
   conversation?: GatewayStatus | null;
   /** A stored conversation to open (M2-NEW-07), from the address. */
   conversationId?: string | null;
+  /** The web's staging chat-only demo switch: only the chat, or nothing. */
+  chatOnlyDemo?: boolean;
   fetcher?: typeof fetch;
   navigate?: (href: string) => void;
 }) {
@@ -108,6 +113,18 @@ export function AskWorkspace({
         notice={conversation.notice}
         returning={returning}
       />
+    );
+  }
+  if (mode === "ready" && chatOnlyDemo) {
+    return (
+      <AskLanding returning={returning}>
+        <AskAlert>
+          HeroOS couldn&apos;t connect just now. Please refresh and try again.{" "}
+          <a className="font-bold text-hero-blue-ink underline" href={`/workspaces/${encodeURIComponent(companyId)}`}>
+            Refresh
+          </a>
+        </AskAlert>
+      </AskLanding>
     );
   }
   if (mode === "ready" && (conversation?.available || conversationId)) {

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fromApiGatewayStatus } from "@/lib/ask/conversation";
 import { API_BASE_URL, COMPANY_ID, CONFIG, WEB_ORIGIN } from "@/test/fixtures";
 
-import { askGateway } from "./app-state";
+import { askGateway, chatOnlyDemoRequired } from "./app-state";
 import { handleAskChat } from "./bff";
 import { SESSION_COOKIE } from "./cookies";
 import { seal } from "./sealed";
@@ -54,6 +54,17 @@ describe("the chat-only status", () => {
     const off = { available: false, reason: "not_configured" as const, notice: NOTICE, chatOnly: true as const };
     expect(askGateway({ ok: true, data: off })).toEqual(off);
     expect(askGateway({ ok: true, data: { available: false, reason: "disabled", notice: null } })).toBeNull();
+  });
+});
+
+describe("the web's chat-only switch", () => {
+  it("is on only for exactly HEROOS_CHAT_ONLY_DEMO=true", () => {
+    for (const [value, on] of [["true", true], ["false", false], ["1", false], ["", false]] as const) {
+      vi.stubEnv("HEROOS_CHAT_ONLY_DEMO", value);
+      expect(chatOnlyDemoRequired()).toBe(on);
+    }
+    vi.unstubAllEnvs();
+    expect(chatOnlyDemoRequired()).toBe(false);
   });
 });
 

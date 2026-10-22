@@ -12,7 +12,7 @@ import {
 } from "@/components/app/state-views";
 import { type AskMode, AskWorkspace } from "@/components/ask/ask-workspace";
 import { ASK_WORKFLOW } from "@/lib/ask/model";
-import { loadAskGateway, loadCases } from "@/lib/server/app-state";
+import { chatOnlyDemoRequired, loadAskGateway, loadCases } from "@/lib/server/app-state";
 
 export const metadata: Metadata = { title: "Ask HeroOS · HeroOS" };
 
@@ -65,6 +65,7 @@ async function AskContent({ params, searchParams }: Pick<PageProps<"/workspaces/
       workspaces={state.workspaces}
     >
       <AskWorkspace
+        chatOnlyDemo={chatOnlyDemoRequired()}
         companyId={state.details.company.id}
         conversation={mode === "ready" ? gateway : null}
         conversationId={mode === "ready" ? conversationId : null}

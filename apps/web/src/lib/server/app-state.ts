@@ -242,6 +242,16 @@ export function askGateway(status: ApiResult<GatewayStatus>): GatewayStatus | nu
   return status.ok && (status.data.available || status.data.chatOnly) ? status.data : null;
 }
 
+/**
+ * The web's own copy of the staging chat-only demo switch (`HEROOS_CHAT_ONLY_DEMO`,
+ * server only), so Ask fails closed: while it is on, Ask without the API's
+ * chat-only status (a failed read, or an API without the demo) says HeroOS
+ * couldn't connect, never the case-opening Ask. Off: nothing changes.
+ */
+export function chatOnlyDemoRequired(): boolean {
+  return process.env.HEROOS_CHAT_ONLY_DEMO === "true";
+}
+
 export async function loadAskGateway(companyId: string): Promise<GatewayStatus | null> {
   const gate = await sessionGate();
   if (gate.kind !== "ok") return null;
