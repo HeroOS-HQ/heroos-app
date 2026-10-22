@@ -106,7 +106,6 @@ def test_supported_without_a_workflow_is_valid_and_stays_unresolved(
         ({"workflow_candidate": "probation"}, "unknown_workflow"),
         ({"workflow_candidate": "recruitment"}, "unknown_workflow"),
         ({"pathway_candidate": "gross_misconduct"}, "unknown_pathway"),
-        ({"topics": ["final_settlement"]}, "unknown_topic"),
         ({"topics": ["workplace_reminder", "workplace_reminder"]}, "duplicate_value"),
         ({"topics": ["deadlines", "formal_warning", "penalty_notice", "workplace_reminder"]},
          "too_many"),
@@ -126,6 +125,15 @@ def test_unknown_or_unauthorized_content_is_refused(
 ) -> None:
     data = understanding(pathway="less_serious") | change
     assert code(bundle, data) == expected
+
+
+def test_a_topic_outside_the_catalog_is_left_out_never_failing_the_turn(
+    bundle: KnowledgeBundle,
+) -> None:
+    """Live dev-stack run: a model's own word for the matter ("absenteeism") is a hint, unused."""
+    data = understanding(pathway="less_serious", topics=["absenteeism", "workplace_reminder"])
+    assert parse(bundle, data).topics == ("workplace_reminder",)
+    assert parse(bundle, understanding(pathway="less_serious", topics=[42])).topics == ()
 
 
 def test_a_pathway_without_a_workflow_is_refused(bundle: KnowledgeBundle) -> None:
@@ -159,11 +167,6 @@ def test_malformed_output_is_refused(bundle: KnowledgeBundle, text: str, expecte
         ({"confidence": 0.9}, "unknown_value"),
         ({"confidence": "certain"}, "unknown_value"),
         ({"explicit_or_inferred": "assumed"}, "unknown_value"),
-        ({"source_turn": 5}, "bad_turn"),
-        ({"source_turn": True}, "bad_turn"),
-        ({"source_turn": None}, "bad_turn"),
-        ({"provenance": "prior_user_message", "source_turn": 1}, "bad_turn"),
-        ({"provenance": "company_blueprint", "source_turn": 0}, "bad_turn"),
         ({"support_excerpt": "x" * 161}, "bad_length"),
         ({"proposed_value": ""}, "bad_length"),
         ({"proposed_value": "a\u0000b"}, "control_character"),
@@ -175,6 +178,43 @@ def test_a_fact_proposal_must_have_the_exact_evidence_shape(
 ) -> None:
     proposal = fact("given_opportunity_to_explain", "yes", "explained", turn=1) | change
     assert code(bundle, understanding(facts=[proposal])) == expected
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"source_turn": 5},
+        {"source_turn": -1},
+        {"source_turn": True},
+        {"source_turn": None},
+        {"provenance": "company_blueprint", "source_turn": 0},
+    ],
+)
+def test_a_fact_citing_no_founder_message_is_left_out(
+    bundle: KnowledgeBundle, change: dict[str, Any]
+) -> None:
+    """Its words can't be checked against any message, so it is dropped, not the whole turn."""
+    kept = fact("employee_aware_of_relevant_policy", "yes", "explained the standard", turn=1)
+    proposal = fact("given_opportunity_to_explain", "yes", "explained", turn=1) | change
+    facts = parse(bundle, understanding(facts=[proposal, kept])).facts
+    assert [f.fact_key for f in facts] == ["employee_aware_of_relevant_policy"]
+
+
+@pytest.mark.parametrize(
+    ("provenance", "turn", "expected"),
+    [
+        ("prior_user_message", 1, "current_user_message"),
+        ("current_user_message", 0, "prior_user_message"),
+    ],
+)
+def test_a_founder_facts_provenance_follows_the_turn_it_cites(
+    bundle: KnowledgeBundle, provenance: str, turn: int, expected: str
+) -> None:
+    """The evidence check then looks for the excerpt in exactly that message."""
+    proposal = fact("given_opportunity_to_explain", "yes", "explained", turn=turn)
+    proposal |= {"provenance": provenance}
+    (parsed,) = parse(bundle, understanding(facts=[proposal])).facts
+    assert (parsed.provenance, parsed.source_turn) == (expected, turn)
 
 
 def _checked(bundle: KnowledgeBundle, *facts: dict[str, Any], blueprint: str = "") -> Any:

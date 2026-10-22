@@ -379,13 +379,14 @@ def test_only_an_explicit_withdrawal_ends_an_actions_review(
     assert ["opt-dismissal"] in [w for _, w in records]
 
 
-def test_a_matter_level_review_needs_no_case(browser: Http) -> None:
+def test_a_matter_level_review_needs_no_workflow(browser: Http) -> None:
     said = "Help me plan staffing strategy for 2027."
     body = browser.post(said, understanding(intent="other_hr")).json()
     conversation = body["conversation"]
-    assert conversation["case"] is None
+    # Chat-first Case: the conversation's bare Case is in progress; no workflow attaches.
+    assert conversation["case"] is not None and conversation["case"]["title"] == "New case"
     status = conversation["status"]
-    assert status["lifecycle"] is None and status["workflow"] is None
+    assert status["lifecycle"] == "in_progress" and status["workflow"] is None
     assert status["checks"] == "not_applicable"
     assert status["attention"]["expert_review"] == {
         "active": True,

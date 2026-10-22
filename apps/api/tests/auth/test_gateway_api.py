@@ -71,7 +71,9 @@ POSITION_FIELDS = {"state", "label", "pathway", "stage", "stage_in_progress", "h
 PUBLIC_KEYS = (
     TURN_FIELDS | CONVERSATION_FIELDS | MESSAGE_FIELDS | STATUS_FIELDS | POSITION_FIELDS
     | {"key", "kind", "message", "items", "needs_information", "jurisdiction", "expert_review",
-       "active", "scope", "actions", "service_available"}
+       "active", "scope", "actions", "service_available",
+       # Chat-first Case: what HeroOS noted for the Case record (labels only).
+       "noted", "label", "answer"}
 )  # fmt: skip
 
 
@@ -487,7 +489,7 @@ def test_a_reply_claiming_actions_records_no_workflow_action(
     assert stored["workflow_submissions"] == 0
 
 
-def test_an_outside_request_gets_the_fixed_reply_and_no_case(
+def test_an_outside_request_gets_the_fixed_reply_and_a_bare_case(
     stored_sessions: sessionmaker[Session],  # noqa: F811
     cognito_provider: CognitoAccessTokenProvider,
     bundle: KnowledgeBundle,  # noqa: F811
@@ -503,8 +505,12 @@ def test_an_outside_request_gets_the_fixed_reply_and_no_case(
     assert heroos["text"] == OUTSIDE_HR.format(coverage="Example discipline")
     assert heroos["conversation_state"] == "outside_approved_guidance"
     assert len(chat.calls) == 1
-    assert body["conversation"]["case"] is None and body["conversation"]["title"] is None
-    assert counts(stored_sessions)["cases"] == 0
+    # Chat-first Case: the first completed turn starts a bare Case, whatever it is about;
+    # no workflow attaches to it outside HeroOS's approved guidance.
+    case = body["conversation"]["case"]
+    assert case is not None and case["title"] == body["conversation"]["title"] == "New case"
+    stored = counts(stored_sessions)
+    assert stored["cases"] == 1 and stored["workflow_instances"] == 0
 
 
 def test_nothing_the_founder_or_heroos_said_is_logged(

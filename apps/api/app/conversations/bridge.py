@@ -69,6 +69,8 @@ from app.workflows.definition import NOT_SURE, WorkflowDefinition, current_defin
 NEW_CASE_TITLE: Final = "New case"
 # The Case question that holds the founder's own description of what happened.
 NARRATIVE_KEY: Final = "incident.narrative"
+# Where a value trusted this turn came from when the message answered HeroOS's question.
+ANSWER_SOURCES: Final = frozenset({"direct_answer", "confirmation"})
 
 # Approved topic key -> a neutral label for the kind of matter (never a sanction, an
 # employer decision or a person). Every other topic gives the fallback title. Adding a
@@ -208,12 +210,20 @@ def noted_facts(
 def narrative_change(
     definition: WorkflowDefinition,
     message: str,
+    evaluation: ConversationEvaluation,
     *,
     current: Mapping[str, object],
     open_steps: Collection[str],
     today: date,
 ) -> dict[str, str]:
-    """The founder's own words as the Case's narrative, when the Case has none yet."""
+    """The founder's own words as the Case's narrative, when the Case has none yet.
+
+    Never a message that answered HeroOS's question ("Yes.", "Eight."): that is an
+    answer, not the founder's account of what happened, so the narrative stays
+    open for the founder to give.
+    """
+    if any(source in ANSWER_SOURCES for source in evaluation.facts.sources.values()):
+        return {}
     if current.get(NARRATIVE_KEY) is not None or definition.question(NARRATIVE_KEY) is None:
         return {}
     return _accepted(

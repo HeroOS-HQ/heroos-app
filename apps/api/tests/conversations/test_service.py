@@ -3,8 +3,11 @@
 - the first completed turn creates the conversation; a provider failure stores nothing;
 - a retried turn key replays the committed turn, never a second conversation or Case;
   the same key for another request is a conflict;
-- a Case only at the threshold (supported HR, an established workflow with a definition,
-  one matter), at most one per conversation, with a safe title and no CaseSubject;
+- chat-first Case: the first completed turn starts the conversation's one Case (a bare
+  "New case" below the workflow threshold); a workflow attaches to that same Case only at
+  the threshold (supported HR, an established workflow with a definition, one matter),
+  with a safe title and no CaseSubject; the founder's message that established the matter
+  (never a bare answer) becomes its narrative;
 - only canonical ENGINE_TRUSTED facts reach the Case, through the shared pipeline, with
   their founder message as provenance; nothing is repeated; corrections append;
 - no turn selects a pathway, moves a stage or records a decision;
@@ -29,6 +32,7 @@ from app.assistant.gateway.service import GatewayFailure, snapshot_versions
 from app.assistant.provider import AssistantError
 from app.auth.exceptions import AuthorizationError
 from app.auth.models import AuthenticatedCompanyContext
+from app.conversations.bridge import NARRATIVE_KEY, NEW_CASE_TITLE
 from app.conversations.checkpoint import decode
 from app.conversations.service import (
     AskConversations,
@@ -63,6 +67,7 @@ from tests.auth.test_workflow_api import (  # noqa: F401  (pytest fixtures)
 from tests.conversations.conftest import (
     ASSISTANT_TABLES,
     SAFE,
+    SAFE_ASKING_POLICY,
     Founder,
     add_admin,
     counts,
@@ -131,7 +136,7 @@ def test_the_first_completed_turn_creates_the_conversation_and_its_case(
     ]
     # Exactly what was shown.
     assert messages[0].content == LATE
-    assert messages[1].content == SAFE == result.heroos.content
+    assert messages[1].content == SAFE_ASKING_POLICY == result.heroos.content
     assert messages[1].conversation_state == "responded"
     assert messages[1].outcome is not None and messages[1].outcome["kind"] == "guidance"
     assert set(messages[1].outcome) == {"kind", "title", "message", "items"}
@@ -143,7 +148,9 @@ def test_the_first_completed_turn_creates_the_conversation_and_its_case(
     assert case.subject_id is None
     assert instance.request_key == case_request_key(conversation.id)
     assert instance.created_by_user_id == alice_context.user_id
-    assert instance.revision == 0  # nothing established yet: no fact, no submission
+    # The founder's establishing words are the Case's narrative: its one fact so far.
+    assert instance.revision == 1
+    assert case_answers(db, case.id) == {NARRATIVE_KEY: LATE}
     # What HeroOS asked is what the next turn starts from.
     checkpoint = decode(conversation.checkpoint)
     assert checkpoint is not None
@@ -251,7 +258,8 @@ def test_another_turn_that_completed_meanwhile_is_a_conflict(
     (conversation,) = rows(db, AssistantConversation)
     assert conversation.revision == 2  # the first turn and the other tab's: nothing of this one
     assert len(rows(db, AssistantTurn)) == 2
-    assert rows(db, WorkflowSubmission) == []
+    # Only the first turn's narrative: nothing of the turn that lost.
+    assert [s.revision for s in rows(db, WorkflowSubmission)] == [1]
 
 
 def test_a_role_that_ended_while_the_provider_answered_writes_nothing(
@@ -298,7 +306,10 @@ def test_another_administrator_continues_the_companys_conversation(
     (conversation,) = rows(db, AssistantConversation)
     assert conversation.created_by_user_id == alice_context.user_id
     # The colleague's direct answer to the question HeroOS asked alice is trusted.
-    assert case_answers(db, first.case_id) == {POLICY_QUESTION: "yes"}  # type: ignore[arg-type]
+    assert case_answers(db, first.case_id) == {  # type: ignore[arg-type]
+        NARRATIVE_KEY: LATE,
+        POLICY_QUESTION: "yes",
+    }
 
 
 def test_another_companys_conversation_is_not_found(
@@ -323,7 +334,7 @@ def test_another_companys_conversation_is_not_found(
     assert counts(db) == stored
 
 
-# --- the Case threshold -----------------------------------------------------------------------
+# --- the Case and the workflow threshold -------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -357,7 +368,7 @@ def test_another_companys_conversation_is_not_found(
     ],
     ids=["unclear", "other_hr", "not_hr", "several_matters", "no_workflow_definition"],
 )
-def test_a_conversation_below_the_threshold_creates_no_case(
+def test_a_conversation_below_the_threshold_gets_a_bare_case_and_no_workflow(
     db: sessionmaker[Session],
     artifacts: Artifacts,
     alice_context: AuthenticatedCompanyContext,
@@ -366,35 +377,38 @@ def test_a_conversation_below_the_threshold_creates_no_case(
     matter: str,
 ) -> None:
     result = Founder(db, artifacts, alice_context).say(message, proposal)
-    assert result.case_id is None
     (conversation,) = rows(db, AssistantConversation)
-    assert (conversation.case_id, conversation.workflow_key, conversation.title) == (
-        None,
-        None,
-        None,
-    )
-    assert rows(db, Case) == [] and rows(db, WorkflowInstance) == []
+    (case,) = rows(db, Case)
+    assert result.case_id == conversation.case_id == case.id is not None
+    assert (case.case_type, case.title, case.subject_id) == ("unclassified", NEW_CASE_TITLE, None)
+    assert (conversation.workflow_key, conversation.title) == (None, NEW_CASE_TITLE)
+    # No workflow, so nothing of the founder's words is a Case fact.
+    assert rows(db, WorkflowInstance) == [] and rows(db, WorkflowSubmission) == []
     (evaluation,) = rows(db, AssistantTurnEvaluation)
     assert evaluation.matter == matter
 
 
-def test_a_supported_matter_creates_one_case_and_the_conversation_keeps_it(
+def test_a_supported_matter_attaches_its_workflow_to_the_conversations_one_case(
     db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
 ) -> None:
     founder = Founder(db, artifacts, alice_context)
     opening = founder.say(
         "I need help with an employee.", understanding(intent="unclear", workflow=None)
     )
-    assert opening.case_id is None
+    assert opening.case_id is not None
     absent = "One employee hasn't come in for four days."
     attached = founder.say(absent, understood(absent, topics=["workplace_reminder"], turn=1))
-    assert attached.case_id is not None
+    assert attached.case_id == opening.case_id
     later = "He was late again today."
     again = founder.say(later, understood(later, topics=["workplace_reminder"], turn=2))
     assert again.case_id == attached.case_id
-    assert len(rows(db, Case)) == len(rows(db, WorkflowInstance)) == 1
+    (case,) = rows(db, Case)
+    (instance,) = rows(db, WorkflowInstance)
+    assert (case.case_type, instance.case_id) == ("disciplinary", case.id)
     (conversation,) = rows(db, AssistantConversation)
     assert (conversation.case_id, conversation.revision) == (attached.case_id, 3)
+    # The message that established the matter is its narrative, not the opening one.
+    assert case_answers(db, case.id) == {NARRATIVE_KEY: absent}
 
 
 def test_a_case_title_never_names_a_person_or_a_sanction(
@@ -439,50 +453,52 @@ def test_a_direct_answer_reaches_the_case_through_the_shared_pipeline(
     first = founder.say(LATE, late())
     answer = founder.say("Yes.", late("Yes.", turn=1))
     assert first.case_id is not None and answer.case_id == first.case_id
-    assert case_answers(db, first.case_id) == {POLICY_QUESTION: "yes"}
-    (submission,) = rows(db, WorkflowSubmission)
+    assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "yes"}
+    narrative, submission = rows(db, WorkflowSubmission)
+    assert narrative.source_message_id == first.founder.id and narrative.revision == 1
     assert submission.origin == "assistant"
     assert submission.step_key == "ask_heroos"
     # Provenance: a reference to the founder message that established it (no copy of its words).
     assert submission.source_message_id == answer.founder.id
     assert submission.submitted_by_user_id == alice_context.user_id
-    assert submission.revision == 1
+    assert submission.revision == 2
     (instance,) = rows(db, WorkflowInstance)
-    assert instance.revision == 1
-    # The same side effects as a form save: the intake evaluation trace of the submission.
-    (trace,) = rows(db, WorkflowEvaluation)
-    assert trace.submission_id == submission.id
+    assert instance.revision == 2
+    # The same side effects as a form save: the intake evaluation trace of each submission.
+    traces = rows(db, WorkflowEvaluation)
+    assert [t.submission_id for t in traces] == [narrative.id, submission.id]
     # The Case now holds the fact: the checkpoint doesn't keep a second copy.
     (conversation,) = rows(db, AssistantConversation)
     checkpoint = decode(conversation.checkpoint)
     assert checkpoint is not None and POLICY not in checkpoint.state.engine
-    assert checkpoint.case_revision == 1
+    assert checkpoint.case_revision == 2
 
     # A later turn starts from the Case's fact and stores nothing again.
     founder.say("What should I do next?", late("What should I do next?", turn=2))
-    assert len(rows(db, WorkflowSubmission)) == 1
+    assert len(rows(db, WorkflowSubmission)) == 2
     record = rows(db, AssistantTurnEvaluation)[-1].record
     assert record["facts"]["engine_trusted"][POLICY] == "yes"
     assert record["facts"]["sources"][POLICY] == "continuation"
 
 
-def test_facts_before_the_case_exists_are_saved_when_it_is_created(
+def test_facts_before_the_workflow_attaches_are_saved_when_it_does(
     db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
 ) -> None:
     founder = Founder(db, artifacts, alice_context)
-    # Several matters at first: no Case, but HeroOS asks about the standard.
+    # Several matters at first: a bare Case and no workflow, but HeroOS asks about the standard.
     message = "I need to discipline one employee and hire a replacement."
-    founder.say(
+    opening = founder.say(
         message,
         understood(message, topics=["workplace_reminder"], uncertainties=["multiple_matters"]),
     )
-    assert rows(db, Case) == []
+    assert opening.case_id is not None and rows(db, WorkflowInstance) == []
     conversation = rows(db, AssistantConversation)[0]
     checkpoint = decode(conversation.checkpoint)
     assert checkpoint is not None and checkpoint.state.asked == (Asked("fact", POLICY),)
-    # One matter, and a direct answer: the Case is created with that fact.
+    # One matter, and a direct answer: the workflow attaches to the same Case with that fact.
     result = founder.say("Yes.", late("Yes.", turn=1))
-    assert result.case_id is not None
+    assert result.case_id == opening.case_id
+    # "Yes." answered HeroOS's question: never the founder's account of what happened.
     assert case_answers(db, result.case_id) == {POLICY_QUESTION: "yes"}
     (submission,) = rows(db, WorkflowSubmission)
     assert submission.source_message_id == result.founder.id
@@ -510,7 +526,8 @@ def test_an_ai_reading_never_becomes_a_case_fact(
     )
     result = Founder(db, artifacts, alice_context).say(message, late(message, facts=[stated]))
     assert result.case_id is not None
-    assert rows(db, WorkflowSubmission) == [] and rows(db, CaseFact) == []
+    # The founder's own words are the narrative; the AI's reading of them is no Case fact.
+    assert case_answers(db, result.case_id) == {NARRATIVE_KEY: message}
 
 
 def test_a_contradiction_never_changes_the_case_and_corrections_append(
@@ -524,14 +541,14 @@ def test_a_contradiction_never_changes_the_case_and_corrections_append(
     first = founder.say(LATE, late())
     founder.say("No.", late("No.", turn=1))
     assert first.case_id is not None
-    assert case_answers(db, first.case_id) == {POLICY_QUESTION: "no"}
+    assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "no"}
 
     # The founder now says otherwise: the AI's reading changes nothing in the Case, and the
     # Case's "no" stays out of the evaluation until a value is confirmed (voided).
     said = "Sorry, I did explain the attendance standard to him."
     founder.say(said, late(said, facts=[fact(POLICY, "yes", said[7:], turn=2)]))
-    assert case_answers(db, first.case_id) == {POLICY_QUESTION: "no"}
-    assert len(rows(db, CaseFact)) == 1
+    assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "no"}
+    assert len(rows(db, CaseFact)) == 2
     checkpoint = decode(rows(db, AssistantConversation)[0].checkpoint)
     assert checkpoint is not None and checkpoint.voided == (POLICY,)
     founder.say("Anything else?", late("Anything else?", turn=3))
@@ -551,9 +568,13 @@ def test_a_contradiction_never_changes_the_case_and_corrections_append(
         },
     )
     assert saved.status_code == 200, saved.text
-    assert [f.value for f in rows(db, CaseFact)] == ["no", "yes"]
-    assert case_answers(db, first.case_id) == {POLICY_QUESTION: "yes"}
-    assert [s.origin for s in rows(db, WorkflowSubmission)] == ["assistant", "structured"]
+    assert [f.value for f in rows(db, CaseFact)] == [LATE, "no", "yes"]
+    assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "yes"}
+    assert [s.origin for s in rows(db, WorkflowSubmission)] == [
+        "assistant",
+        "assistant",
+        "structured",
+    ]
     # The newer Case fact is trusted again from the next turn on.
     founder.say("Thanks.", late("Thanks.", turn=4))
     record = rows(db, AssistantTurnEvaluation)[-1].record
@@ -590,7 +611,7 @@ def test_each_turn_keeps_its_own_evaluation_record(
     founder = Founder(db, artifacts, alice_context)
     founder.say(LATE, late())
     assert len(rows(db, AssistantTurnEvaluation)) == 1
-    assert rows(db, WorkflowEvaluation) == []  # no fact changed: no intake trace
+    assert len(rows(db, WorkflowEvaluation)) == 1  # the narrative's intake trace only
     founder.say("Yes.", late("Yes.", turn=1))
     evaluations = rows(db, AssistantTurnEvaluation)
     turns = rows(db, AssistantTurn)
@@ -608,9 +629,9 @@ def test_each_turn_keeps_its_own_evaluation_record(
         assert row.snapshot_id == artifacts.snapshot().id
         assert row.profile_digest is not None and len(row.profile_digest) == 64
         assert row.knowledge_runtime_digest is not None
-    # The submission's intake trace is the structured one, not the conversation record.
-    (trace,) = rows(db, WorkflowEvaluation)
-    assert "schema" not in trace.results[0]
+    # Each submission's intake trace is the structured one, not the conversation record.
+    traces = rows(db, WorkflowEvaluation)
+    assert len(traces) == 2 and all("schema" not in t.results[0] for t in traces)
 
 
 def test_nothing_of_the_provider_exchange_is_stored_beyond_what_was_shown(
@@ -652,9 +673,9 @@ def test_nothing_of_the_provider_exchange_is_stored_beyond_what_was_shown(
         "prompt_tokens",
     ):
         assert private not in everything, private
-    # The founder's words are stored once, as their message; never copied into the Case.
-    assert everything.count("I explained the attendance standard to him last month") == 1
-    assert "incident.narrative" not in everything
+    # The founder's words are stored as their message and, as written, as the Case's
+    # narrative (chat-first Case); never the AI's summary or reading of them.
+    assert everything.count("I explained the attendance standard to him last month") == 2
     assert "Visible reply only." in everything and "Second visible reply." in everything
 
 
@@ -670,7 +691,7 @@ def test_history_comes_from_the_stored_conversation(
     conversation = founder.provider.phase("response")[0].data["conversation"]
     assert conversation == [
         {"from": "founder", "text": LATE},
-        {"from": "heroos", "text": SAFE},
+        {"from": "heroos", "text": SAFE_ASKING_POLICY},
     ]
 
 

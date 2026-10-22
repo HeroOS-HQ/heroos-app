@@ -208,12 +208,12 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(document.querySelector("[class*='tone-']")).toBeNull();
   });
 
-  it("shows the deployment's notice and starts a new conversation on request", async () => {
+  it("shows the deployment's notice and starts a new chat on request", async () => {
     const { fetcher } = setup("Preview: use fictional scenarios only.", answer(), answer("Hello again."));
     expect(screen.getByText("Preview: use fictional scenarios only.")).toBeInTheDocument();
     await ask(WORDS);
     await screen.findByText(REPLY);
-    fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     await waitFor(() => expect(screen.queryByText(REPLY)).toBeNull());
     expect(screen.getByRole("heading", { level: 1, name: "What can HR do for you today?" })).toBeInTheDocument();
     // Only this page starts over (nothing is deleted): the next message opens a new one.

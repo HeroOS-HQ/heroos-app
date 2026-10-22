@@ -58,6 +58,9 @@ from tests.knowledge.conftest import (  # noqa: F401  (pytest fixtures)
 )
 
 SAFE = "Thanks. HeroOS's approved approach starts with understanding what happened first."
+# SAFE asks nothing, so when a deterministic check needs the policy answer the server asks
+# it in its own words (and only then does it count as asked).
+SAFE_ASKING_POLICY = f"{SAFE} Could you tell me more about this: standard explained?"
 ASSISTANT_TABLES = (AssistantConversation, AssistantTurn, AssistantMessage, AssistantTurnEvaluation)
 COUNTED = (
     *ASSISTANT_TABLES,

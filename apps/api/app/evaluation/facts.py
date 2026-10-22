@@ -97,24 +97,25 @@ def _bare(text: str) -> str:
 
 
 def parse_yes_no(text: str) -> str | None:
-    """``yes``, ``no`` or ``not_sure`` for a plain answer; None for anything qualified."""
+    """``yes``, ``no`` or ``not_sure`` for a bare answer; None for anything else.
+
+    Only the answer on its own counts ("Yes", "No.", "Nope", "Not sure"). A yes
+    or no followed by more words ("No, they haven't contacted anyone", "Yes, he
+    has") is never read as the answer: the rest may be about something else.
+    It is not trusted here; HeroOS confirms it, or notes it for the Case record.
+    """
     if len(text) > MAX_ANSWER_CHARS:
         return None
     answer = _bare(text)
     if answer in _NOT_SURE or answer.removeprefix("i ") in _NOT_SURE:
         return NOT_SURE
     words = _WORD.findall(answer)
-    if not words:
+    if len(words) != 1:
         return None
-    first, rest = words[0], " ".join(words[1:])
-    if _QUALIFIERS.search(answer):
-        return None
-    if first in _YES:
-        # "Yes, he has." / "Yes, and he was late again today." A negation after a yes is a
-        # contradiction ("yes, he didn't") and stays unparsed.
-        return None if _NEGATION.search(rest) else "yes"
-    if first in _NO:
-        return None if any(w in _YES for w in words[1:]) else "no"
+    if words[0] in _YES:
+        return "yes"
+    if words[0] in _NO:
+        return "no"
     return None
 
 
@@ -137,7 +138,7 @@ def parse_count(text: str, maximum: int | None = None) -> int | None:
 
 
 def parse_choice(text: str, options: Sequence[Option]) -> str | None:
-    """An option of the question: its value or label as written, a leading Yes / No, or Not sure."""
+    """An option of the question: its value or label as written, a bare Yes / No, or Not sure."""
     if len(text) > MAX_ANSWER_CHARS:
         return None
     answer = _bare(text)
@@ -149,7 +150,8 @@ def parse_choice(text: str, options: Sequence[Option]) -> str | None:
     if plain == NOT_SURE and NOT_SURE in values:
         return NOT_SURE
     if plain in ("yes", "no"):
-        # Options whose label starts with "Yes" / "No" (e.g. "No, outside work").
+        # A bare "Yes" / "No" picks the one option whose label starts with it (e.g.
+        # "No, outside work"); "No, <anything else>" is not this option's label.
         lead = "yes" if plain == "yes" else "no"
         matches = [v for v, label in values.items() if _WORD.findall(label)[:1] == [lead]]
         if len(matches) == 1:

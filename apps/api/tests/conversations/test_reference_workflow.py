@@ -365,15 +365,19 @@ def test_a_a_greeting_gets_a_greeting_and_a_situation_becomes_a_case(
     journey: Journey, db: sessionmaker[Session]
 ) -> None:
     hello = journey.ask("Hi Hannah", absent("Hi Hannah"))
-    # No model request for a greeting, nothing evaluated, no Case, and "Hi" is no fact.
+    # No model request for a greeting and nothing evaluated. Chat-first Case: the conversation
+    # has its bare Case from the first message, but "Hi" is no fact.
     assert journey.chat is not None and journey.chat.calls == []
     assert last_heroos(hello)["text"] == GREETING
-    assert hello["conversation"]["case"] is None and journey.case is None
-    assert rows(db, CaseFact) == 0
+    assert hello["conversation"]["case"]["title"] == "New case"
+    greeted = journey.case
+    assert greeted is not None and rows(db, CaseFact) == 0
 
     situation = journey.ask(ABSENT, absent(turn=1, topics=("workplace_reminder",)))
-    assert journey.case is not None
+    # The workflow attaches to the same Case; the situation is its narrative.
+    assert journey.case == greeted
     assert situation["conversation"]["status"]["workflow"]["key"] == "disciplinary"
+    assert journey.view()["answers"]["incident.narrative"] == ABSENT
     # One focused question, phrased by HeroOS (never the whole question group).
     targets = journey.sections()["approved_knowledge"]["question_targets"]
     assert 1 <= len(targets) <= 3
@@ -396,7 +400,8 @@ def test_a_a_greeting_gets_a_greeting_and_a_situation_becomes_a_case(
                 WorkflowSubmission.revision
             )
         ).all()
-    assert [tuple(o) for o in origins] == [("ask_heroos", "assistant")]
+    # The narrative, then the answer: both Ask HeroOS submissions.
+    assert [tuple(o) for o in origins] == [("ask_heroos", "assistant")] * 2
 
 
 # --- B, C: pathway ownership and serious misconduct --------------------------------------------
@@ -866,7 +871,7 @@ def test_the_case_view_is_read_only_labels_and_follows_the_turns_snapshot(
         "Serious misconduct",
         "Unable to determine: needs review",
     ]
-    assert "can't be changed from the chat" in progress["who_changes_it"]
+    assert "Nothing said in the chat changes it." in progress["who_changes_it"]
     assert data["conversation"]["status"]["position"]["pathway"] is None
     # Unchanged copy of the view: no ids of any kind.
     flat = repr(deepcopy(progress))

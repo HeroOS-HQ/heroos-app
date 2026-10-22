@@ -51,8 +51,9 @@ import { AdviserTurn, type Outcome as Tone, OutcomeLabel } from "./response-tone
  * page at a time. History lists the Company's conversations; another
  * administrator's messages say so. When the conversation moved on elsewhere
  * (another tab, another administrator), the page shows the latest and keeps
- * the unsent words in the box. "New conversation" only starts a new one here:
- * nothing is deleted, and nothing is stored until HeroOS answers.
+ * the unsent words in the box. "New chat" only starts a new one here (its Case
+ * starts with its first answered message): nothing is deleted, and nothing is
+ * stored until HeroOS answers.
  *
  * One chat is one Case (chat-first): the founder's first message starts both,
  * whatever it says, and the Case header names it ("New case" until HeroOS

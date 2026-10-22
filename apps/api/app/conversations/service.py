@@ -772,6 +772,7 @@ class AskConversations:
                 bridge.narrative_change(
                     state.definition,
                     narrative,
+                    evaluation,
                     current={**state.answers, **changes},
                     open_steps=open_steps,
                     today=today,

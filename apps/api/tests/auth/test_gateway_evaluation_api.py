@@ -13,12 +13,14 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.assistant.gateway.service import AiGateway
 from app.assistant.limits import UsageLimits
 from app.auth.dependencies import get_authentication_provider
 from app.auth.providers.cognito import CognitoAccessTokenProvider
+from app.db.models import CaseFact
 from app.db.session import get_db
 from app.main import create_app
 from tests.auth.conftest import SeedData
@@ -124,10 +126,14 @@ def test_the_outcome_is_the_servers_card_and_nothing_internal(
         "continuation",
     ):
         assert private not in answered.text, private
-    # The conversation is kept; no workflow action, fact, decision or document is.
+    # The conversation is kept with its Case. Its only fact is the founder's own narrative
+    # (chat-first Case); no workflow action, other fact, decision or document is.
     stored = counts(stored_sessions)
-    assert stored["workflow_submissions"] == stored["workflow_progress_events"] == 0
-    assert stored["workflow_decision_records"] == 0
+    assert stored["workflow_submissions"] == stored["case_facts"] == 1
+    assert stored["workflow_progress_events"] == stored["workflow_decision_records"] == 0
+    with stored_sessions() as db:
+        (fact,) = db.scalars(select(CaseFact)).all()
+    assert (fact.fact_key, fact.value) == ("incident.narrative", MESSAGE)
 
 
 def test_a_technical_unavailability_is_not_an_hr_outcome(

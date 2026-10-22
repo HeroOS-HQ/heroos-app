@@ -1,7 +1,7 @@
 """The fact trust pipeline and deterministic canonicalization (M2-NEW-06).
 
 Only ENGINE_TRUSTED values enter a rule, and only the server makes a value
-ENGINE_TRUSTED: a plain direct answer to the one question it asked, a
+ENGINE_TRUSTED: a bare direct answer to the one question it asked, a
 confirmation of its own canonical reading, or the Company Blueprint. The AI's
 reading of the founder's words, even of real words, never is.
 """
@@ -45,7 +45,7 @@ def trust(execution: WorkflowExecution, message: str, *, stated=(), prior=None):
     )
 
 
-# --- canonicalization: plain answers only -----------------------------------------------------
+# --- canonicalization: bare answers only ------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -54,10 +54,8 @@ def trust(execution: WorkflowExecution, message: str, *, stated=(), prior=None):
         ("Yes.", "yes"),
         ("yes", "yes"),
         ("Yep", "yes"),
-        ("Yes, he has.", "yes"),
-        ("Yes, and he was late again today.", "yes"),
         ("No.", "no"),
-        ("No, not yet.", "no"),
+        ("Nope!", "no"),
         ("Not sure", "not_sure"),
         ("I don't know", "not_sure"),
         ("I sort of spoke to him.", None),
@@ -68,6 +66,12 @@ def trust(execution: WorkflowExecution, message: str, *, stated=(), prior=None):
         ("I spoke to him about it", None),
         ("He has", None),
         ("y" * 200, None),
+        # A yes or no with more words is never the answer: the rest may be about something else.
+        ("Yes, he has.", None),
+        ("Yes, and he was late again today.", None),
+        ("No, not yet.", None),
+        ("No, they haven't contacted anyone.", None),
+        ("No no", None),
     ],
 )
 def test_yes_no_answers(text: str, expected: str | None) -> None:
@@ -110,6 +114,9 @@ def test_choices_come_from_the_definition(execution: WorkflowExecution) -> None:
     assert canonical(location, "No.") == "outside_work"
     assert canonical(location, "Yes") == "at_work"
     assert canonical(location, "No, outside work") == "outside_work"
+    # Live dev-stack run: a reply about something else, never this option.
+    assert canonical(location, "No, they haven't contacted anyone.") is None
+    assert canonical(location, "No, it was at home") is None
     assert canonical(location, "Not sure") == "not_sure"
     assert canonical(location, "In the car park") is None
 
@@ -119,6 +126,8 @@ def test_choices_come_from_the_definition(execution: WorkflowExecution) -> None:
     [
         ("Yes", "insists"),
         ("Yes, I still want to go ahead.", "insists"),
+        ("Yes, he was late again.", None),
+        ("No, he was late again.", None),
         ("I still want to go ahead", "insists"),
         ("No", "declines"),
         ("OK, understood.", "acknowledged"),
@@ -166,6 +175,20 @@ def test_a_plain_answer_to_the_known_question_is_trusted(execution: WorkflowExec
         execution, "Eight.", prior=PriorState(asked=(Asked("fact", "proposed_suspension_days"),))
     )
     assert counted.facts.engine["proposed_suspension_days"] == 8
+
+
+def test_a_yes_or_no_with_more_words_is_never_trusted_as_the_answer(
+    execution: WorkflowExecution,
+) -> None:
+    """Live dev-stack run: "No, they haven't contacted anyone." answered something else."""
+    prior = PriorState(asked=(Asked("fact", "given_opportunity_to_explain"),))
+    for message in ("No, they haven't contacted anyone.", "Yes, he has."):
+        result = trust(execution, message, prior=prior)
+        assert "given_opportunity_to_explain" not in result.facts.engine
+        assert not result.answered
+    confirm = PriorState(asked=(Asked("confirm", "proposed_suspension_days", 20),))
+    confirmed = trust(execution, "Yes, and he was late again.", prior=confirm)
+    assert "proposed_suspension_days" not in confirmed.facts.engine
 
 
 def test_a_short_answer_means_nothing_without_one_known_question(

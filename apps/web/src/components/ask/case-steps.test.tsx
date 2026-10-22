@@ -75,15 +75,16 @@ describe("the next Case step (pure)", () => {
     // The jurisdiction for this employee: the employer's own answer, inline.
     const jurisdiction = nextCaseStep(view({ company: "uae_federal" }));
     expect(jurisdiction).toMatchObject({ kind: "question", stepKey: "jurisdiction" });
-    // The safety screening (sensitive): asked inline, never by the AI.
+    // The safety screening (sensitive): asked inline, never by the AI, its questions in one card.
     const answered = { ...COMPLETE };
     for (const key of Object.keys(ALL_CLEAR)) delete answered[key];
     const screening = nextCaseStep(view({ company: "uae_federal", answers: answered, hold: null }));
-    expect(screening).toMatchObject({ kind: "question", stepKey: "safety_screening" });
-    // Only ordinary details left: told in the chat, or reviewed in the case.
+    expect(screening).toMatchObject({ kind: "screening", stepKey: "safety_screening" });
+    expect(screening?.kind === "screening" && screening.questions.map((q) => q.key).sort()).toEqual(Object.keys(ALL_CLEAR).sort());
+    // Only ordinary details left: the conversation collects them; no card sends the founder to the form.
     const ordinary = { ...COMPLETE };
     delete ordinary["incident.date"];
-    expect(nextCaseStep(view({ company: "uae_federal", answers: ordinary, hold: null }))).toEqual({ kind: "details", open: 1 });
+    expect(nextCaseStep(view({ company: "uae_federal", answers: ordinary, hold: null }))).toBeNull();
   });
 
   it("follows the formal workflow: pathway, checklist, then the transition the API allows", () => {
@@ -204,7 +205,7 @@ describe("CaseSteps in Ask HeroOS", () => {
     const first = view({ company: "uae_federal" });
     const { fetcher } = setup(first, json(200, { view: view({ company: "uae_federal", answers: { "jurisdiction.case_confirmation": "uae_federal" }, revision: 1 }) }));
     const step = await screen.findByRole("region", { name: "Your case's next step" });
-    expect(step).toHaveTextContent("For the case record, HeroOS needs your answer:");
+    expect(step).toHaveTextContent("One quick check for your case record:");
     const options = within(step).getByRole("group", { name: "Employment jurisdiction for this case" });
     fireEvent.click(within(options).getAllByRole("button")[0]);
     await waitFor(() => expect(sent(fetcher)).toHaveLength(1));
