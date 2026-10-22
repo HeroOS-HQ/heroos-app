@@ -343,3 +343,34 @@ def test_a_hedge_in_the_founders_sentence_makes_any_reading_uncertain(
     value: str, excerpt: str, sentence: str, hedged: bool
 ) -> None:
     assert contradicted(value, excerpt, context=sentence) is hedged
+
+
+@pytest.mark.parametrize(
+    ("text", "bare"),
+    [
+        ("i don't know to be honest", True),
+        ("no idea tbh", True),
+        ("No idea, I'd have to check.", True),
+        ("Not sure.", True),
+        ("I'm not sure, I wasn't there", True),
+        # Naming what they don't know, or saying more, is not a bare answer.
+        ("I don't know if anyone saw it", False),
+        ("I wasn't there, my manager might know", False),
+        ("No, nobody has heard from him.", False),
+    ],
+)
+def test_only_not_known_is_a_bare_answer(text: str, bare: bool) -> None:
+    from app.evaluation.facts import only_not_known
+
+    assert only_not_known(text) is bare
+
+
+def test_saying_they_dont_know_is_said_plainly_whatever_the_readings_confidence(
+    execution: WorkflowExecution,
+) -> None:
+    stated = [
+        StatedFact("employee_aware_of_relevant_policy", "not_sure", "i don't know", False, True)
+    ]
+    result = trust(execution, "i don't know to be honest", stated=stated)
+    assert result.facts.conversational["employee_aware_of_relevant_policy"] == "not_sure"
+    assert "employee_aware_of_relevant_policy" not in result.facts.engine

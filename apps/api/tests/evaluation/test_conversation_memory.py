@@ -388,3 +388,62 @@ def test_the_question_follows_the_reply_as_one_sentence(
     )
     assert result.reply.startswith(expected)
     assert result.reply.endswith("ould you tell me about given opportunity to explain?")
+
+
+def test_an_earlier_dont_know_never_answers_a_later_question(artifacts: Artifacts) -> None:
+    """Found live: "i don't know to be honest" answered one question and was read, a turn later,
+    as not knowing the next question asked."""
+    chat = Remembering(artifacts)
+    late = "He's late a lot."
+    chat.say(late, understood(late, pathway="less_serious", topics=["workplace_reminder"]))
+    unsure = "i don't know to be honest"
+    first = chat.say(
+        unsure,
+        understood(
+            unsure,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[fact(POLICY, "not_sure", unsure, turn=1)],
+        ),
+    )
+    assert evaluation(first).facts.conversational[POLICY] == "not_sure"  # said plainly
+    later = "OK, what now?"
+    result = chat.say(
+        later,
+        understood(
+            later,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[
+                fact(
+                    "incident.history", "not_sure", unsure, turn=1, provenance="prior_user_message"
+                ),
+            ],
+        ),  # fmt: skip
+    )
+    assert "incident.history" not in evaluation(result).facts.conversational
+    assert chat.memory.asked.get("incident.history") is None or (
+        chat.memory.asked["incident.history"].last != "not_sure"
+    )
+
+
+def test_the_jurisdiction_question_asked_again_says_why_a_yes_or_no_helps(
+    artifacts: Artifacts,
+) -> None:
+    chat = Remembering(artifacts)
+    first = "Can I give him a formal warning? He's on our DIFC entity's payroll."
+
+    def conflicted(message: str, previous: str = "no_question") -> dict[str, Any]:
+        data = understood(
+            message, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")]
+        )
+        data["uncertainties"] = ["jurisdiction_conflict"]
+        data["previous_question_answer"] = previous
+        return data
+
+    chat.say(first, conflicted(first))
+    chat.say("His contract is with the DIFC company.", conflicted("x", "answered"))
+    result = chat.say("What can I do meanwhile?", conflicted("y", "not_answered"))
+    assert "To settle it for the case, a plain yes or no helps: is this employee employed" in (
+        result.reply
+    )

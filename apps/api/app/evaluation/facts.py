@@ -248,6 +248,23 @@ _NOT_KNOWING: Final = re.compile(
 )
 
 
+# Words that add nothing to an answer ("to be honest", "tbh", "sorry").
+_FILLER: Final = re.compile(
+    r"\b(?:to\s+be\s+honest|tbh|honestly|really|sorry|i'?m\s+afraid|mate|lol|haha|right\s+now"
+    r"|at\s+the\s+moment|yet|either|i(?:'d|'ll|'ve|'m|m)?|i\s+am|would|will|um+|uh+|hmm+|well|so"
+    r"|just|actually|ok|okay)(?![\w'])"
+)
+
+
+def only_not_known(text: str) -> bool:
+    """The answer says only that the founder doesn't know ("i don't know to be honest", "no idea
+    tbh"): like a bare yes or no, it says nothing about which question it answers."""
+    if len(text) > MAX_ANSWER_CHARS or not says_not_known(text):
+        return False
+    rest = _FILLER.sub(" ", _NOT_KNOWING.sub(" ", normalized(text)))
+    return not _WORD.findall(rest)
+
+
 def says_not_known(text: str) -> bool:
     """The words say the founder doesn't know (found live: "i havent said anything to her yet",
     an answer to another question, was read as not knowing whether it was raised before)."""
@@ -405,7 +422,10 @@ def trust_facts(
     proposed: list[str] = []
     for key, fact in newest.items():
         schema = schemas.get(key)
-        if not fact.explicit or contradicted(fact.value, fact.excerpt, schema):
+        # Saying they don't know is said plainly, whatever confidence the reading carries (the
+        # evidence check only keeps "not sure" from words that say so).
+        not_known = schema is not None and canonical(schema, fact.value) == NOT_SURE
+        if (not fact.explicit and not not_known) or contradicted(fact.value, fact.excerpt, schema):
             proposed.append(key)
             continue
         conversational[key] = fact.value

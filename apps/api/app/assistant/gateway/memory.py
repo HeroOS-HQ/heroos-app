@@ -113,6 +113,7 @@ def resolve(
     jurisdiction_answered: bool,
     said: Mapping[str, Value],
     hedged: Collection[str],
+    replied: bool = False,
 ) -> ConversationMemory:
     """The memory after the founder's message: how it related to what HeroOS asked last turn.
 
@@ -133,14 +134,17 @@ def resolve(
             outcome = "answered" if jurisdiction_answered else "unanswered"
             if does_not_know and single:
                 outcome = "not_sure"
+            elif replied and outcome == "unanswered" and single:
+                # Answered in their own words, which the server can't read as yes or no.
+                outcome = "hedged"
         elif NOT_SURE in values:
             outcome = "not_sure"
         elif key in stated or (answered and single):
             outcome = "answered"
-        elif key in hedged:
-            outcome = "hedged"
         elif does_not_know and single:
             outcome = "not_sure"
+        elif key in hedged:
+            outcome = "hedged"
         else:
             outcome = "unanswered"
         asked[key] = AskRecord(record.times, outcome)

@@ -94,7 +94,10 @@ answer against previous_heroos_question: it states a fact about what HeroOS aske
 meaning clearly answers that question ("No, nobody has heard from him" says whether he has been \
 in touch, not where something happened); otherwise propose only what its words do state. One \
 message often states several facts (an answer, an earlier occurrence, the evidence available): \
-propose each one separately, with the words that state it. Never use HeroOS's own words, your \
+propose each one separately, with the words that state it. Words that place what happened at \
+the workplace or in the work ("at the till", "during his shift", "on site", "to a customer at \
+the counter") state where it happened; an absence or not turning up states nothing about \
+where something happened. Never use HeroOS's own words, your \
 assumptions or \
 general knowledge as a source. When the founder says, in any words, that they don't know or \
 aren't sure about what HeroOS last asked about, propose that fact as "not_sure" (when it is one \

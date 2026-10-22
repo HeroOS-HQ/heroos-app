@@ -358,21 +358,24 @@ def test_the_sentence_around_an_excerpt_is_the_founders_whole_sentence() -> None
 
 
 @pytest.mark.parametrize(
-    ("words", "kept"),
+    ("words", "answering", "otherwise"),
     [
-        ("No idea, I'd have to check.", True),
-        ("I wasn't there, my manager might know", True),
-        ("not sure tbh", True),
+        # Only "don't know" (plus filler) is a bare answer: it answers the question just asked.
+        ("No idea, I'd have to check.", True, False),
+        ("not sure tbh", True, False),
+        # Saying what they don't know stands on its own.
+        ("I wasn't there, my manager might know", True, True),
         # Another answer is never "not sure" about the question asked.
-        ("i havent said anything to her yet", False),
-        ("No, nobody has heard from him.", False),
+        ("i havent said anything to her yet", False, False),
+        ("No, nobody has heard from him.", False, False),
     ],
 )
 def test_not_sure_is_kept_only_from_words_that_say_so(
-    bundle: KnowledgeBundle, words: str, kept: bool
+    bundle: KnowledgeBundle, words: str, answering: bool, otherwise: bool
 ) -> None:
     catalog = routing_catalog(bundle)
     key = "employee_aware_of_relevant_policy"
     proposal = parse(bundle, understanding(facts=[fact(key, "not_sure", words)]), current=0)
-    checked, _ = check_evidence(proposal, catalog, [words], "")
-    assert bool(checked.facts) is kept
+    asked, _ = check_evidence(proposal, catalog, [words], "", answering=key)
+    unasked, _ = check_evidence(proposal, catalog, [words], "")
+    assert (bool(asked.facts), bool(unasked.facts)) == (answering, otherwise)

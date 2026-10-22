@@ -1214,6 +1214,7 @@ class AiGateway:
                 execution, evaluation.facts
             ),
             hedged=hedged,
+            replied=understanding.previous_answer == "answered",
         )  # fmt: skip
         return _Turn(evaluation, card, trust, prior, reconfirm, case, memory)
 
@@ -1283,9 +1284,14 @@ class AiGateway:
             MEMORY_JURISDICTION if requirement.kind == "jurisdiction" else requirement.key
         )
         if earlier is not None and earlier.last == "hedged":
-            # Asked again after an uncertain answer: said so, never the bare question repeated.
+            # Asked again after an uncertain answer (or, for the jurisdiction, an answer in the
+            # founder's own words): said so, never the bare question repeated.
             lowered = question[:1].lower() + question[1:]
-            question = f"You weren't certain earlier, so just to check: {lowered}"
+            question = (
+                f"To settle it for the case, a plain yes or no helps: {lowered}"
+                if requirement.kind == "jurisdiction"
+                else f"You weren't certain earlier, so just to check: {lowered}"
+            )
         kind = {"fact": "fact", "confirmation": "confirm"}.get(requirement.kind, requirement.kind)
         candidate = requirement.candidate
         if requirement.kind == "confirmation" and definition_question is not None:

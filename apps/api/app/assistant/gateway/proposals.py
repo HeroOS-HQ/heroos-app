@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Final, Literal, cast
 
 from app.assistant.gateway.catalog import CatalogWorkflow, RoutingCatalog
-from app.evaluation.facts import NOT_SURE, parse_yes_no, says_not_known
+from app.evaluation.facts import NOT_SURE, only_not_known, parse_yes_no, says_not_known
 
 UNDERSTANDING_SCHEMA: Final = "heroos.understanding/1"
 RESPONSE_SCHEMA: Final = "heroos.response/1"
@@ -421,7 +421,8 @@ def check_evidence(
     bare yes, no or "not sure" cited for anything but ``answering`` (the one
     question HeroOS just asked) in the current message. A bare answer says
     nothing of which question it answers. Found live: an earlier "Yes" to one
-    question was read as the answer to the next one.
+    question was read as the answer to the next one; so was "i don't know to be
+    honest" (only "don't know" plus filler counts as bare too).
     """
     messages = [normalized(m) for m in founder_messages]
     blueprint = normalized(blueprint_text)
@@ -430,7 +431,9 @@ def check_evidence(
         excerpt = normalized(fact.excerpt)
         if fact.fact_key not in catalog.facts or not excerpt:
             continue
-        bare = fact.provenance != "company_blueprint" and parse_yes_no(fact.excerpt) is not None
+        bare = fact.provenance != "company_blueprint" and (
+            parse_yes_no(fact.excerpt) is not None or only_not_known(fact.excerpt)
+        )
         if bare and (fact.fact_key != answering or fact.source_turn != len(messages) - 1):
             continue
         if fact.provenance == "company_blueprint":
