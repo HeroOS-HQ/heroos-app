@@ -649,6 +649,7 @@ class AskConversations:
         case_revision: int | None = None
         facts = 0
         earlier_checkpoint = decode(conversation.checkpoint)
+        answering = earlier_checkpoint is not None and bool(earlier_checkpoint.state.asked)
         noted: dict[str, Value] = (
             {} if earlier_checkpoint is None else dict(earlier_checkpoint.noted)
         )
@@ -664,8 +665,10 @@ class AskConversations:
                 context,
                 first.from_case | resumed.from_case,
                 blended,
-                # The founder's own words that established the matter become its narrative.
-                narrative=request.message if attached else None,
+                # The founder's own words that established the matter become its narrative; never
+                # a reply to the question HeroOS asked last turn (found live: "possibly, not sure"
+                # became the narrative on the turn the workflow attached).
+                narrative=request.message if attached and not answering else None,
             )
             # A turn about the Case's matter says what is noted now; any other keeps it.
             noted = (

@@ -504,6 +504,26 @@ def test_facts_before_the_workflow_attaches_are_saved_when_it_does(
     assert submission.source_message_id == result.founder.id
 
 
+def test_a_reply_to_heroos_question_never_becomes_the_narrative(
+    db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
+) -> None:
+    """Found live: the workflow attached on the founder's hedged reply to HeroOS's question
+    ("possibly, not sure"), which was saved as "What happened?"."""
+    founder = Founder(db, artifacts, alice_context)
+    message = "I need to discipline one employee and hire a replacement."
+    founder.say(
+        message,
+        understood(message, topics=["workplace_reminder"], uncertainties=["multiple_matters"]),
+    )
+    (conversation,) = rows(db, AssistantConversation)
+    asked = decode(conversation.checkpoint)
+    assert asked is not None and asked.state.asked == (Asked("fact", POLICY),)
+    reply = "possibly, not sure"
+    result = founder.say(reply, late(reply, turn=1))
+    assert result.case_id is not None and rows(db, WorkflowInstance) != []
+    assert NARRATIVE_KEY not in case_answers(db, result.case_id)
+
+
 @pytest.mark.parametrize(
     "stated",
     [
