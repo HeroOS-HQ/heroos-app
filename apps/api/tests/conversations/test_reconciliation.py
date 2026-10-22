@@ -51,7 +51,7 @@ from app.evaluation.model import (
 from app.repositories import workflows
 from app.tenancy.scope import open_company_scope
 from app.workflows.definition import CASE_JURISDICTION_KEY
-from tests.conversations.conftest import SAFE, SAFE_ASKING_POLICY, Founder, add_admin, gateway
+from tests.conversations.conftest import SAFE, Founder, add_admin, gateway
 from tests.conversations.test_http import move_to_difc
 from tests.evaluation.test_golden import understood
 from tests.fixtures.evaluation import Artifacts
@@ -355,7 +355,9 @@ def test_an_unrelated_change_keeps_the_models_words(
         late(NEXT, 1),
         lambda: form_save(db, alice_context, case_id, {"incident.history": "new"}, "initial_facts"),
     )
-    assert result.heroos.content == SAFE_ASKING_POLICY
+    # The model's words are kept. The question asked last turn (and not answered by this message)
+    # isn't asked again at once.
+    assert result.heroos.content == SAFE
     assert result.heroos.outcome is not None and result.heroos.outcome["kind"] == "guidance"
 
 

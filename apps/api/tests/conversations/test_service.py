@@ -530,6 +530,46 @@ def test_an_ai_reading_never_becomes_a_case_fact(
     assert case_answers(db, result.case_id) == {NARRATIVE_KEY: message}
 
 
+def test_what_was_noted_stays_said_on_later_turns_and_is_never_asked_again(
+    db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
+) -> None:
+    """Found live: a reading noted on one turn, which the next understanding didn't re-propose,
+    was dropped from the noted list and asked for again."""
+    founder = Founder(db, artifacts, alice_context)
+    message = "He's late a lot. I explained the attendance standard to him last month."
+    said = fact(POLICY, "yes", "I explained the attendance standard to him")
+    founder.say(message, late(message, facts=[said]))
+    (conversation,) = rows(db, AssistantConversation)
+    noted = decode(conversation.checkpoint)
+    assert noted is not None and noted.noted == {POLICY_QUESTION: "yes"}
+    assert Asked("fact", POLICY) not in noted.state.asked
+
+    # The next understanding doesn't mention it: still said (and noted), not asked, not trusted.
+    later = founder.say("What should I do next?", late("What should I do next?", turn=1))
+    assert later.case_id is not None
+    (conversation,) = rows(db, AssistantConversation)
+    checkpoint = decode(conversation.checkpoint)
+    assert checkpoint is not None and checkpoint.noted == {POLICY_QUESTION: "yes"}
+    assert Asked("fact", POLICY) not in checkpoint.state.asked
+    record = rows(db, AssistantTurnEvaluation)[-1].record
+    assert POLICY in record["facts"]["established_conversational"]
+    assert POLICY not in record["facts"]["engine_trusted"]
+    assert case_answers(db, later.case_id) == {NARRATIVE_KEY: message}
+
+
+def test_a_question_the_founder_didnt_answer_is_not_asked_again_at_once(
+    db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
+) -> None:
+    """Found live: the server re-appended the same question turn after turn while the founder
+    talked about something else. HeroOS answers them first and may come back to it later."""
+    founder = Founder(db, artifacts, alice_context)
+    assert founder.say(LATE, late()).heroos.content == SAFE_ASKING_POLICY
+    other = "Can he be suspended while I sort this out?"
+    assert founder.say(other, late(other, turn=1)).heroos.content == SAFE
+    again = "And what about his contract?"
+    assert founder.say(again, late(again, turn=2)).heroos.content == SAFE_ASKING_POLICY
+
+
 def test_a_contradiction_never_changes_the_case_and_corrections_append(
     db: sessionmaker[Session],
     artifacts: Artifacts,

@@ -229,6 +229,12 @@ class _Loaded:
     case_context: CaseContext | None = None
 
 
+def _noted(stored: object | None) -> dict[str, str]:
+    """The conversation's noted readings (already said; never trusted), from its checkpoint."""
+    checkpoint = decode(stored)
+    return {} if checkpoint is None else {k: str(v) for k, v in checkpoint.noted.items()}
+
+
 class _Resume:
     """The gateway's ``resume``: the persisted state, for the snapshot the turn took."""
 
@@ -388,7 +394,13 @@ class AskConversations:
         state = _Resume(loaded, company)
         reply = self._gateway.respond(
             company,
-            FounderTurn(request.message, loaded.history, resume=state, case=loaded.case_context),
+            FounderTurn(
+                request.message,
+                loaded.history,
+                resume=state,
+                case=loaded.case_context,
+                noted=_noted(loaded.stored),
+            ),
         )
 
         scope = open_company_scope(session, context)
@@ -564,7 +576,13 @@ class AskConversations:
         fresh = _Resume(replace(loaded, case=fresh_case, case_context=fresh_context), company)
         reply, reconciliation = self._gateway.reconcile(
             company,
-            FounderTurn(request.message, loaded.history, resume=fresh, case=fresh_context),
+            FounderTurn(
+                request.message,
+                loaded.history,
+                resume=fresh,
+                case=fresh_context,
+                noted=_noted(conversation.checkpoint),
+            ),
             reply,
         )
         resumed = fresh.resumed if fresh.called else first

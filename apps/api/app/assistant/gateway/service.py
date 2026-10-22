@@ -108,7 +108,13 @@ from app.evaluation.facts import (
     contradicted,
     trust_facts,
 )
-from app.evaluation.model import CaseProgress, ConversationEvaluation, Matter, TrustedFactState
+from app.evaluation.model import (
+    CaseProgress,
+    ConversationEvaluation,
+    Matter,
+    MissingRequirement,
+    TrustedFactState,
+)
 from app.evaluation.presentation import (
     Outcome,
     fallback_reply,
@@ -315,6 +321,10 @@ class FounderTurn:
     resume: Callable[[ExecutionSnapshot], ReadResult] | None = None
     # M2-NEW-08: the attached Case's workflow position (None: no Case).
     case: CaseContext | None = None
+    # Chat-first Case: what the founder already said that the Case could hold (the conversation's
+    # noted readings, Case question key -> canonical value). Already said, so never asked again
+    # (and noted again until saved or contradicted); never trusted.
+    noted: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -514,6 +524,20 @@ def _case_targets(
     return tuple(targets)
 
 
+def _asked_again(result: "_Turn", requirement: MissingRequirement) -> bool:
+    """Whether HeroOS asked exactly this fact last turn and the founder's reply didn't answer it.
+
+    Only a question for information: the insistence question of a two-state caution and the
+    jurisdiction question are part of their safeguard's protocol and are asked again.
+    """
+    if result.trust is None or result.trust.answered:
+        return False
+    kind = {"fact": "fact", "confirmation": "confirm"}.get(requirement.kind)
+    return kind is not None and any(
+        a.kind == kind and a.key == requirement.key for a in result.prior.asked
+    )
+
+
 def _strictness(result: "_Turn") -> int:
     return STRICTNESS[None if result.card is None else result.card.kind]
 
@@ -602,6 +626,28 @@ def snapshot_versions(snapshot: ExecutionSnapshot) -> str:
     knowledge = "-" if snapshot.knowledge is None else snapshot.knowledge.runtime_digest
     profile = "-" if snapshot.profile is None else snapshot.profile.digest
     return f"{knowledge}|{profile}"
+
+
+def _with_noted(
+    execution: WorkflowExecution, facts: TrustedFactState, noted: Mapping[str, str]
+) -> TrustedFactState:
+    """The conversation's noted readings count as said (ESTABLISHED_CONVERSATIONAL), never trusted.
+
+    Found live: a reading noted on one turn and not re-proposed by the next turn's understanding
+    was asked for again, and dropped from the noted list. The founder's newest statement still
+    wins: a key this turn read, or trusts, is left as it is.
+    """
+    said = dict(facts.conversational)
+    for question_key, value in noted.items():
+        schema = next(
+            (s for s in execution.schemas.values() if question_key in (s.key, s.question)), None
+        )
+        if schema is None or schema.key in said or schema.key in facts.engine:
+            continue
+        said[schema.key] = value
+    if len(said) == len(facts.conversational):
+        return facts
+    return dataclasses.replace(facts, conversational=dict(sorted(said.items())))
 
 
 def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
@@ -862,7 +908,7 @@ class AiGateway:
                 ),
                 jurisdiction_conflict="jurisdiction_conflict" in understanding.uncertainties,
                 clarification=trust.jurisdiction,
-                facts=trust.facts,
+                facts=_with_noted(execution, trust.facts, turn.noted),
                 requested=tuple(dict.fromkeys(requested)),
                 topics=understanding.topics if plan is None else plan.query.topics,
                 two_state=trust.two_state,
@@ -910,6 +956,11 @@ class AiGateway:
             and evaluation.jurisdiction_state == "company_unconfirmed"
         ):
             return plan.targets  # a Blueprint step, not a conversation answer
+        if _asked_again(result, requirement):
+            # The founder answered this exact question with something else (or with what they
+            # don't know): never the same question again at once (found live: it was re-appended
+            # turn after turn). The reply answers what they said; HeroOS may come back to it later.
+            return plan.targets
         schema = execution.schemas.get(requirement.key)
         titles = {a.action: a.title for a in evaluation.actions}
         question = requirement_question(
@@ -984,8 +1035,14 @@ class AiGateway:
             provider, company, founder, [lbl for lbl in labels if lbl], telemetry, deadline,
             view.catalog,
         )  # fmt: skip
+        # A bare answer can only answer the one question HeroOS just asked.
+        answering = (
+            asked_before[0].key
+            if len(asked_before) == 1 and asked_before[0].kind in ("fact", "confirm")
+            else None
+        )
         understanding, dropped = check_evidence(
-            understanding, view.catalog, founder, company_text(company)
+            understanding, view.catalog, founder, company_text(company), answering=answering
         )
         understanding = without_contradicted(
             understanding, lambda f: contradicted(f.value, f.excerpt)

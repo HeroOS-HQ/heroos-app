@@ -373,6 +373,15 @@ def _next_step(disposition: Disposition, missing: tuple[str, ...]) -> NextStep:
     return "answer_question" if missing else "continue_methodology"
 
 
+def _premise_holds(
+    execution: WorkflowExecution, question_key: str | None, trusted: Mapping[str, object]
+) -> bool:
+    """Whether the definition would ask this question now (its AskWhen premise, if any, holds)."""
+    question = None if question_key is None else execution.definition.question(question_key)
+    premise = None if question is None else question.ask_when
+    return premise is None or trusted.get(premise.key) in premise.values
+
+
 def _requirements(
     execution: WorkflowExecution,
     request: EvaluationRequest,
@@ -407,12 +416,17 @@ def _requirements(
                 continue  # a "what if" is never asked whether they still intend it
             found.append(MissingRequirement(key, "insistence", title, holding))
     keys = [k for a in actions for k in a.missing] + [k for c in conditions for k in c.missing]
+    trusted = _answers(execution, request.facts)
     for key in keys:
         schema = execution.schemas.get(key)
         if key in seen or schema is None or schema.kind == "blueprint":
             continue
         if request.facts.engine.get(key) == NOT_SURE:
             continue  # answered "not sure": the founder must find out, not be asked again
+        if not _premise_holds(execution, schema.question, trusted):
+            # The definition asks this only once another answer holds (e.g. the connection to
+            # work only for conduct outside work): asking earlier is a question that may not apply.
+            continue
         holding = tuple(a.action for a in actions if key in a.missing)
         if not holding and key in request.facts.conversational:
             # Already said: the conversation reuses it. Confirmation is only ever asked

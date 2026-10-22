@@ -240,6 +240,26 @@ def test_only_facts_the_founders_own_words_support_are_kept(bundle: KnowledgeBun
     assert dropped == 4
 
 
+def test_a_bare_answer_answers_only_the_question_heroos_just_asked(bundle: KnowledgeBundle) -> None:
+    """Found live: an earlier "Yes" (to one question) was read as the answer to the next one."""
+    policy = "employee_aware_of_relevant_policy"
+    reading = fact(policy, "yes", "Yes", turn=1)
+    context = fact("misconduct_level", "minor", "late again", turn=0)
+    catalog = routing_catalog(bundle)
+
+    def kept(messages: list[str], answering: str | None) -> list[str]:
+        proposal = parse(bundle, understanding(facts=[reading, context]))
+        checked, _ = check_evidence(proposal, catalog, messages, "", answering=answering)
+        return [f.fact_key for f in checked.facts]
+
+    late = "My employee has been late again."
+    # The answer to the question HeroOS just asked, in the current message: kept.
+    assert kept([late, "Yes."], policy) == [policy, "misconduct_level"]
+    # Not what HeroOS asked, or an earlier message: no evidence of which question it answers.
+    assert kept([late, "Yes."], None) == ["misconduct_level"]
+    assert kept([late, "Yes.", "What now?"], policy) == ["misconduct_level"]
+
+
 def test_an_earlier_founder_message_can_be_cited(bundle: KnowledgeBundle) -> None:
     kept, dropped = _checked(
         bundle,

@@ -132,6 +132,9 @@ contradict or upgrade it. A step it says can't proceed yet or needs specialist r
 sound possible now; never say no specialist review is needed; a caution must never become \
 "nothing to address". "No HeroOS rule prevents it" never means lawful, approved or recommended. \
 Keep working with the founder on what can continue.
+- The outcome is shown with every reply. If you already explained the same heroos_outcome \
+earlier in the conversation, don't explain it again: refer to it in a few words only when the \
+founder's new message is about that decision, and answer what they actually said.
 - Use only approved_knowledge, heroos_outcome, company_context and the conversation. Never use \
 general legal or HR knowledge, the internet or assumptions. If approved_knowledge doesn't cover \
 something, say so plainly and suggest specialist advice; never fill the gap.
