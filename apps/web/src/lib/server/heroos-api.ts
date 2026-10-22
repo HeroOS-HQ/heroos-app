@@ -44,11 +44,18 @@ import {
   fromApiAssistantStatus,
 } from "@/lib/assistant/model";
 import {
-  fromApiGatewayReply,
+  CONVERSATION_CURSOR,
+  type ConversationDetail,
+  type ConversationList,
+  fromApiConversationDetail,
+  fromApiConversationList,
   fromApiGatewayStatus,
-  type GatewayReply,
+  fromApiGatewayTurn,
+  fromApiMessagePage,
   type GatewayRequest,
   type GatewayStatus,
+  type GatewayTurn,
+  type MessagePage,
 } from "@/lib/ask/conversation";
 import type { CorrectionPayload, DecisionPayload } from "@/lib/workflows/requests";
 
@@ -949,7 +956,7 @@ export async function sendAssistantMessage(
 export const GATEWAY_TIMEOUT_MS = 50_000;
 
 export type GatewayFailure = ApiFailure | "rate_limited" | "timeout" | "not_configured" | "knowledge_unavailable";
-export type GatewayResult = { ok: true; data: GatewayReply } | { ok: false; failure: GatewayFailure; retryAfter?: number };
+export type GatewayResult = { ok: true; data: GatewayTurn } | { ok: false; failure: GatewayFailure; retryAfter?: number };
 
 function gatewayPath(companyId: string): string | null {
   return UUID.test(companyId) ? `/companies/${companyId}/assistant` : null;
@@ -968,10 +975,12 @@ export async function getGatewayStatus(
 }
 
 /**
- * `POST /companies/{id}/assistant/messages`: one founder message, HeroOS's
- * reply. Nothing is stored, so a retry is safe. The limits (429), a gateway
- * that isn't configured or has no approved knowledge (503, with the API's
- * fixed detail) and a timeout (504, or no answer in time) each get their own code.
+ * `POST /companies/{id}/assistant/messages`: one founder message and HeroOS's
+ * reply, stored together (M2-NEW-07). A retry with the same turn key replays
+ * the committed turn; a conversation that moved on is a conflict (409). The
+ * limits (429), a gateway that isn't configured or has no approved knowledge
+ * (503, with the API's fixed detail) and a timeout (504, or no answer in time)
+ * each get their own code.
  */
 export async function sendGatewayMessage(
   accessToken: string,
@@ -984,8 +993,9 @@ export async function sendGatewayMessage(
   if (path === null) return { ok: false, failure: "forbidden" };
   const body = {
     message: payload.message,
-    history: payload.history,
-    ...(payload.continuation === null ? {} : { continuation: payload.continuation }),
+    turn_key: payload.turnKey,
+    expected_revision: payload.expectedRevision,
+    ...(payload.conversationId === null ? {} : { conversation_id: payload.conversationId }),
   };
   try {
     const response = await fetcher(`${config.apiBaseUrl}${path}/messages`, {
@@ -1014,10 +1024,66 @@ export async function sendGatewayMessage(
       return { ok: false, failure: "unavailable" };
     }
     if (!response.ok) return { ok: false, failure: failureFor(response.status) };
-    const data = fromApiGatewayReply(await response.json());
+    const data = fromApiGatewayTurn(await response.json());
     return data === null ? { ok: false, failure: "unavailable" } : { ok: true, data };
   } catch (error) {
     const name = error instanceof Error ? error.name : "";
     return { ok: false, failure: name === "TimeoutError" || name === "AbortError" ? "timeout" : "unavailable" };
   }
+}
+
+function conversationsPath(companyId: string, conversationId?: string): string | null {
+  if (!UUID.test(companyId)) return null;
+  if (conversationId === undefined) return `/companies/${companyId}/assistant/conversations`;
+  return UUID.test(conversationId) ? `/companies/${companyId}/assistant/conversations/${conversationId}` : null;
+}
+
+/**
+ * `GET /companies/{id}/assistant/conversations`: the Company's conversations, newest
+ * activity first (`before`: the next page), or only the one a Case is attached to (`caseId`).
+ */
+export async function listConversations(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  page: { before: string | null; caseId?: string | null },
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<ConversationList>> {
+  const path = conversationsPath(companyId);
+  if (path === null) return { ok: false, failure: "forbidden" };
+  const { before, caseId = null } = page;
+  if (before !== null && !CONVERSATION_CURSOR.test(before)) return { ok: false, failure: "invalid" };
+  if (caseId !== null && (!UUID.test(caseId) || before !== null)) return { ok: false, failure: "invalid" };
+  const query = caseId !== null ? `?case_id=${caseId}` : before === null ? "" : `?before=${before}`;
+  return apiCall(config, accessToken, fetcher, `${path}${query}`, fromApiConversationList);
+}
+
+/** `GET /companies/{id}/assistant/conversations/{conversationId}`: its status and latest messages. */
+export async function getConversation(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  conversationId: string,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<ConversationDetail>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = conversationsPath(companyId, conversationId);
+  if (path === null) return { ok: false, failure: "not_found" };
+  return apiCall(config, accessToken, fetcher, path, fromApiConversationDetail);
+}
+
+/** `GET .../conversations/{conversationId}/messages?before=…`: older messages. */
+export async function getConversationMessages(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  conversationId: string,
+  before: number | null,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<MessagePage>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = conversationsPath(companyId, conversationId);
+  if (path === null) return { ok: false, failure: "not_found" };
+  const query = before === null ? "" : `?before=${before}`;
+  return apiCall(config, accessToken, fetcher, `${path}/messages${query}`, fromApiMessagePage);
 }

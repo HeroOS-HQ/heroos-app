@@ -37,9 +37,12 @@
 At most four provider requests per founder turn, inside one time budget.
 A provider failure is never retried and never answered by anything else.
 
-The result carries a ``Handoff`` (server-side only: never sent to the browser
-or stored) with the understanding and the deterministic evaluation, for the
-persistence that follows (M2-NEW-07).
+The result carries a ``Handoff`` (server-side only: never sent to the browser)
+with the understanding, the deterministic evaluation and the snapshot the turn
+used, and the next trusted state (``GatewayReply.next_state``), for the
+persistence that follows (M2-NEW-07, ``app.conversations``). A persisted
+conversation starts each turn from its server-side state (``FounderTurn.resume``)
+instead of the browser's continuation; the trust rules are the same.
 """
 
 import dataclasses
@@ -84,6 +87,7 @@ from app.evaluation.evaluator import (
     EvaluationRequest,
 )
 from app.evaluation.facts import (
+    NOT_SURE,
     Asked,
     PriorState,
     StatedFact,
@@ -195,6 +199,8 @@ FALLBACK_LEADS: Final[dict[str, str]] = {
         "I couldn't put together a reliable answer from HeroOS's approved guidance just now."
     ),
     "provider": "",
+    # M2-NEW-07: the case changed while this answer was prepared (commit-time reconciliation).
+    "changed": "This case changed while I was answering, so here is HeroOS's current result.",
 }
 FALLBACK_FAMILY: Final[dict[str, str]] = {
     "action_claim": "claim",
@@ -232,9 +238,13 @@ class GatewayFailure(Exception):
 @dataclass(frozen=True, slots=True)
 class FounderTurn:
     message: str
-    # Recent conversation as the browser holds it (oldest first, both roles; untrusted).
+    # Recent conversation, oldest first, both roles: as the browser holds it (untrusted), or
+    # as a persisted conversation stored it.
     history: tuple[ChatTurn, ...] = ()
     continuation: str | None = None
+    # A persisted conversation's trusted state for this turn's snapshot (M2-NEW-07); it
+    # replaces the continuation, which is then not read.
+    resume: Callable[[ExecutionSnapshot], ReadResult] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +278,10 @@ class Handoff:
     requested_actions: tuple[str, ...] = ()
     # M2-NEW-06: the deterministic evaluation (``ConversationEvaluation.record()`` for M2-NEW-07).
     evaluation: ConversationEvaluation | None = None
+    # M2-NEW-07: the one snapshot the whole turn used (its executions, knowledge and identity).
+    snapshot: ExecutionSnapshot | None = None
+    # M2-NEW-07: the decisions the founder explicitly withdrew in this message (option ids).
+    withdrawn_actions: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -300,6 +314,21 @@ class Telemetry:
 
 
 @dataclass(frozen=True, slots=True)
+class TurnBasis:
+    """What the reply was decided on, to re-run only the deterministic part (server-side only)."""
+
+    snapshot: ExecutionSnapshot
+    understanding: UnderstandingProposal
+    # The evaluation the reply's wording rests on.
+    result: "_Turn"
+    # The plan the reply used (None for a routed turn) and the questions it asked.
+    plan: TurnPlan | None
+    asked: tuple[QuestionTarget, ...]
+    # The reply is fixed text (a routed turn or no approved content), not the model's words.
+    fixed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class GatewayReply:
     reply: str
     safe_next_step: str | None
@@ -308,6 +337,18 @@ class GatewayReply:
     handoff: Handoff
     # The deterministic outcome (server-owned); None when there is nothing to show.
     outcome: Outcome | None = None
+    # The trusted state the next turn starts from (what ``continuation`` carries, unsealed).
+    next_state: ContinuationState | None = None
+    basis: TurnBasis | None = field(default=None, repr=False, compare=False)
+
+
+Reconciliation = Literal["kept", "refreshed", "relaxed", "held"]
+# Why a weaker result at commit is less certain, not authoritative (``AiGateway.reconcile``).
+Uncertainty = Literal["unavailable", "trust_lost", "jurisdiction", "fact_lost", "unverifiable"]
+# How strict an outcome is: uncertainty may never weaken one (``AiGateway.reconcile``).
+STRICTNESS: Final[Mapping[str | None, int]] = {
+    None: 0, "unavailable": 0, "guidance": 0, "warning": 1, "block": 2, "expert_review": 3,
+}  # fmt: skip
 
 
 class _Deadline:
@@ -357,6 +398,73 @@ def target_question(target: QuestionTarget) -> str:
     return f"{lead} more about this: {text}?"
 
 
+def _signature(result: "_Turn") -> tuple[object, ...]:
+    """What a reply's wording rests on: the outcome, what is missing and the jurisdiction."""
+    evaluation = result.evaluation
+    return (
+        result.card,
+        evaluation.availability,
+        evaluation.presentation,
+        evaluation.next_step,
+        evaluation.jurisdiction_state,
+        tuple((a.action, a.disposition) for a in evaluation.actions),
+        tuple((m.key, m.kind, m.candidate) for m in evaluation.missing),
+    )
+
+
+def _strictness(result: "_Turn") -> int:
+    return STRICTNESS[None if result.card is None else result.card.kind]
+
+
+def _for_employee(
+    bundle: KnowledgeBundle, understanding: UnderstandingProposal,
+    company: CompanyBlueprintContext, plan: TurnPlan, result: "_Turn",
+) -> TurnPlan:  # fmt: skip
+    """The plan again, shared guidance only, when this employee's jurisdiction is unresolved.
+
+    The knowledge request runs before the evaluation, under the Company's
+    confirmed jurisdiction; the evaluation may then find that it doesn't apply
+    to this employee ("Not sure", another jurisdiction, an outdated Case
+    confirmation). No jurisdiction-specific text then reaches the model.
+    """
+    unresolved = result.evaluation.jurisdiction_state in ("case_not_sure", "case_different")
+    if not unresolved or plan.query.jurisdiction is None:
+        return plan
+    return plan_turn(bundle, understanding, company, employee_unresolved=True)
+
+
+def uncertainty(fresh: "_Turn", prepared: "_Turn") -> Uncertainty | None:
+    """Why ``fresh`` rests on less certain state than ``prepared`` (None: it doesn't).
+
+    A weaker result at commit is authoritative only when nothing it rests on
+    became less certain: the checks are ready, no trusted state was lost, a
+    resolved jurisdiction is still the same resolved one, every trusted fact is
+    still trusted (and not "Not sure"), and no safeguard that applied became
+    unknown. A recorded prerequisite or a changed trusted value is authoritative.
+    """
+    now, then = fresh.evaluation, prepared.evaluation
+    if now.availability != "ready":
+        return "unavailable"
+    if fresh.reconfirm and not prepared.reconfirm:
+        return "trust_lost"
+    if then.jurisdiction_state == "resolved" and (
+        now.jurisdiction_state != "resolved" or now.jurisdiction != then.jurisdiction
+    ):
+        return "jurisdiction"
+    for key, value in then.facts.engine.items():
+        current = now.facts.engine.get(key)
+        if current is None or (current == NOT_SURE and value != NOT_SURE):
+            return "fact_lost"
+    fired = {c.condition for c in then.conditions if c.status == "fired"}
+    undecided = ("unknown", "unavailable", "not_evaluated")
+    if any(c.condition in fired and c.status in undecided for c in now.conditions):
+        return "unverifiable"
+    before = {a.action: a.disposition for a in then.actions}
+    if any(a.disposition == "unknown" and before.get(a.action) != "unknown" for a in now.actions):
+        return "unverifiable"
+    return None
+
+
 def _recent_founder_messages(turn: FounderTurn) -> list[str]:
     kept: list[str] = []
     budget = MAX_FOUNDER_CHARS
@@ -387,7 +495,7 @@ def _previous_founder_message(turn: FounderTurn) -> str | None:
     return next((t.content for t in reversed(turn.history) if t.role == "user"), None)
 
 
-def _versions(snapshot: ExecutionSnapshot) -> str:
+def snapshot_versions(snapshot: ExecutionSnapshot) -> str:
     """The identity a continuation is bound to: the knowledge and the execution profile."""
     knowledge = "-" if snapshot.knowledge is None else snapshot.knowledge.runtime_digest
     profile = "-" if snapshot.profile is None else snapshot.profile.digest
@@ -430,6 +538,10 @@ class AiGateway:
         self._views: dict[str, _SnapshotView] = {}
 
     # --- the snapshot ---------------------------------------------------------------------
+
+    def snapshot(self) -> ExecutionSnapshot:
+        """The current execution snapshot (status reads; a turn takes its own once)."""
+        return self._evaluation.snapshot()
 
     @property
     def bundle(self) -> KnowledgeBundle | None:
@@ -609,8 +721,12 @@ class AiGateway:
             )
             requested = [a.action for a in understanding.actions]
             if trust.answered and read.state is not None:
-                # A direct answer keeps the steps it was about under evaluation.
-                requested += [a for a in read.state.actions if a in execution.options]
+                # A direct answer keeps the steps it was about under evaluation (unless the
+                # founder withdrew one in the same message).
+                withdrawn = {a.action for a in understanding.withdrawn}
+                requested += [
+                    a for a in read.state.actions if a in execution.options and a not in withdrawn
+                ]
             confirmed = company.jurisdiction
             request = EvaluationRequest(
                 matter="supported",
@@ -700,12 +816,16 @@ class AiGateway:
         view = self._view(snapshot)
         founder = _recent_founder_messages(turn)
         user = company.current_user.user_id
-        read = self._codec.read(
-            turn.continuation,
-            company=company.company_id,
-            user=user,
-            versions=_versions(snapshot),
-            previous_message=_previous_founder_message(turn),
+        read = (
+            turn.resume(snapshot)
+            if turn.resume is not None
+            else self._codec.read(
+                turn.continuation,
+                company=company.company_id,
+                user=user,
+                versions=snapshot_versions(snapshot),
+                previous_message=_previous_founder_message(turn),
+            )
         )
         asked_before = () if read.state is None else read.state.asked
         facts = {f.key: f.label for f in bundle.facts}
@@ -728,8 +848,9 @@ class AiGateway:
             text, state = fixed
             result = self._evaluate(snapshot, company, turn, understanding, None, read, telemetry)
             return self._reply(
-                company, snapshot, text, None, state, (), understanding, None, result, turn
-            )
+                company, snapshot, text, None, state, (), understanding, None, result, turn,
+                fixed=True,
+            )  # fmt: skip
 
         plan = plan_turn(bundle, understanding, company)
         status = plan.context.status
@@ -737,11 +858,14 @@ class AiGateway:
         if status is KnowledgeStatus.BUNDLE_UNAVAILABLE:
             raise GatewayFailure("knowledge_unavailable")
         result = self._evaluate(snapshot, company, turn, understanding, plan, read, telemetry)
+        plan = _for_employee(bundle, understanding, company, plan, result)
+        status = plan.context.status
+        telemetry.knowledge_status = status.value
         if status in (KnowledgeStatus.UNSUPPORTED, KnowledgeStatus.SOURCE_CONFLICT):
             text = NO_APPROVED_CONTENT if status is KnowledgeStatus.UNSUPPORTED else SOURCE_CONFLICT
             return self._reply(
                 company, snapshot, text, None, "outside_approved_guidance", (), understanding,
-                plan, result, turn,
+                plan, result, turn, fixed=True,
             )  # fmt: skip
 
         plan = dataclasses.replace(plan, targets=self._targets(snapshot, plan, result, company))
@@ -819,6 +943,69 @@ class AiGateway:
             company, snapshot, reply, step, "responded", tuple(used), understanding, plan,
             result, turn,
         )  # fmt: skip
+
+    # --- commit-time reconciliation (M2-NEW-07) ---------------------------------------
+
+    def reconcile(
+        self, company: CompanyBlueprintContext, turn: FounderTurn, reply: GatewayReply
+    ) -> tuple[GatewayReply, Reconciliation]:
+        """The reply on the Case as it is now: the deterministic part again, no model request.
+
+        ``turn.resume`` reads the state at commit time (the Case's facts and the
+        Blueprint may have changed while the provider answered). Same snapshot,
+        same understanding; only the deterministic evaluation runs again, and the
+        freshest authoritative result is the one recorded:
+
+        - the same result: the model's wording stands (``kept``), on the fresh state;
+        - a result at least as strict: the wording is replaced by the server's fixed
+          text for the current result (``refreshed``);
+        - a weaker result on authoritative state (another administrator recorded
+          the missing prerequisite, say): the stale stricter wording is discarded
+          for the server's fixed text for the current result (``relaxed``);
+        - a weaker result only because something became less certain (trust lost,
+          the jurisdiction no longer resolved, a trusted fact gone or "Not sure",
+          a safeguard unknown; ``uncertainty``): the stricter reply that was
+          prepared stands (``held``). Uncertainty never weakens a Warning, Block or
+          Expert Review. Its next state is still the current one, so what was lost
+          stays lost and is re-confirmed, never carried over.
+        """
+        basis = reply.basis
+        if basis is None or turn.resume is None:
+            return reply, "kept"
+        snapshot, understanding = basis.snapshot, basis.understanding
+        bundle = snapshot.knowledge
+        assert bundle is not None  # a reply with a basis was answered from knowledge
+        telemetry = Telemetry(provider="-", model="-")
+        read = turn.resume(snapshot)
+        routed = self._routed(understanding, self._view(snapshot).catalog) is not None
+        plan = None if routed else plan_turn(bundle, understanding, company)
+        result = self._evaluate(snapshot, company, turn, understanding, plan, read, telemetry)
+        if plan is not None:
+            plan = _for_employee(bundle, understanding, company, plan, result)
+        if _signature(result) == _signature(basis.result):
+            refreshed = self._reply(
+                company, snapshot, reply.reply, reply.safe_next_step, reply.state, basis.asked,
+                understanding, basis.plan, result, turn, fixed=basis.fixed,
+            )  # fmt: skip
+            return refreshed, "kept"
+        weaker = _strictness(result) < _strictness(basis.result)
+        if weaker and uncertainty(result, basis.result) is not None:
+            # The prepared outcome stands; the next turn starts from the current state.
+            return dataclasses.replace(
+                reply, next_state=self._next_state(result, basis.asked)
+            ), "held"  # fmt: skip
+        reconciliation: Reconciliation = "relaxed" if weaker else "refreshed"
+        if basis.fixed or plan is None:
+            # Fixed text stays fixed text; the outcome is the current one.
+            return self._reply(
+                company, snapshot, reply.reply, None, reply.state, (), understanding, plan,
+                result, turn, fixed=True,
+            ), reconciliation  # fmt: skip
+        plan = dataclasses.replace(plan, targets=self._targets(snapshot, plan, result, company))
+        return (
+            self._fallback(company, snapshot, "changed", understanding, plan, result, turn),
+            reconciliation,
+        )
 
     # --- phases -----------------------------------------------------------------------
 
@@ -914,6 +1101,12 @@ class AiGateway:
                 "Company Blueprint yet (HeroOS confirms it from the licensing details). Give only "
                 "shared orientation and say that jurisdiction-specific guidance needs it."
             )
+        if plan.jurisdiction_state == "employee_unresolved":
+            return (
+                "Not confirmed for this employee: the employer hasn't confirmed that the "
+                "company's jurisdiction applies to them. Give only the shared guidance provided "
+                "and say that jurisdiction-specific guidance waits until it is confirmed."
+            )
         jurisdiction = plan.context.jurisdiction or ""
         return f"Confirmed: {JURISDICTION_NAMES.get(jurisdiction, jurisdiction)}."
 
@@ -961,7 +1154,7 @@ class AiGateway:
         self, company: CompanyBlueprintContext, snapshot: ExecutionSnapshot, text: str,
         step: str | None, state: ConversationState, asked: tuple[QuestionTarget, ...],
         understanding: UnderstandingProposal, plan: TurnPlan | None, result: _Turn,
-        turn: FounderTurn,
+        turn: FounderTurn, *, fixed: bool = False,
     ) -> GatewayReply:  # fmt: skip
         user = company.current_user.user_id
         context = None if plan is None else plan.context
@@ -991,6 +1184,8 @@ class AiGateway:
             else snapshot.knowledge.runtime_digest,
             requested_actions=tuple(a.action for a in evaluation.actions),
             evaluation=evaluation,
+            snapshot=snapshot,
+            withdrawn_actions=tuple(a.action for a in understanding.withdrawn),
         )
         next_state = self._next_state(result, asked)
         return GatewayReply(
@@ -1001,11 +1196,13 @@ class AiGateway:
                 next_state,
                 company=company.company_id,
                 user=user,
-                versions=_versions(snapshot),
+                versions=snapshot_versions(snapshot),
                 message=turn.message,
             ),
             handoff=handoff,
             outcome=result.card,
+            next_state=next_state,
+            basis=TurnBasis(snapshot, understanding, result, plan, asked, fixed),
         )
 
     @staticmethod

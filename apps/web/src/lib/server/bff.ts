@@ -1,7 +1,7 @@
 import "server-only";
 
 import { ASK_QUESTION, ASK_STEP, ASK_WORKFLOW } from "@/lib/ask/model";
-import { parseGatewayRequest } from "@/lib/ask/conversation";
+import { CONVERSATION_CURSOR, parseGatewayRequest, parseSequence } from "@/lib/ask/conversation";
 import { parseAssistantRequest } from "@/lib/assistant/model";
 import { TEMPLATE_KEY } from "@/lib/documents/model";
 import { parsePreviewRequest } from "@/lib/documents/requests";
@@ -28,7 +28,10 @@ import {
   getCaseDocuments,
   getCaseWorkflow,
   getCaseHistory,
+  getConversation,
+  getConversationMessages,
   getDocumentForm,
+  listConversations,
   previewDocument,
   recordDecision,
   registerCompany,
@@ -448,15 +451,19 @@ export async function handleHistoryPage(
 
 // --- document templates and previews (M2-04C) -----------------------------------------
 
-type ReadGuard = { ok: true; accessToken: string } | { ok: false; response: Response };
+type ReadGuard = { ok: true; accessToken: string; params: URLSearchParams } | { ok: false; response: Response };
 
-/** A read: same-origin and a valid session, no body and no query. */
-function guardRead(request: Request, config: AuthConfig, deps: BffDeps): ReadGuard {
+/** A read: same-origin and a valid session, no body, and no query but the named parameters (once each). */
+function guardRead(request: Request, config: AuthConfig, deps: BffDeps, allowed: readonly string[] = []): ReadGuard {
   if (!isSameOriginRequest(request, config)) return { ok: false, response: error(403, "forbidden_origin") };
   const session = sessionFromRequest(request, config, Math.floor(deps.now() / 1000));
   if (session === null) return { ok: false, response: error(401, "session_expired") };
-  if ([...new URL(request.url).searchParams.keys()].length > 0) return { ok: false, response: error(422, "invalid", []) };
-  return { ok: true, accessToken: session.accessToken };
+  const params = new URL(request.url).searchParams;
+  const keys = [...params.keys()];
+  if (keys.some((key) => !allowed.includes(key)) || new Set(keys).size !== keys.length) {
+    return { ok: false, response: error(422, "invalid", []) };
+  }
+  return { ok: true, accessToken: session.accessToken, params };
 }
 
 /**
@@ -599,14 +606,17 @@ export async function handleAssistantMessage(
 
 /**
  * POST /bff/companies/{id}/assistant/messages →
- * `POST /companies/{id}/assistant/messages`: the founder's message, the
- * recent conversation and the last continuation; HeroOS's reply.
+ * `POST /companies/{id}/assistant/messages` (M2-NEW-07): the founder's words,
+ * a turn key, the conversation id (none for a new one) and the revision the
+ * browser last saw, rebuilt field by field; nothing else is accepted (no
+ * history, facts, Case, outcome or continuation: the API holds those).
  *
- * 200 `{reply, safeNextStep, conversationState, continuation}` and nothing
- * else. No Case is needed and nothing is stored or logged here, so the
- * browser may retry. 429 `rate_limited` (with `Retry-After`), 504 `timeout`,
- * 503 `not_configured` / `knowledge_unavailable` / `unavailable`; never the
- * API's or the provider's own text. The API decides who may ask (Company
+ * 200 `{conversation, messages, replayed}`, rebuilt field by field. A retry
+ * with the same turn key replays the stored turn; 409 `conflict` when the
+ * conversation moved on or the key was used for another message. 429
+ * `rate_limited` (with `Retry-After`), 504 `timeout`, 503 `not_configured` /
+ * `knowledge_unavailable` / `unavailable`; never the API's or the provider's
+ * own text. Nothing is logged here. The API decides who may ask (Company
  * administrators) and what HeroOS knows; nothing here chooses either.
  */
 export async function handleGatewayMessage(
@@ -637,4 +647,73 @@ export async function handleGatewayMessage(
     default:
       return workflowFailure(result.failure, []);
   }
+}
+
+/**
+ * GET /bff/companies/{id}/assistant/conversations?before=…|caseId=… →
+ * `GET /companies/{id}/assistant/conversations` (M2-NEW-07): the Company's
+ * conversations, most recently active first, or the one a Case is attached
+ * to. A read: same-origin and a valid session; the only queries are the API's
+ * own cursor and a Case id.
+ */
+export async function handleConversationList(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = guardRead(request, config, deps, ["before", "caseId"]);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  const before = guarded.params.get("before");
+  const caseId = guarded.params.get("caseId");
+  if (before !== null && !CONVERSATION_CURSOR.test(before)) return error(422, "invalid", []);
+  // One Case's conversation is a single page.
+  if (caseId !== null && (!UUID.test(caseId) || before !== null)) return error(422, "invalid", []);
+  const result = await listConversations(guarded.accessToken, config, companyId, { before, caseId }, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, result.data);
+}
+
+/**
+ * GET /bff/companies/{id}/assistant/conversations/{conversationId} →
+ * `GET .../assistant/conversations/{conversationId}`: one conversation, its
+ * current status and its latest messages (authors relative to the viewer).
+ */
+export async function handleConversationDetail(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  conversationId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = guardRead(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(conversationId)) return error(404, "not_found");
+  const result = await getConversation(guarded.accessToken, config, companyId, conversationId, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, result.data);
+}
+
+/**
+ * GET /bff/companies/{id}/assistant/conversations/{conversationId}/messages?before=… →
+ * `GET .../messages`: older messages (``before`` a message sequence).
+ */
+export async function handleConversationMessages(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  conversationId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = guardRead(request, config, deps, ["before"]);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(conversationId)) return error(404, "not_found");
+  const before = parseSequence(guarded.params.get("before"));
+  if (before === undefined) return error(422, "invalid", []);
+  const result = await getConversationMessages(guarded.accessToken, config, companyId, conversationId, before, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, result.data);
 }

@@ -41,7 +41,8 @@ from fastapi import Path as PathParam
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, StringConstraints
 
-from app.api.workflows import InstalledRules, ScreeningPolicy, _evaluate_case
+from app.api.workflows import InstalledRules, ScreeningPolicy
+from app.cases.mutation import evaluate_case
 from app.documents.bundle import (
     MAX_LIST_ITEMS,
     MAX_TEMPLATE_FIELDS,
@@ -296,7 +297,7 @@ def _availabilities(
     item = workflows.get_workflow_case(scope, case_id)
     if item is None:
         raise _not_found()
-    state = _evaluate_case(scope, item, policy, rules)
+    state = evaluate_case(scope, item, policy, rules)
     if state.definition.key != bundle.workflow_key:
         return []
     return [

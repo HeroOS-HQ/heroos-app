@@ -9,9 +9,10 @@
 //   -> D2 (M2-02 intake evaluations) -> M2-02 API (80adbae)
 //   -> D3 (M2-03 progress events) -> M2-03 API (2e6d21f)
 //   -> D4 (M2-04 decision records) -> M2-NEW-02 API (56499eb)
-//   -> D5 (M2-NEW-03 Company Blueprint context) -> current API
+//   -> D5 (M2-NEW-03 Company Blueprint context) -> M2-NEW-06 API (2b1a0ed)
+//   -> D6 (M2-NEW-07 Ask HeroOS conversations) -> current API
 //   -> appoint administrators -> downgrade guards
-//   -> backup/restore of the D5 database and of the pre-B1a backup.
+//   -> backup/restore of the D6 database and of the pre-B1a backup.
 //
 // Nothing here touches the main end-to-end database.
 import { execFile, spawn } from "node:child_process";
@@ -29,6 +30,7 @@ const D2 = "e64497d997d8";
 const D3 = "8d217d768395";
 const D4 = "c4a7e2d9b310";
 const D5 = "671bbbfc74ae";
+const D6 = "8860b86ef2ba";
 // The last API generation before D1 (M1-10C roles and jurisdiction readiness).
 const M110C_API = "2f0fad8";
 // The last API generation before D2 (M2-01 workflow Cases, contract >= 4).
@@ -39,6 +41,8 @@ const M202_API = "80adbae";
 const M203_API = "2e6d21f";
 // The last API generation before D5 (M2-NEW-02 signed-in workspace, contract >= 7).
 const M2NEW02_API = "56499eb";
+// The last API generation before D6 (M2-NEW-06 conversation evaluation, contract >= 8).
+const M2NEW06_API = "2b1a0ed";
 const A = "d3e0a000-0000-4000-8000-0000000000e1";
 const B = "d3e0b000-0000-4000-8000-0000000000e1";
 const USER_A = "d3e0a000-0000-4000-8000-00000000a0e1";
@@ -113,7 +117,7 @@ export async function run(ctx) {
   await legacyApi.stop();
   const currentOnStage = ctx.makeApi({ databaseUrl: ctx.urls.runtime(stage), label: "api-current-stage" });
   const refusedB1a = await currentOnStage.startExpectingRefusal();
-  check("MIG-8", "the current API refuses to start on B1a (schema contract 1 < 8)", refusedB1a !== null && /contract is 1/.test(refusedB1a), (refusedB1a ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-8", "the current API refuses to start on B1a (schema contract 1 < 9)", refusedB1a !== null && /contract is 1/.test(refusedB1a), (refusedB1a ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
 
   // --- step 3: the M1-10B API ------------------------------------------------------------------
   const m110bDir = await exportRevision("169261d");
@@ -135,7 +139,7 @@ export async function run(ctx) {
   check("MIG-11", "the pre-M1-10B API fails closed on B1b (never serves data): refuses to start or answers non-200",
     legacyAfterB1b.refused || legacyAfterB1b.status !== 200, JSON.stringify(legacyAfterB1b));
   const refusedB1b = await currentOnStage.startExpectingRefusal();
-  check("MIG-12", "the current API still refuses on B1b (contract 2 < 8)", refusedB1b !== null && /contract is 2/.test(refusedB1b));
+  check("MIG-12", "the current API still refuses on B1b (contract 2 < 9)", refusedB1b !== null && /contract is 2/.test(refusedB1b));
 
   // --- step 5: C1 --------------------------------------------------------------------------------
   const c1 = await alembic(stage, "upgrade", C1);
@@ -153,7 +157,7 @@ export async function run(ctx) {
 
   // --- step 6: the M1-10C API on C1 (the generation that runs before M2) ----------------------
   const refusedC1 = await currentOnStage.startExpectingRefusal();
-  check("MIG-30", "the current API refuses to start on C1 (schema contract 3 < 8)", refusedC1 !== null && /contract is 3/.test(refusedC1), (refusedC1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-30", "the current API refuses to start on C1 (schema contract 3 < 9)", refusedC1 !== null && /contract is 3/.test(refusedC1), (refusedC1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
   const m110cDir = await exportRevision(M110C_API);
   const m110cApi = ctx.makeApi({ apiDir: m110cDir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M110C_API}` });
   await m110cApi.start();
@@ -173,7 +177,7 @@ export async function run(ctx) {
   check("MIG-32", "the M1-10C API keeps working on D1 (migrate first, then deploy the API)", (await probe(m110cApi, "alpha", A)) === 200 && (await probe(m110cApi, "alpha", B)) === 403);
   await m110cApi.stop();
   const refusedD1 = await currentOnStage.startExpectingRefusal();
-  check("MIG-36", "the current API refuses to start on D1 (schema contract 4 < 8)", refusedD1 !== null && /contract is 4/.test(refusedD1), (refusedD1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-36", "the current API refuses to start on D1 (schema contract 4 < 9)", refusedD1 !== null && /contract is 4/.test(refusedD1), (refusedD1 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
   const m201Dir = await exportRevision(M201_API);
   const m201Api = ctx.makeApi({ apiDir: m201Dir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M201_API}` });
   await m201Api.start();
@@ -187,7 +191,7 @@ export async function run(ctx) {
   check("MIG-39", "the M2-01 API keeps working on D2 (migrate first, then deploy the API)", (await probe(m201Api, "alpha", A)) === 200 && (await probe(m201Api, "alpha", B)) === 403 && (await m201List()) === 403);
   await m201Api.stop();
   const refusedD2 = await currentOnStage.startExpectingRefusal();
-  check("MIG-42", "the current API refuses to start on D2 (schema contract 5 < 8)", refusedD2 !== null && /contract is 5/.test(refusedD2), (refusedD2 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-42", "the current API refuses to start on D2 (schema contract 5 < 9)", refusedD2 !== null && /contract is 5/.test(refusedD2), (refusedD2 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
   const m202Dir = await exportRevision(M202_API);
   const m202Api = ctx.makeApi({ apiDir: m202Dir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M202_API}` });
   await m202Api.start();
@@ -201,7 +205,7 @@ export async function run(ctx) {
   check("MIG-45", "the M2-02 API keeps working on D3 (migrate first, then deploy the API)", (await probe(m202Api, "alpha", A)) === 200 && (await probe(m202Api, "alpha", B)) === 403 && (await m202List()) === 403);
   await m202Api.stop();
   const refusedD3 = await currentOnStage.startExpectingRefusal();
-  check("MIG-48", "the current API refuses to start on D3 (schema contract 6 < 8)", refusedD3 !== null && /contract is 6/.test(refusedD3), (refusedD3 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-48", "the current API refuses to start on D3 (schema contract 6 < 9)", refusedD3 !== null && /contract is 6/.test(refusedD3), (refusedD3 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
   const m203Dir = await exportRevision(M203_API);
   const m203Api = ctx.makeApi({ apiDir: m203Dir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M203_API}` });
   await m203Api.start();
@@ -215,7 +219,7 @@ export async function run(ctx) {
   check("MIG-51", "the M2-03 API keeps working on D4 (migrate first, then deploy the API)", (await probe(m203Api, "alpha", A)) === 200 && (await probe(m203Api, "alpha", B)) === 403 && (await m203List()) === 403);
   await m203Api.stop();
   const refusedD4 = await currentOnStage.startExpectingRefusal();
-  check("MIG-54", "the current API refuses to start on D4 (schema contract 7 < 8)", refusedD4 !== null && /contract is 7/.test(refusedD4), (refusedD4 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  check("MIG-54", "the current API refuses to start on D4 (schema contract 7 < 9)", refusedD4 !== null && /contract is 7/.test(refusedD4), (refusedD4 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
   const m2n02Dir = await exportRevision(M2NEW02_API);
   const m2n02Api = ctx.makeApi({ apiDir: m2n02Dir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M2NEW02_API}` });
   await m2n02Api.start();
@@ -235,9 +239,29 @@ export async function run(ctx) {
   check("MIG-57", "the M2-NEW-02 API keeps working on D5 (migrate first, then deploy the API)",
     (await probe(m2n02Api, "alpha", A)) === 200 && (await blueprintStatus(m2n02Api)) === 200 && (await probe(m2n02Api, "alpha", B)) === 403);
   await m2n02Api.stop();
+  const refusedD5 = await currentOnStage.startExpectingRefusal();
+  check("MIG-60", "the current API refuses to start on D5 (schema contract 8 < 9)", refusedD5 !== null && /contract is 8/.test(refusedD5), (refusedD5 ?? "started!").split("\n").filter((l) => /contract/.test(l)).slice(-1)[0]);
+  const m2n06Dir = await exportRevision(M2NEW06_API);
+  const m2n06Api = ctx.makeApi({ apiDir: m2n06Dir, databaseUrl: ctx.urls.runtime(stage), label: `api-${M2NEW06_API}` });
+  await m2n06Api.start();
+  check("MIG-61", "the M2-NEW-06 API (2b1a0ed) serves D5: own Company and Blueprint 200, the other 403",
+    (await probe(m2n06Api, "alpha", A)) === 200 && (await blueprintStatus(m2n06Api)) === 200 && (await probe(m2n06Api, "alpha", B)) === 403);
+
+  // --- step 9d: D6 (M2-NEW-07 Ask HeroOS conversations), then the current API ----------------
+  const blueprintsBeforeD6 = await db.ownerQuery(blueprintValues);
+  const d6 = await alembic(stage, "upgrade", D6);
+  const afterD6 = await db.ownerQuery("SELECT (SELECT count(*) FROM companies), (SELECT count(*) FROM users), (SELECT count(*) FROM memberships), (SELECT count(*) FROM cases)");
+  const askRows = await db.ownerValue("SELECT (SELECT count(*) FROM assistant_conversations) + (SELECT count(*) FROM assistant_turns) + (SELECT count(*) FROM assistant_messages) + (SELECT count(*) FROM assistant_turn_evaluations)");
+  const assistantSubmissions = await db.ownerValue("SELECT count(*) FROM workflow_submissions WHERE origin <> 'structured' OR source_message_id IS NOT NULL");
+  check("MIG-62", "D6 applies (contract 9): Companies, Users, Memberships, cases and every Blueprint value unchanged; no conversation and no assistant-origin fact yet",
+    d6.code === 0 && (await contract()) === "9" && JSON.stringify(afterD6) === JSON.stringify(preserved) &&
+      JSON.stringify(await db.ownerQuery(blueprintValues)) === JSON.stringify(blueprintsBeforeD6) && askRows === "0" && assistantSubmissions === "0", d6.err.slice(-300));
+  check("MIG-63", "the M2-NEW-06 API keeps working on D6 (migrate first, then deploy the API)",
+    (await probe(m2n06Api, "alpha", A)) === 200 && (await blueprintStatus(m2n06Api)) === 200 && (await probe(m2n06Api, "alpha", B)) === 403);
+  await m2n06Api.stop();
   await currentOnStage.start();
   const workflowList = await fetch(`${currentOnStage.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } });
-  check("MIG-33", "the current API starts on D5; the not-yet-appointed demo member gets no Disciplinary access (403, administrators only)",
+  check("MIG-33", "the current API starts on D6; the not-yet-appointed demo member gets no Disciplinary access (403, administrators only)",
     workflowList.status === 403 && (await probe(currentOnStage, "alpha", A)) === 200 && (await probe(currentOnStage, "alpha", B)) === 403);
 
   // --- step 10: appoint administrators through the trusted procedure ------------------------
@@ -249,7 +273,7 @@ export async function run(ctx) {
 
   // --- rollback restrictions -------------------------------------------------------------------
   const downgrade = await alembic(stage, "downgrade", B1B);
-  check("MIG-23", "C1 cannot be downgraded once a role change exists (roll forward only; the whole downgrade is refused)", downgrade.code !== 0 && (await revision()) === D5, downgrade.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
+  check("MIG-23", "C1 cannot be downgraded once a role change exists (roll forward only; the whole downgrade is refused)", downgrade.code !== 0 && (await revision()) === D6, downgrade.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
   const adminList = await fetch(`${currentOnStage.url}/companies/${A}/workflows/disciplinary/cases`, { headers: { Authorization: `Bearer ${tokens.alpha}` } });
   check("MIG-35", "once appointed, the administrator sees an empty Disciplinary list (existing cases are not workflow Cases)",
     adminList.status === 200 && JSON.stringify(await adminList.json()) === "[]");
@@ -260,14 +284,14 @@ export async function run(ctx) {
   });
   const d1Down = await alembic(stage, "downgrade", C1);
   check("MIG-34", "D1 cannot be downgraded once a workflow Case exists (roll forward only; PRIV-020)",
-    created.status === 201 && d1Down.code !== 0 && (await revision()) === D5 && (await db.ownerValue("SELECT count(*) FROM workflow_instances")) === "1",
+    created.status === 201 && d1Down.code !== 0 && (await revision()) === D6 && (await db.ownerValue("SELECT count(*) FROM workflow_instances")) === "1",
     d1Down.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
-  // D2 to D5 hold nothing yet (the Case has no saved answers, progress, records or Blueprint context): reversible, then re-applied.
+  // D2 to D6 hold nothing yet (the Case has no saved answers, progress, records, Blueprint context or conversation): reversible, then re-applied.
   const d2Down = await alembic(stage, "downgrade", D1);
   const downContract = await contract();
-  const d2Up = await alembic(stage, "upgrade", D5);
-  check("MIG-40", "D5, D4, D3 and D2 can be downgraded while no context, record, progress event or evaluation exists (contract 4) and re-applied (contract 8)",
-    d2Down.code === 0 && downContract === "4" && d2Up.code === 0 && (await revision()) === D5 && (await contract()) === "8", `${d2Down.err.slice(-200)} ${d2Up.err.slice(-200)}`);
+  const d2Up = await alembic(stage, "upgrade", D6);
+  check("MIG-40", "D6, D5, D4, D3 and D2 can be downgraded while no conversation, context, record, progress event or evaluation exists (contract 4) and re-applied (contract 9)",
+    d2Down.code === 0 && downContract === "4" && d2Up.code === 0 && (await revision()) === D6 && (await contract()) === "9", `${d2Down.err.slice(-200)} ${d2Up.err.slice(-200)}`);
   const caseId = (await db.ownerValue("SELECT case_id FROM workflow_instances"));
   const saved = await fetch(`${currentOnStage.url}/companies/${A}/cases/${caseId}/workflow/steps/initial_facts/answers`, {
     method: "PUT",
@@ -276,14 +300,14 @@ export async function run(ctx) {
   });
   const d2Refused = await alembic(stage, "downgrade", D1);
   check("MIG-41", "D2 cannot be downgraded once an evaluation exists (roll forward only; PRIV-020)",
-    saved.status === 200 && d2Refused.code !== 0 && (await revision()) === D5 && (await db.ownerValue("SELECT count(*) FROM workflow_evaluations")) === "1",
+    saved.status === 200 && d2Refused.code !== 0 && (await revision()) === D6 && (await db.ownerValue("SELECT count(*) FROM workflow_evaluations")) === "1",
     d2Refused.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]);
-  // D3 to D5 still hold nothing: reversible to D2 (contract 5), then re-applied.
+  // D3 to D6 still hold nothing: reversible to D2 (contract 5), then re-applied.
   const d3Down = await alembic(stage, "downgrade", D2);
   const d3DownContract = await contract();
-  const d3Up = await alembic(stage, "upgrade", D5);
-  check("MIG-46", "D5, D4 and D3 can be downgraded while no context, record or progress event exists (contract 5) and re-applied (contract 8)",
-    d3Down.code === 0 && d3DownContract === "5" && d3Up.code === 0 && (await revision()) === D5 && (await contract()) === "8", `${d3Down.err.slice(-200)} ${d3Up.err.slice(-200)}`);
+  const d3Up = await alembic(stage, "upgrade", D6);
+  check("MIG-46", "D6, D5, D4 and D3 can be downgraded while no conversation, context, record or progress event exists (contract 5) and re-applied (contract 9)",
+    d3Down.code === 0 && d3DownContract === "5" && d3Up.code === 0 && (await revision()) === D6 && (await contract()) === "9", `${d3Down.err.slice(-200)} ${d3Up.err.slice(-200)}`);
   // A refused pathway choice (the intake isn't recorded) is still a recorded progress event.
   const refusedChoice = await fetch(`${currentOnStage.url}/companies/${A}/cases/${caseId}/workflow/progression/pathway`, {
     method: "POST",
@@ -293,14 +317,14 @@ export async function run(ctx) {
   const refusedOutcome = refusedChoice.status === 200 ? (await refusedChoice.json()).progression?.attempt?.outcome : refusedChoice.status;
   const d3Refused = await alembic(stage, "downgrade", D2);
   check("MIG-47", "D3 cannot be downgraded once a progress event exists (roll forward only; PRIV-020)",
-    refusedOutcome === "rejected" && d3Refused.code !== 0 && (await revision()) === D5 && (await db.ownerValue("SELECT count(*) FROM workflow_progress_events")) === "1",
+    refusedOutcome === "rejected" && d3Refused.code !== 0 && (await revision()) === D6 && (await db.ownerValue("SELECT count(*) FROM workflow_progress_events")) === "1",
     `${refusedOutcome} ${d3Refused.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]}`);
-  // D4 and D5 still hold nothing: reversible to D3 (contract 6), then re-applied.
+  // D4 to D6 still hold nothing: reversible to D3 (contract 6), then re-applied.
   const d4Down = await alembic(stage, "downgrade", D3);
   const d4DownContract = await contract();
-  const d4Up = await alembic(stage, "upgrade", D5);
-  check("MIG-52", "D5 and D4 can be downgraded while no context or decision record exists (contract 6) and re-applied (contract 8)",
-    d4Down.code === 0 && d4DownContract === "6" && d4Up.code === 0 && (await revision()) === D5 && (await contract()) === "8", `${d4Down.err.slice(-200)} ${d4Up.err.slice(-200)}`);
+  const d4Up = await alembic(stage, "upgrade", D6);
+  check("MIG-52", "D6, D5 and D4 can be downgraded while no conversation, context or decision record exists (contract 6) and re-applied (contract 9)",
+    d4Down.code === 0 && d4DownContract === "6" && d4Up.code === 0 && (await revision()) === D6 && (await contract()) === "9", `${d4Down.err.slice(-200)} ${d4Up.err.slice(-200)}`);
   const recorded = await fetch(`${currentOnStage.url}/companies/${A}/cases/${caseId}/decisions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${tokens.alpha}`, "Content-Type": "application/json" },
@@ -312,14 +336,14 @@ export async function run(ctx) {
   });
   const d4Refused = await alembic(stage, "downgrade", D3);
   check("MIG-53", "D4 cannot be downgraded once a decision record exists (roll forward only; PRIV-020)",
-    recorded.status === 200 && d4Refused.code !== 0 && (await revision()) === D5 && (await db.ownerValue("SELECT count(*) FROM workflow_decision_records")) === "1",
+    recorded.status === 200 && d4Refused.code !== 0 && (await revision()) === D6 && (await db.ownerValue("SELECT count(*) FROM workflow_decision_records")) === "1",
     `${recorded.status} ${d4Refused.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]}`);
-  // D5 alone still holds nothing: reversible to D4 (contract 7), then re-applied.
+  // D5 and D6 still hold nothing: reversible to D4 (contract 7), then re-applied.
   const d5Down = await alembic(stage, "downgrade", D4);
   const d5DownContract = await contract();
-  const d5Up = await alembic(stage, "upgrade", D5);
-  check("MIG-58", "D5 can be downgraded while no Blueprint holds company context (contract 7) and re-applied (contract 8)",
-    d5Down.code === 0 && d5DownContract === "7" && d5Up.code === 0 && (await revision()) === D5 && (await contract()) === "8", `${d5Down.err.slice(-200)} ${d5Up.err.slice(-200)}`);
+  const d5Up = await alembic(stage, "upgrade", D6);
+  check("MIG-58", "D6 and D5 can be downgraded while no conversation or Blueprint context exists (contract 7) and re-applied (contract 9)",
+    d5Down.code === 0 && d5DownContract === "7" && d5Up.code === 0 && (await revision()) === D6 && (await contract()) === "9", `${d5Down.err.slice(-200)} ${d5Up.err.slice(-200)}`);
   const contextSaved = await fetch(`${currentOnStage.url}/companies/${A}/blueprint`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${tokens.alpha}`, "Content-Type": "application/json" },
@@ -327,11 +351,26 @@ export async function run(ctx) {
   });
   const d5Refused = await alembic(stage, "downgrade", D4);
   check("MIG-59", "D5 cannot be downgraded once a Blueprint holds company context (roll forward only)",
-    contextSaved.status === 200 && d5Refused.code !== 0 && (await revision()) === D5 &&
+    contextSaved.status === 200 && d5Refused.code !== 0 && (await revision()) === D6 &&
       (await db.ownerValue(`SELECT website_url FROM company_blueprints WHERE company_id = '${A}'`)) === "https://alpha-demo.example",
     `${contextSaved.status} ${d5Refused.err.split("\n").filter((l) => /refus|Error/.test(l)).slice(-1)[0]}`);
 
-  // --- backup and restore of the D5 database -------------------------------------------------
+
+  // D6 alone still holds nothing: reversible to D5 (contract 8), then re-applied.
+  const d6Down = await alembic(stage, "downgrade", D5);
+  const d6DownContract = await contract();
+  const d6Up = await alembic(stage, "upgrade", D6);
+  check("MIG-64", "D6 can be downgraded while no Ask HeroOS conversation or assistant-origin fact exists (contract 8) and re-applied (contract 9)",
+    d6Down.code === 0 && d6DownContract === "8" && d6Up.code === 0 && (await revision()) === D6 && (await contract()) === "9", `${d6Down.err.slice(-200)} ${d6Up.err.slice(-200)}`);
+  // A stored conversation. The rehearsal's API has no AI gateway, so it is written as the
+  // owner, the shape the API writes; the guard reads only that one exists.
+  await db.ownerQuery(`INSERT INTO assistant_conversations (id, company_id, created_by_user_id, checkpoint) VALUES ('5d6e0000-0000-4000-8000-0000000000d6', '${A}', '${USER_A}', '{"schema": "heroos.assistant-checkpoint/1"}'::jsonb)`);
+  const d6Refused = await alembic(stage, "downgrade", D5);
+  check("MIG-65", "D6 cannot be downgraded once an Ask HeroOS conversation exists (roll forward only; nothing is deleted)",
+    d6Refused.code !== 0 && (await revision()) === D6 && (await db.ownerValue("SELECT count(*) FROM assistant_conversations")) === "1",
+    d6Refused.err.split("\n").filter((l) => /refus|Error|conversations exist/i.test(l)).slice(-1)[0]);
+
+  // --- backup and restore of the D6 database -------------------------------------------------
   const catalog = (fixture) => fixture.ownerQuery(`SELECT
       (SELECT count(*) FROM pg_policies WHERE schemaname = 'public'),
       (SELECT string_agg(c.relname || ':' || c.relrowsecurity, ',' ORDER BY c.relname) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'),
@@ -341,6 +380,7 @@ export async function run(ctx) {
       (SELECT string_agg(table_name || ':' || privilege_type, ',' ORDER BY table_name, privilege_type) FROM information_schema.role_table_grants WHERE grantee = 'heroos_app_runtime'),
       (SELECT count(*) FROM information_schema.column_privileges WHERE grantee IN ('heroos_app_runtime', 'heroos_identity_operator')),
       (SELECT count(*) FROM company_events), (SELECT count(*) FROM membership_events), (SELECT count(*) FROM identity_events),
+      (SELECT count(*) FROM assistant_conversations), (SELECT count(*) FROM workflow_submissions WHERE origin = 'structured'),
       (SELECT version_num FROM alembic_version), heroos_schema_contract()`);
   const sourceCatalog = await catalog(db);
   await docker("pg_dump", "-U", ctx.owner, "-Fc", "-f", "/tmp/stage-d4.dump", stage);
@@ -354,7 +394,7 @@ export async function run(ctx) {
   const restore = await docker("pg_restore", "-U", ctx.owner, "--no-owner", "--single-transaction", "--exit-on-error", "-d", "heroos_stage_restored", "/tmp/stage-d4.dump").then(() => 0, (e) => e.stderr);
   const restored = ctx.makeFixtures("heroos_stage_restored");
   const restoredCatalog = await catalog(restored);
-  check("MIG-25", "the D5 backup restores (single transaction, no owner changes)", restore === 0, String(restore).slice(0, 300));
+  check("MIG-25", "the D6 backup restores (single transaction, no owner changes)", restore === 0, String(restore).slice(0, 300));
   check("MIG-26", "RLS, policies, SECURITY DEFINER functions and their grants, triggers, table and column grants and audit rows survive the restore",
     JSON.stringify(restoredCatalog) === JSON.stringify(sourceCatalog), `${JSON.stringify(sourceCatalog).slice(0, 150)} vs ${JSON.stringify(restoredCatalog).slice(0, 150)}`);
   const restoredApi = ctx.makeApi({ databaseUrl: ctx.urls.runtime("heroos_stage_restored"), label: "api-current-restored" });

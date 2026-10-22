@@ -20,6 +20,12 @@ decision, its reason codes, the warnings acknowledged and the rule bundle
 (id, version, digest) that decided it. The Case's position is derived from
 these rows on read; nothing here is a mutable snapshot.
 
+A submission's ``origin`` (M2-NEW-07, migration ``8860b86ef2ba``) says how
+its facts arrived: ``structured`` (the step's answers form; every earlier row)
+or ``assistant`` (canonical, engine-trusted facts from an Ask HeroOS turn,
+which then names the founder message they came from). Both go through the
+same mutation pipeline (``app.cases.mutation``).
+
 ``WorkflowDecisionRecord`` (M2-04, migration ``c4a7e2d9b310``) is the
 append-only record of what the employer reports about its own handling of the
 Case: a factual record in a safe category, who the employer says is
@@ -57,6 +63,18 @@ from app.db.base import Base, TimestampMixin
 
 WORKFLOW_DISCIPLINARY: Final = "disciplinary"
 WORKFLOW_KEYS: Final = (WORKFLOW_DISCIPLINARY,)
+
+# How a submission's facts arrived (M2-NEW-07). ``assistant`` submissions name the
+# founder message that caused them; the step key is then this fixed marker.
+SUBMISSION_STRUCTURED: Final = "structured"
+SUBMISSION_ASSISTANT: Final = "assistant"
+SUBMISSION_ORIGINS: Final = (SUBMISSION_STRUCTURED, SUBMISSION_ASSISTANT)
+ASSISTANT_STEP_KEY: Final = "ask_heroos"
+SUBMISSION_ORIGIN_SHAPE: Final = (
+    "(origin = 'structured' AND source_message_id IS NULL) "
+    f"OR (origin = 'assistant' AND source_message_id IS NOT NULL "
+    f"AND step_key = '{ASSISTANT_STEP_KEY}')"
+)
 
 # Stored intake evaluation vocabularies (app.workflows.intake). Written out as
 # ``a = 'x' OR ...`` in CHECK constraints (see app.db.models.audit.one_of).
@@ -263,6 +281,16 @@ class WorkflowSubmission(Base):
             name="uq_workflow_submissions_instance_id_idempotency_key",
         ),
         CheckConstraint("revision >= 1", name="ck_workflow_submissions_revision"),
+        # An Ask HeroOS submission's founder message, of the same Company; no cascade.
+        ForeignKeyConstraint(
+            ["company_id", "source_message_id"],
+            ["assistant_messages.company_id", "assistant_messages.id"],
+            name="fk_workflow_submissions_source_message",
+        ),
+        CheckConstraint(
+            f"({_one_of('origin', SUBMISSION_ORIGINS)}) AND ({SUBMISSION_ORIGIN_SHAPE})",
+            name="ck_workflow_submissions_origin",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(PostgreSQLUUID(as_uuid=True), primary_key=True, default=uuid4)
@@ -285,6 +313,17 @@ class WorkflowSubmission(Base):
     )
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    origin: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default=SUBMISSION_STRUCTURED,
+        default=SUBMISSION_STRUCTURED,
+    )
+    # ``assistant``: the founder message whose turn produced these facts (a reference,
+    # never a copy of its words).
+    source_message_id: Mapped[UUID | None] = mapped_column(
+        PostgreSQLUUID(as_uuid=True), nullable=True
     )
 
 

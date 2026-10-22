@@ -18,7 +18,10 @@ import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
  *
  * - **HeroOS's AI conversation** (M2-NEW-05, `conversation`): when the API says
  *   its controlled gateway can answer for this administrator, Send starts a
- *   conversation with HeroOS (`ask-conversation.tsx`). No case is opened.
+ *   conversation with HeroOS (`ask-conversation.tsx`). The API stores it (M2-NEW-07)
+ *   and attaches a case itself once the matter is clear; this page opens none.
+ *   A stored conversation in the address (`?conversation=`, from History or its
+ *   Case) opens again, and can still be read while HeroOS can't answer.
  * - **Otherwise** (the gateway is switched off, not configured or has no
  *   approved knowledge): Send opens a real case through the Ask seam
  *   (`/bff/companies/{id}/ask`, lib/ask/model.ts) and takes the founder there.
@@ -74,6 +77,7 @@ export function AskWorkspace({
   mode,
   returning,
   conversation = null,
+  conversationId = null,
   fetcher,
   navigate,
 }: {
@@ -83,11 +87,22 @@ export function AskWorkspace({
   returning: boolean;
   /** HeroOS's AI gateway, when the API says it can answer here (M2-NEW-05). */
   conversation?: GatewayStatus | null;
+  /** A stored conversation to open (M2-NEW-07), from the address. */
+  conversationId?: string | null;
   fetcher?: typeof fetch;
   navigate?: (href: string) => void;
 }) {
-  if (mode === "ready" && conversation?.available) {
-    return <AskConversation companyId={companyId} fetcher={fetcher} notice={conversation.notice} returning={returning} />;
+  if (mode === "ready" && (conversation?.available || conversationId)) {
+    return (
+      <AskConversation
+        available={conversation?.available ?? false}
+        companyId={companyId}
+        fetcher={fetcher}
+        initialConversationId={conversationId}
+        notice={conversation?.notice ?? null}
+        returning={returning}
+      />
+    );
   }
   return <AskCaseOpening companyId={companyId} fetcher={fetcher} mode={mode} navigate={navigate} returning={returning} />;
 }

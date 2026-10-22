@@ -15,6 +15,7 @@ from sqlalchemy.pool import NullPool
 
 from app.db.runtime_role import UnsafeDatabaseRoleError, check_runtime_role
 from tests.tenant_isolation.conftest import (
+    ASSISTANT_TABLES,
     DISPOSABLE_RUNTIME_ROLE,
     TENANT_AUDIT_TABLES,
     TENANT_TABLES,
@@ -181,6 +182,12 @@ def test_startup_guard_accepts_runtime_role_and_rejects_admin(
         ("workflow_progress_events", {"SELECT", "INSERT"}),
         # Decision records (M2-04): append-only; corrections are new rows.
         ("workflow_decision_records", {"SELECT", "INSERT"}),
+        # Ask HeroOS conversations (M2-NEW-07): append-only; a conversation's own
+        # state is updatable column by column (below).
+        ("assistant_conversations", {"SELECT", "INSERT"}),
+        ("assistant_turns", {"SELECT", "INSERT"}),
+        ("assistant_messages", {"SELECT", "INSERT"}),
+        ("assistant_turn_evaluations", {"SELECT", "INSERT"}),
         # Audit is written only by owner-run triggers.
         ("identity_events", set()),
         ("membership_events", set()),
@@ -367,6 +374,7 @@ def test_every_table_has_rls_unless_explicitly_exempt(admin_engine: Engine) -> N
         set(TENANT_TABLES)
         | set(TENANT_AUDIT_TABLES)
         | set(WORKFLOW_TABLES)
+        | set(ASSISTANT_TABLES)
         | set(LIFECYCLE_TABLES)
         | OWNER_ONLY_TABLES
     )
@@ -383,7 +391,7 @@ def test_each_tenant_table_has_exactly_one_permissive_policy_for_all_commands(
             )
         ).all()
 
-    tenant_tables = {**TENANT_TABLES, **TENANT_AUDIT_TABLES, **WORKFLOW_TABLES}
+    tenant_tables = {**TENANT_TABLES, **TENANT_AUDIT_TABLES, **WORKFLOW_TABLES, **ASSISTANT_TABLES}
     permissive_tenant = [p for p in policies if p.tablename in tenant_tables]
     permissive_tenant = [p for p in permissive_tenant if p.permissive == "PERMISSIVE"]
     # A second permissive policy would be OR-ed in and could only widen access.

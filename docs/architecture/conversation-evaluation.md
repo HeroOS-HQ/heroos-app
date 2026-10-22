@@ -233,6 +233,8 @@ The evaluation record cites these. Nothing about it logs founder text, prompts, 
 
 `Handoff.evaluation` carries the `ConversationEvaluation` (server-side only; never sent to the browser or stored). Its `record()` is the versioned contract M2-NEW-07 can persist: trusted facts and their sources, workflow, jurisdiction, compatible execution identity, action evaluations, review requirements, provenance. M2-NEW-07 must never trust an evaluation a browser returns: the server re-validates and re-evaluates before persisting.
 
+M2-NEW-07 (Part 1) persists it: the record of each turn's own server-side evaluation goes to `assistant_turn_evaluations`, and the trusted state the continuation carries is kept server-side as the conversation checkpoint, read back through `FounderTurn.resume` ([Ask HeroOS Conversations](ask-conversations.md)).
+
 ## 16. Known limitations and future scale (documented, not built)
 
 - Real coverage today: only the Conditions the M2-NEW-04 runtime already links to intake rules are executable. The private audit of the current runtime counts 42 Conditions: 4 executable (one of them reads only sensitive inputs, so a conversation can't collect them), 10 guard-only, 24 question-only, 4 not enforced and 0 quarantined. A supported real step is therefore shown as "not confirmed yet" (Warning), never as clear.

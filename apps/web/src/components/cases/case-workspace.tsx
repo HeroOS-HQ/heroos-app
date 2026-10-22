@@ -5,11 +5,13 @@ import { type RefObject, useCallback, useRef, useState } from "react";
 import { iconButton, WorkspaceLayout } from "@/components/app/workspace-chrome";
 import { WorkspaceHeader, type WorkspaceHeaderData } from "@/components/app/workspace-header";
 import { ChevronDownIcon, HelpIcon, PlusIcon } from "@/components/site/icons";
+import type { ConversationSummary } from "@/lib/ask/conversation";
 import { Notice } from "@/components/ui/notice";
 import { caseStatusDot } from "@/lib/workflows/copy";
 import type { WorkflowView } from "@/lib/workflows/model";
 
 import { AnswersForm } from "./answers-form";
+import { CaseConversationLink } from "./case-conversation-link";
 import { type CaseTarget, CaseStatusPanel } from "./case-status-panel";
 import { Conversation } from "./conversation";
 import { DecisionsPanel } from "./decisions-panel";
@@ -27,7 +29,9 @@ import { ProgressionPanel } from "./progression-panel";
  *
  * The conversation is the guided workflow's own (no AI until M2-NEW-05/06).
  * The view comes from the API and is replaced by the API's answer after each
- * save; nothing here computes workflow state.
+ * save; nothing here computes workflow state. A Case Ask HeroOS opened links
+ * first to that Ask HeroOS conversation (M2-NEW-07), where it can be read and
+ * continued: the chat stays there, apart from the Case's history.
  */
 
 /** The step to open first: the first answerable one with questions left. */
@@ -85,12 +89,15 @@ function CasePill({
 export function CaseWorkspace({
   header,
   initialView,
+  askConversation = null,
   fetcher,
   documentsFetcher,
 }: {
   /** The workspace header's data for this Company (with its case list). */
   header: WorkspaceHeaderData;
   initialView: WorkflowView;
+  /** The Ask HeroOS conversation this Case started from, for its administrators. */
+  askConversation?: ConversationSummary | null;
   fetcher?: typeof fetch;
   /** The Documents section's own reads and previews (tests); the page's fetch by default. */
   documentsFetcher?: typeof fetch;
@@ -159,6 +166,8 @@ export function CaseWorkspace({
             Demo environment: use made-up examples only, never real employee information.
           </p>
         ) : null}
+
+        {askConversation ? <CaseConversationLink companyId={companyId} conversation={askConversation} /> : null}
 
         <section aria-labelledby="conversation-heading" className="scroll-mt-24" id="guided-conversation">
           <h2 className="sr-only" id="conversation-heading">

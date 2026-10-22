@@ -96,6 +96,15 @@ WORKFLOW_TABLES = {
     "workflow_progress_events": "company_id",
     "workflow_decision_records": "company_id",
 }
+# Ask HeroOS conversations (M2-NEW-07 D6): tenant-owned; turns, messages and
+# evaluations append-only for the API role, conversations updatable column by
+# column (revision, Case attachment, workflow, title, checkpoint), never deleted.
+ASSISTANT_TABLES = {
+    "assistant_conversations": "company_id",
+    "assistant_turns": "company_id",
+    "assistant_messages": "company_id",
+    "assistant_turn_evaluations": "company_id",
+}
 # Tenant-owned audit tables: written only by owner-run triggers; no API grant.
 TENANT_AUDIT_TABLES = {
     "membership_events": "company_id",
@@ -484,6 +493,7 @@ def count_rows(session: Session, table: str) -> int:
         table in TENANT_TABLES
         or table in TENANT_AUDIT_TABLES
         or table in WORKFLOW_TABLES
+        or table in ASSISTANT_TABLES
         or table in GLOBAL_TABLES
     )
     count: int = session.scalar(text(f"SELECT count(*) FROM {table}"))
@@ -492,5 +502,5 @@ def count_rows(session: Session, table: str) -> int:
 
 def owners(session: Session, table: str) -> set[uuid.UUID]:
     """Owning Company of every row RLS lets through, from an unfiltered query."""
-    column = {**TENANT_TABLES, **TENANT_AUDIT_TABLES, **WORKFLOW_TABLES}[table]
+    column = {**TENANT_TABLES, **TENANT_AUDIT_TABLES, **WORKFLOW_TABLES, **ASSISTANT_TABLES}[table]
     return set(session.scalars(text(f"SELECT {column} FROM {table}")))

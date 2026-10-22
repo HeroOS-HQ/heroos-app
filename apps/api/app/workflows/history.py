@@ -4,7 +4,8 @@ Composed on read from append-only records only, so it can't drift from them:
 
 - the workflow instance (Case created, by whom, when);
 - each saved submission (which answers changed: labels only, never values;
-  for sensitive questions only how many changed);
+  for sensitive questions only how many changed); one an Ask HeroOS turn
+  produced reads "Case information updated through Ask HeroOS" (M2-NEW-07);
 - each stored intake evaluation, compared with the one before it: the Case
   jurisdiction confirmed or no longer confirmed (and on what basis), holds
   placed, kept or lifted (and why: a specialist-review hold is only ever kept,
@@ -25,7 +26,12 @@ from typing import Final, Literal
 from uuid import UUID
 
 from app.workflows.conditions import RuleSet
-from app.workflows.conversation import SubmissionRecord, caution_notices
+from app.workflows.conversation import (
+    ASSISTANT_ORIGIN,
+    ASSISTANT_UPDATE_TITLE,
+    SubmissionRecord,
+    caution_notices,
+)
 from app.workflows.definition import Step, WorkflowDefinition
 from app.workflows.intake import JURISDICTION_LABELS, IntakeEvaluation
 
@@ -258,13 +264,16 @@ def compose_history(
         unlabelled = sum(1 for k in submission.facts if k not in labels)
         if unlabelled:
             changed.append(f"{unlabelled} answer{'s' if unlabelled > 1 else ''}")
+        title = f"Answers saved: {step.title if step else 'stage checklist'}"
+        if submission.origin == ASSISTANT_ORIGIN:
+            title = ASSISTANT_UPDATE_TITLE
         items.append(
             HistoryItem(
                 f"submission:{submission.id}",
                 "answers_saved",
                 submission.submitted_at,
                 by_viewer,
-                f"Answers saved: {step.title if step else 'stage checklist'}",
+                title,
                 ("Changed: " + ", ".join(changed)) if changed else None,
                 submission.revision,
             )

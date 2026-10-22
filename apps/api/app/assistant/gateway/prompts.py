@@ -55,7 +55,10 @@ Return exactly this object, with no other fields:
  "case_summary": one neutral sentence of what the founder said, or null,
  "requested_actions": [{{"action": an action key of that workflow from the catalog,
    "source_turn": the founder message's turn number,
-   "support_excerpt": the founder's own words asking for it, copied exactly}}]}}
+   "support_excerpt": the founder's own words asking for it, copied exactly}}],
+ "withdrawn_actions": [{{"action": an action key of that workflow from the catalog,
+   "source_turn": the current founder message's turn number,
+   "support_excerpt": the founder's own words withdrawing it, copied exactly}}]}}
 
 Rules:
 - intent: "supported_hr" when the situation fits a catalog workflow; "other_hr" for another HR \
@@ -77,6 +80,9 @@ whether they can take ("Can I fire her today?", "Take the repair cost from his s
 to suspend him for 10 days"), at most 3, including ones asked earlier in the conversation that \
 are still being discussed. Never a decision you think might apply, and never one the founder \
 only mentions to rule out. Choosing an action never means it is allowed.
+- withdrawn_actions: only decisions the founder says in the current message they are no longer \
+considering ("We're no longer considering dismissal"). Never infer it from a change of topic; \
+leave it empty otherwise.
 - Several unrelated matters (for example disciplining one employee and hiring a replacement): \
 describe the first HR matter only and add "multiple_matters".
 - "jurisdiction_conflict" only when the founder's words suggest the employee is employed by a \

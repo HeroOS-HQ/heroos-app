@@ -47,6 +47,7 @@ from tests.tenant_isolation.migration_helpers import (
     D3,
     D4,
     D5,
+    D6,
     LEGACY_ISSUER,
     PRE_B1,
     REFERENCE,
@@ -272,10 +273,13 @@ def test_current_api_requires_the_d5_schema_contract(legacy_db: LegacyDatabase) 
         with pytest.raises(IncompatibleSchemaError, match="contract is 7"):
             verify_runtime_role(engine)
         upgrade(legacy_db, D5)
+        with pytest.raises(IncompatibleSchemaError, match="contract is 8"):
+            verify_runtime_role(engine)
+        upgrade(legacy_db, D6)
         verify_runtime_role(engine)
         with engine.connect() as conn:
-            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 8
-    assert API_MINIMUM_SCHEMA_CONTRACT == 8
+            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 9
+    assert API_MINIMUM_SCHEMA_CONTRACT == 9
 
 
 # --- revocation and rollback --------------------------------------------------------

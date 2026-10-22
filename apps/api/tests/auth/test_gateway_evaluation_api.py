@@ -3,9 +3,11 @@
 Same harness as test_gateway_api.py, with the fictional execution content
 installed: the outcome reaches the browser only as the server's card (kind,
 title, message, one line per step), never as a rule, Condition, binding,
-profile or trace; the browser can't send one; and a turn writes nothing.
+profile or trace; the browser can't send one; and a turn records no workflow
+action (M2-NEW-07 keeps the conversation; tests/conversations).
 """
 
+import uuid
 from collections.abc import Generator
 from typing import Any
 
@@ -20,7 +22,6 @@ from app.auth.providers.cognito import CognitoAccessTokenProvider
 from app.db.session import get_db
 from app.main import create_app
 from tests.auth.conftest import SeedData
-from tests.auth.test_assistant_api import counts
 from tests.auth.test_company_api import staging_settings
 from tests.auth.test_intake_api import confirm_jurisdiction
 from tests.auth.test_workflow_api import (  # noqa: F401  (pytest fixtures)
@@ -29,6 +30,7 @@ from tests.auth.test_workflow_api import (  # noqa: F401  (pytest fixtures)
     bob,
     sessions,
 )
+from tests.conversations.conftest import counts, stored_sessions  # noqa: F401  (fixture)
 from tests.fixtures.evaluation import Artifacts, codec
 from tests.fixtures.gateway import ScriptedProvider, response, understanding
 from tests.knowledge.conftest import (  # noqa: F401  (pytest fixtures)
@@ -81,27 +83,28 @@ def artifacts(bundle_data: dict[str, Any]) -> Artifacts:  # noqa: F811
     return Artifacts(bundle_data)
 
 
+def post(
+    client: TestClient, headers: dict[str, str], company: Any, message: str = MESSAGE, **body: Any
+) -> Any:
+    request = {"message": message, "turn_key": str(uuid.uuid4()), "expected_revision": 0, **body}
+    return client.post(f"/companies/{company}/assistant/messages", headers=headers, json=request)
+
+
 def test_the_outcome_is_the_servers_card_and_nothing_internal(
-    sessions: sessionmaker[Session],  # noqa: F811
+    stored_sessions: sessionmaker[Session],  # noqa: F811
     cognito_provider: CognitoAccessTokenProvider,
     artifacts: Artifacts,
     seed: SeedData,
     admin_alice: dict[str, str],  # noqa: F811
 ) -> None:
-    confirm_jurisdiction(sessions, seed.company_a, "uae_federal")
-    client = client_for(sessions, cognito_provider, artifacts, dismissal())
-    before = counts(sessions)
-    answered = client.post(
-        f"/companies/{seed.company_a}/assistant/messages",
-        headers=admin_alice,
-        json={"message": MESSAGE},
-    )
+    confirm_jurisdiction(stored_sessions, seed.company_a, "uae_federal")
+    client = client_for(stored_sessions, cognito_provider, artifacts, dismissal())
+    answered = post(client, admin_alice, seed.company_a)
     assert answered.status_code == 200
-    body = answered.json()
-    assert set(body["outcome"]) == OUTCOME_FIELDS
-    assert body["outcome"]["kind"] == "expert_review"
-    assert body["outcome"]["title"] == "Expert Review"
-    assert body["continuation"].startswith("e1.")
+    outcome = answered.json()["messages"][1]["outcome"]
+    assert set(outcome) == OUTCOME_FIELDS
+    assert outcome["kind"] == "expert_review"
+    assert outcome["title"] == "Expert Review"
     snapshot = artifacts.snapshot()
     for private in (
         "EX-",
@@ -118,53 +121,59 @@ def test_the_outcome_is_the_servers_card_and_nothing_internal(
         "two_state",
         "engine",
         "heroos.conversation-evaluation",
+        "continuation",
     ):
         assert private not in answered.text, private
-    # Nothing was created or changed: no Case, fact, workflow, event, decision or document.
-    assert counts(sessions) == before
+    # The conversation is kept; no workflow action, fact, decision or document is.
+    stored = counts(stored_sessions)
+    assert stored["workflow_submissions"] == stored["workflow_progress_events"] == 0
+    assert stored["workflow_decision_records"] == 0
 
 
 def test_a_technical_unavailability_is_not_an_hr_outcome(
-    sessions: sessionmaker[Session],  # noqa: F811
+    stored_sessions: sessionmaker[Session],  # noqa: F811
     cognito_provider: CognitoAccessTokenProvider,
     artifacts: Artifacts,
     seed: SeedData,
     admin_alice: dict[str, str],  # noqa: F811
 ) -> None:
-    confirm_jurisdiction(sessions, seed.company_a, "uae_federal")
+    confirm_jurisdiction(stored_sessions, seed.company_a, "uae_federal")
     artifacts.profile["workflows"][0]["knowledge_runtime_digest"] = "f" * 64
-    client = client_for(sessions, cognito_provider, artifacts, dismissal())
-    body = client.post(
-        f"/companies/{seed.company_a}/assistant/messages",
-        headers=admin_alice,
-        json={"message": MESSAGE},
-    ).json()
-    assert body["outcome"]["kind"] == "unavailable"
-    assert body["outcome"]["title"] == "Checks unavailable" and body["outcome"]["items"] == []
+    client = client_for(stored_sessions, cognito_provider, artifacts, dismissal())
+    body = post(client, admin_alice, seed.company_a).json()
+    outcome = body["messages"][1]["outcome"]
+    assert outcome["kind"] == "unavailable"
+    assert outcome["title"] == "Checks unavailable" and outcome["items"] == []
+    # Technical: never the Case's lifecycle.
+    status = body["conversation"]["status"]
+    assert (status["lifecycle"], status["checks"]) == ("in_progress", "unavailable")
 
 
-def test_an_earlier_token_is_lost_state_never_an_error(
-    sessions: sessionmaker[Session],  # noqa: F811
+def test_the_conversation_continues_from_the_server_not_a_browser_token(
+    stored_sessions: sessionmaker[Session],  # noqa: F811
     cognito_provider: CognitoAccessTokenProvider,
     artifacts: Artifacts,
     seed: SeedData,
     admin_alice: dict[str, str],  # noqa: F811
 ) -> None:
-    """A token from before a deploy (or forged) grants nothing and breaks nothing."""
-    confirm_jurisdiction(sessions, seed.company_a, "uae_federal")
-    client = client_for(sessions, cognito_provider, artifacts, dismissal(turn=1))
-    answered = client.post(
-        f"/companies/{seed.company_a}/assistant/messages",
-        headers=admin_alice,
-        json={
-            "message": MESSAGE,
-            "continuation": "eyJ2IjoxLCJ0IjpbM119.xNc7X0hBpSOKTehKXpgdlw",
-            "history": [
-                {"role": "user", "content": "Earlier."},
-                {"role": "assistant", "content": "Earlier reply."},
-            ],
-        },
+    """No continuation, no history: the next turn starts from the stored conversation."""
+    confirm_jurisdiction(stored_sessions, seed.company_a, "uae_federal")
+    first = post(
+        client_for(stored_sessions, cognito_provider, artifacts, dismissal()),
+        admin_alice,
+        seed.company_a,
+    )
+    conversation = first.json()["conversation"]
+    chat = dismissal(turn=1)
+    answered = post(
+        client_for(stored_sessions, cognito_provider, artifacts, chat),
+        admin_alice,
+        seed.company_a,
+        "I still want to fire her today.",
+        conversation_id=conversation["id"],
+        expected_revision=conversation["revision"],
     )
     assert answered.status_code == 200
-    assert answered.json()["outcome"]["kind"] == "expert_review"
-    assert answered.json()["continuation"].startswith("e1.")
+    assert answered.json()["messages"][1]["outcome"]["kind"] == "expert_review"
+    sent = chat.phase("understanding")[0].data["founder_messages"]
+    assert [m["text"] for m in sent] == [MESSAGE, "I still want to fire her today."]

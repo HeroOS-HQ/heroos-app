@@ -6,7 +6,11 @@ Everything here is deterministic server logic over trusted inputs:
   operator-confirmed employment jurisdiction, while guidance is allowed. A
   model can make it *less* certain (the founder's words suggest a different
   employing entity: ``jurisdiction_conflict``), never more: then nothing
-  jurisdiction-specific is retrieved and HeroOS asks.
+  jurisdiction-specific is retrieved and HeroOS asks. So can the employer's
+  own trusted answer about this employee (M2-NEW-07: ``employee_unresolved``,
+  "Not sure", another jurisdiction, or a Case confirmation the Blueprint has
+  since outdated): the deterministic evaluation finds it, and the knowledge is
+  then retrieved again, shared guidance only.
 - **Known facts** are the explicit, confident statements the founder made
   (``FactProposal.establishes``). When the founder corrects something, the
   newest statement wins. An inferred or approximate value never establishes a
@@ -55,7 +59,9 @@ MAX_TARGETS: Final = 2
 # Condition actions whose facts come first (their safeguard matters most).
 SAFEGUARD_ACTIONS: Final = frozenset({"block", "escalate"})
 
-JurisdictionState = Literal["confirmed", "company_unconfirmed", "conversation_conflict"]
+JurisdictionState = Literal[
+    "confirmed", "company_unconfirmed", "conversation_conflict", "employee_unresolved"
+]
 TargetMode = Literal["ask", "confirm"]
 # M2-NEW-06: a fact, a confirmation of a canonical value, a two-state caution's insistence
 # question, or the employee's jurisdiction.
@@ -105,7 +111,10 @@ class TurnPlan:
 
 
 def jurisdiction_input(
-    company: CompanyBlueprintContext, understanding: UnderstandingProposal
+    company: CompanyBlueprintContext,
+    understanding: UnderstandingProposal,
+    *,
+    employee_unresolved: bool = False,
 ) -> tuple[str | None, JurisdictionState]:
     """The trusted jurisdiction for the knowledge request, and why there is none."""
     confirmed = company.jurisdiction
@@ -113,6 +122,8 @@ def jurisdiction_input(
         return None, "company_unconfirmed"
     if "jurisdiction_conflict" in understanding.uncertainties:
         return None, "conversation_conflict"
+    if employee_unresolved:
+        return None, "employee_unresolved"
     return confirmed.employment_jurisdiction, "confirmed"
 
 
@@ -158,6 +169,8 @@ def retrieve(
     understanding: UnderstandingProposal,
     company: CompanyBlueprintContext,
     established: Sequence[FactProposal],
+    *,
+    employee_unresolved: bool = False,
 ) -> tuple[KnowledgeQuery, KnowledgeContext, tuple[str, ...], JurisdictionState]:
     """The knowledge request and the runtime's answer.
 
@@ -167,7 +180,9 @@ def retrieve(
     answer still comes from ``get_knowledge_context``.
     """
     assert understanding.workflow is not None
-    jurisdiction, state = jurisdiction_input(company, understanding)
+    jurisdiction, state = jurisdiction_input(
+        company, understanding, employee_unresolved=employee_unresolved
+    )
     known = frozenset(f.fact_key for f in established)
     topics = understanding.topics
     query = _query(understanding, understanding.workflow, jurisdiction, topics, known, company)
@@ -280,9 +295,14 @@ def plan_turn(
     bundle: KnowledgeBundle | None,
     understanding: UnderstandingProposal,
     company: CompanyBlueprintContext,
+    *,
+    employee_unresolved: bool = False,
 ) -> TurnPlan:
+    """``employee_unresolved``: this employee's jurisdiction isn't confirmed (shared only)."""
     established = established_facts(understanding)
-    query, context, conflicted, state = retrieve(bundle, understanding, company, established)
+    query, context, conflicted, state = retrieve(
+        bundle, understanding, company, established, employee_unresolved=employee_unresolved
+    )
     if bundle is None:
         targets: tuple[QuestionTarget, ...] = ()
         actions: tuple[ActionNote, ...] = ()

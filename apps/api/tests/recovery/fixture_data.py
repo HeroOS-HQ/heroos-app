@@ -20,6 +20,10 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 
 from app.db.models import (
+    AssistantConversation,
+    AssistantMessage,
+    AssistantTurn,
+    AssistantTurnEvaluation,
     Case,
     CaseFact,
     CaseSubject,
@@ -35,6 +39,7 @@ from app.db.models import (
     WorkflowProgressEvent,
     WorkflowSubmission,
 )
+from app.db.models.workflow import ASSISTANT_STEP_KEY, SUBMISSION_ASSISTANT
 
 SOURCE_URL_ENV = "RECOVERY_TEST_SOURCE_URL"
 SAFE_SOURCE_DATABASE = re.compile(r"[a-z0-9_]+_backup_source_test")
@@ -80,6 +85,17 @@ DECISION_A_CORRECTION = UUID("c2000000-0000-4000-8000-00000000000a")
 DECISION_KEY_A = UUID("c3000000-0000-4000-8000-00000000000a")
 DECISION_KEY_B = UUID("c4000000-0000-4000-8000-00000000000b")
 DECISION_KEY_A_CORRECTION = UUID("c5000000-0000-4000-8000-00000000000a")
+# Ask HeroOS (M2-NEW-07 D6): A's conversation on its Case, one turn, its two messages, its
+# evaluation, and the Case fact it established (assistant origin, linked to the message).
+CONVERSATION_A = UUID("c6000000-0000-4000-8000-00000000000a")
+TURN_A = UUID("c7000000-0000-4000-8000-00000000000a")
+TURN_KEY_A = UUID("c8000000-0000-4000-8000-00000000000a")
+FOUNDER_MESSAGE_A = UUID("c9000000-0000-4000-8000-00000000000a")
+HEROOS_MESSAGE_A = UUID("ca000000-0000-4000-8000-00000000000a")
+TURN_EVALUATION_A = UUID("cb000000-0000-4000-8000-00000000000a")
+ASSISTANT_SUBMISSION_A = UUID("cc000000-0000-4000-8000-00000000000a")
+ASSISTANT_SUBMISSION_KEY_A = UUID("cd000000-0000-4000-8000-00000000000a")
+ASSISTANT_FACT_A = UUID("ce000000-0000-4000-8000-00000000000a")
 # A synthetic intake evaluation trace (M2-02): codes and enumerated answers only.
 EVALUATION_RESULTS = [
     {
@@ -199,8 +215,9 @@ def build() -> list[object]:
                 case_id=case,
                 workflow_key="disciplinary",
                 definition_version=1,
-                # The submission (1), then the decision record(s) (2; A: 3).
-                revision=3 if label == "A" else 2,
+                # The submission (1), then the decision record(s) (2; A: 3), then (A) the
+                # fact Ask HeroOS established (4).
+                revision=4 if label == "A" else 2,
                 request_key=request_key,
                 created_by_user_id=user,
             )
@@ -312,7 +329,53 @@ def build() -> list[object]:
                     **{**recorded, "occurred_on": date(2026, 10, 13)},
                 )
             )
+            rows.extend(ask_heroos_rows(user, instance))
     return rows
+
+
+def ask_heroos_rows(user: UUID, instance: UUID) -> list[object]:
+    """Company A's stored Ask HeroOS conversation and the Case fact it established."""
+    common = {"company_id": COMPANY_A, "conversation_id": CONVERSATION_A}
+    return [
+        AssistantConversation(
+            id=CONVERSATION_A, company_id=COMPANY_A, created_by_user_id=user, case_id=CASE_A,
+            workflow_key="disciplinary", title="Disciplinary case · 13 Oct", revision=1,
+            checkpoint={"schema": "heroos.assistant-checkpoint/1", "versions": "synthetic"},
+        ),
+        AssistantTurn(
+            id=TURN_A, sequence=1, turn_key=TURN_KEY_A, actor_user_id=user, **common
+        ),
+        AssistantMessage(
+            id=FOUNDER_MESSAGE_A, turn_id=TURN_A, sequence=1, role="founder",
+            actor_user_id=user, content="Synthetic: the expected standard was explained.",
+            **common,
+        ),
+        AssistantMessage(
+            id=HEROOS_MESSAGE_A, turn_id=TURN_A, sequence=2, role="heroos",
+            content="Synthetic reply.", conversation_state="responded",
+            outcome={"kind": "guidance", "title": "Guidance", "message": "Synthetic.",
+                     "items": []},
+            **common,
+        ),
+        AssistantTurnEvaluation(
+            id=TURN_EVALUATION_A, turn_id=TURN_A, evaluation_schema="heroos.evaluation/1",
+            availability="ready", matter="supported", workflow_key="disciplinary",
+            presentation="guidance", outcome="guidance", has_review_requirement=False,
+            multiple_matters=False, snapshot_id="synthetic", record={"presentation": "guidance"},
+            withdrawn_actions=[], **common,
+        ),
+        WorkflowSubmission(
+            id=ASSISTANT_SUBMISSION_A, company_id=COMPANY_A, instance_id=instance,
+            step_key=ASSISTANT_STEP_KEY, revision=4, idempotency_key=ASSISTANT_SUBMISSION_KEY_A,
+            submitted_by_user_id=user, origin=SUBMISSION_ASSISTANT,
+            source_message_id=FOUNDER_MESSAGE_A,
+        ),
+        CaseFact(
+            id=ASSISTANT_FACT_A, company_id=COMPANY_A, instance_id=instance,
+            submission_id=ASSISTANT_SUBMISSION_A, fact_key="context.policy_awareness",
+            value="yes",
+        ),
+    ]  # fmt: skip
 
 
 def seed(admin_url: str) -> None:

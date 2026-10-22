@@ -13,6 +13,10 @@ appear as the employer's turns too, labelled by the installed rules; the final
 "what happens next" notice can be replaced by the progression's own
 (``next_notice``).
 
+Facts an Ask HeroOS turn established (M2-NEW-07, ``origin`` ``assistant``)
+are never presented as answers the employer typed into a step: they appear as
+one neutral notice naming what was updated (labels only, never a value).
+
 Wording rules: no rule keys or other internal labels; no recommendation of
 any disciplinary action; no promise that a HeroOS expert will review or contact
 anyone (no staffed expert-review workflow exists); a high-risk answer is never
@@ -27,6 +31,7 @@ from typing import Final, Literal
 from uuid import UUID
 
 from app.companies.jurisdiction import JurisdictionAssessment, ReadinessReason
+from app.db.models.workflow import SUBMISSION_ASSISTANT
 from app.workflows.definition import (
     JURISDICTION_DIFFERENT,
     NOT_SURE,
@@ -38,6 +43,10 @@ from app.workflows.definition import (
 from app.workflows.intake import JURISDICTION_LABELS, Caution, Hold, IntakeEvaluation
 
 Tone = Literal["info", "caution", "success"]
+
+ASSISTANT_ORIGIN: Final = SUBMISSION_ASSISTANT
+# How an Ask HeroOS update reads in the guided conversation and the Case history.
+ASSISTANT_UPDATE_TITLE: Final = "Case information updated through Ask HeroOS"
 
 _MONTHS: Final = (
     "January",
@@ -158,6 +167,8 @@ class SubmissionRecord:
     submitted_by_user_id: UUID
     # Fact key -> value as saved by this submission (None = cleared).
     facts: Mapping[str, object]
+    # ``structured`` (a step's form) or ``assistant`` (an Ask HeroOS turn, M2-NEW-07).
+    origin: str = "structured"
 
 
 def _jurisdiction_option_label(value: str) -> str:
@@ -353,6 +364,18 @@ def _saved_notice(
     )
 
 
+def _assistant_notice(
+    submission: SubmissionRecord, questions: Mapping[str, Question], order: Sequence[str]
+) -> StatusNotice:
+    labels = [questions[k].label for k in order if k in submission.facts]
+    return StatusNotice(
+        f"assistant:{submission.id}",
+        "info",
+        ASSISTANT_UPDATE_TITLE,
+        "Updated: " + ", ".join(labels) + "." if labels else ASSISTANT_UPDATE_TITLE + ".",
+    )
+
+
 def compose(
     definition: WorkflowDefinition,
     submissions: Sequence[SubmissionRecord],
@@ -380,6 +403,10 @@ def compose(
     questions = {q.key: q for s in (*definition.steps, *extra_steps) for q in s.questions}
     order = list(questions)
     for submission in sorted(submissions, key=lambda s: s.revision):
+        if submission.origin == ASSISTANT_ORIGIN:
+            # Never shown as a form the employer filled in, and never restating a value.
+            messages.append(_assistant_notice(submission, questions, order))
+            continue
         items = tuple(
             AnsweredItem(key, questions[key].label, display_answer(questions[key], value))
             for key, value in sorted(

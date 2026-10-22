@@ -105,7 +105,7 @@ def test_current_api_sees_legacy_data_as_unconfirmed_member_data(
     legacy_db: LegacyDatabase,
 ) -> None:
     # Legacy data migrated through C1 and on to the current schema (the
-    # current API refuses to start below contract 8, test_identity_migration):
+    # current API refuses to start below contract 9, test_identity_migration):
     # nothing legacy becomes a confirmation or an administrator on the way.
     to_c1(legacy_db)
     upgrade(legacy_db, "head")

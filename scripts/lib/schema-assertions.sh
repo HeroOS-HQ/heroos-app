@@ -9,6 +9,10 @@
 
 EXPECTED_TABLES=(
   alembic_version
+  assistant_conversations
+  assistant_messages
+  assistant_turn_evaluations
+  assistant_turns
   case_facts
   case_subjects
   cases
@@ -116,6 +120,8 @@ EXPECTED_CONSTRAINTS=(
   uq_workflow_submissions_instance_id_idempotency_key
   ck_workflow_submissions_revision
   ck_workflow_submissions_step_key
+  fk_workflow_submissions_source_message
+  ck_workflow_submissions_origin
   case_facts_pkey
   fk_case_facts_company_id_companies
   fk_case_facts_company_id_instance_id_submission_id
@@ -170,10 +176,57 @@ EXPECTED_CONSTRAINTS=(
   ck_workflow_decision_records_text
   ck_workflow_decision_records_evidence
   ck_workflow_decision_records_occurred_on
+  assistant_conversations_pkey
+  fk_assistant_conversations_company_id_companies
+  fk_assistant_conversations_created_by_user_id_users
+  fk_assistant_conversations_company_id_case_id_cases
+  uq_assistant_conversations_company_id_id
+  uq_assistant_conversations_company_id_case_id
+  ck_assistant_conversations_workflow_key
+  ck_assistant_conversations_case_workflow
+  ck_assistant_conversations_revision
+  ck_assistant_conversations_title
+  ck_assistant_conversations_checkpoint
+  assistant_turns_pkey
+  fk_assistant_turns_company_id_companies
+  fk_assistant_turns_company_id_conversation_id
+  fk_assistant_turns_actor_user_id_users
+  uq_assistant_turns_company_id_conversation_id_id
+  uq_assistant_turns_conversation_id_sequence
+  uq_assistant_turns_company_id_turn_key
+  ck_assistant_turns_sequence
+  assistant_messages_pkey
+  fk_assistant_messages_company_id_companies
+  fk_assistant_messages_turn
+  fk_assistant_messages_actor_user_id_users
+  uq_assistant_messages_company_id_id
+  uq_assistant_messages_conversation_id_sequence
+  uq_assistant_messages_turn_id_role
+  ck_assistant_messages_role
+  ck_assistant_messages_shape
+  ck_assistant_messages_conversation_state
+  ck_assistant_messages_sequence
+  ck_assistant_messages_text
+  ck_assistant_messages_outcome
+  assistant_turn_evaluations_pkey
+  fk_assistant_turn_evaluations_company_id_companies
+  fk_assistant_turn_evaluations_turn
+  uq_assistant_turn_evaluations_turn_id
+  ck_assistant_turn_evaluations_availability
+  ck_assistant_turn_evaluations_matter
+  ck_assistant_turn_evaluations_presentation
+  ck_assistant_turn_evaluations_outcome
+  ck_assistant_turn_evaluations_identity
+  ck_assistant_turn_evaluations_record
+  ck_assistant_turn_evaluations_withdrawn
 )
 
 # Tenant-owned tables: one tenant_isolation policy each.
 TENANT_RLS_TABLES=(
+  assistant_conversations
+  assistant_messages
+  assistant_turn_evaluations
+  assistant_turns
   case_facts
   case_subjects
   cases
@@ -193,6 +246,10 @@ TENANT_RLS_TABLES=(
 # are global identity tables with per-role lifecycle policies instead of a
 # tenant policy; `identity_events` is owner-only (RLS, no policy) (ADR-008).
 RLS_TABLES=(
+  assistant_conversations
+  assistant_messages
+  assistant_turn_evaluations
+  assistant_turns
   case_facts
   case_subjects
   cases
@@ -389,11 +446,11 @@ assert_schema() {
       OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE, DELETE, TRUNCATE')
       OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE')
       OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_decision_records', 'SELECT, INSERT, UPDATE')
-      OR heroos_schema_contract() <> 8;")" != "f" ]]; then
+      OR heroos_schema_contract() <> 9;")" != "f" ]]; then
     echo "Workflow tables: unexpected privileges or schema contract." >&2
     return 1
   fi
-  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 8)"
+  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 9)"
 
   # M2-NEW-03 (D5): the Company Blueprint context is written by the API role
   # only (column-level INSERT and UPDATE); the operator neither reads nor
@@ -413,4 +470,30 @@ assert_schema() {
     return 1
   fi
   echo "Company Blueprint context OK (written by ${RUNTIME_ROLE} only, invisible to ${OPERATOR_ROLE})"
+
+  # M2-NEW-07 (D6): Ask HeroOS conversations. Turns, messages and evaluations are
+  # append-only for the API role; on a conversation it may update only the
+  # revision, Case attachment, workflow, title, checkpoint and activity time.
+  # The operator gets nothing.
+  if [[ "$(psql_db "${db}" "SELECT EXISTS (
+        SELECT FROM unnest(ARRAY['assistant_conversations', 'assistant_turns',
+                                 'assistant_messages', 'assistant_turn_evaluations']) AS t(name)
+        WHERE NOT has_table_privilege('${RUNTIME_ROLE}', 'public.' || t.name, 'SELECT, INSERT')
+           OR has_table_privilege('${RUNTIME_ROLE}', 'public.' || t.name,
+                                  'UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER')
+           OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.' || t.name,
+                                       'SELECT, INSERT, UPDATE')
+           OR (t.name <> 'assistant_conversations'
+               AND has_any_column_privilege('${RUNTIME_ROLE}', 'public.' || t.name, 'UPDATE')))
+      OR EXISTS (
+        SELECT FROM pg_attribute a
+        WHERE a.attrelid = 'public.assistant_conversations'::regclass AND a.attnum > 0
+          AND NOT a.attisdropped
+          AND has_column_privilege('${RUNTIME_ROLE}', a.attrelid, a.attnum, 'UPDATE')
+              <> (a.attname IN ('case_id', 'workflow_key', 'title', 'revision', 'checkpoint',
+                                'updated_at')));")" != "f" ]]; then
+    echo "Ask HeroOS conversation tables: unexpected privileges." >&2
+    return 1
+  fi
+  echo "Ask HeroOS conversations OK (append-only for ${RUNTIME_ROLE} except the conversation's own state, nothing for ${OPERATOR_ROLE})"
 }

@@ -55,6 +55,26 @@ describe("CaseWorkspace", () => {
     return within(screen.getByRole("dialog", { name: "[SYNTHETIC] Attendance concern" }));
   };
 
+  it("links a Case Ask HeroOS opened to that conversation, apart from the Case's own history", () => {
+    const conversationId = "9b1f3c3e-6a52-4b8f-9d0a-2c1e5f6a7b8c";
+    render(
+      <CaseWorkspace
+        askConversation={{ id: conversationId, title: "[SYNTHETIC] Attendance concern", case: null, createdAt: "2026-10-22T10:00:00Z", updatedAt: "2026-10-22T10:05:00Z" }}
+        header={workspaceHeader([summary()])}
+        initialView={view()}
+      />,
+    );
+    const link = screen.getByRole("link", { name: /Your Ask HeroOS conversation/ });
+    expect(link).toHaveAttribute("href", `/workspaces/${COMPANY_ID}?conversation=${conversationId}`);
+    // The chat isn't copied into the Case: its guided conversation and history stay its own.
+    expect(screen.getByRole("log", { name: /Conversation: / })).not.toHaveTextContent("Your Ask HeroOS conversation");
+  });
+
+  it("shows no Ask HeroOS link for a Case without a conversation", () => {
+    renderWorkspace();
+    expect(screen.queryByRole("link", { name: /Your Ask HeroOS conversation/ })).toBeNull();
+  });
+
   it("is the case's conversation in the approved thread, then what HeroOS needs to know, without Hannah", () => {
     renderWorkspace();
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("[SYNTHETIC] Attendance concern");

@@ -26,6 +26,7 @@ from app.db.models import (
     WorkflowProgressEvent,
     WorkflowSubmission,
 )
+from app.db.models.workflow import SUBMISSION_STRUCTURED
 from app.tenancy.scope import CompanyScope
 from app.workflows.conversation import SubmissionRecord
 from app.workflows.decisions import (
@@ -174,6 +175,7 @@ def submissions(scope: CompanyScope, instance_id: UUID) -> list[SubmissionRecord
             submitted_at=row.submitted_at,
             submitted_by_user_id=row.submitted_by_user_id,
             facts=by_submission.get(row.id, {}),
+            origin=row.origin,
         )
         for row in rows
     ]
@@ -220,8 +222,14 @@ def record_submission(
     idempotency_key: UUID,
     user_id: UUID,
     changes: Mapping[str, object],
+    origin: str = SUBMISSION_STRUCTURED,
+    source_message_id: UUID | None = None,
 ) -> WorkflowSubmission:
-    """Append one answer group and its facts (call after ``advance_revision``)."""
+    """Append one answer group and its facts (call after ``advance_revision``).
+
+    ``origin``: ``structured`` (a step's form) or ``assistant`` (an Ask HeroOS
+    turn, naming its founder message in ``source_message_id``).
+    """
     submission = WorkflowSubmission(
         company_id=scope.company_id,
         instance_id=instance.id,
@@ -229,6 +237,8 @@ def record_submission(
         revision=revision,
         idempotency_key=idempotency_key,
         submitted_by_user_id=user_id,
+        origin=origin,
+        source_message_id=source_message_id,
     )
     scope.session.add(submission)
     scope.session.flush()
