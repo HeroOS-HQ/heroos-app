@@ -282,3 +282,48 @@ def test_the_same_refusal_is_shorter_after_the_first_time(artifacts: Artifacts) 
     ]
     assert replies[0].startswith(OUTSIDE.split(",", 1)[0]) and replies[0] != OUTSIDE_AGAIN
     assert replies[1] == replies[2] == OUTSIDE_AGAIN
+
+
+def test_an_announcement_of_the_question_is_left_out(artifacts: Artifacts) -> None:
+    """Found live: "HeroOS will ask you next whether ..." and then the same question."""
+    chat = Remembering(artifacts)
+    words = f"{SAFE} HeroOS will ask you next whether he had a chance to explain, since it matters."
+    result = chat.say(
+        WARN,
+        understood(WARN, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")]),
+        response(words, ["q1"]),
+    )
+    assert result.reply == f"{SAFE} {EXPLAIN_QUESTION}"
+
+
+def test_a_correction_drops_what_the_understanding_no_longer_reads(artifacts: Artifacts) -> None:
+    """Found live: "it was raised with him before" corrected to "that was another operative", and
+    the reading "discussed with him" taken from the same words stayed noted."""
+    chat = Remembering(artifacts)
+    first = "He's careless with stock, it has been raised with him before."
+    chat.say(
+        first,
+        understood(
+            first,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[
+                fact("incident.history", "raised_before", "it has been raised with him before"),
+                fact("incident.discussed_with_employee", "yes", "raised with him before"),
+            ],
+        ),
+    )
+    assert chat.memory.said.get("incident.discussed_with_employee") == "yes"
+    fix = "Sorry, I got that wrong: that was another operative. For him it's the first time."
+    result = chat.say(
+        fix,
+        understood(
+            fix,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[fact("incident.history", "new", "For him it's the first time", turn=1)],
+        ),
+    )
+    facts = evaluation(result).facts
+    assert facts.conversational.get("incident.history") == "new"
+    assert "incident.discussed_with_employee" not in facts.conversational

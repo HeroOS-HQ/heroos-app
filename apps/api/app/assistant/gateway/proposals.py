@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from typing import Any, Final, Literal, cast
 
 from app.assistant.gateway.catalog import CatalogWorkflow, RoutingCatalog
-from app.evaluation.facts import parse_yes_no
+from app.evaluation.facts import NOT_SURE, parse_yes_no, says_not_known
 
 UNDERSTANDING_SCHEMA: Final = "heroos.understanding/1"
 RESPONSE_SCHEMA: Final = "heroos.response/1"
@@ -438,8 +438,13 @@ def check_evidence(
         else:
             assert fact.source_turn is not None
             source = messages[fact.source_turn] if fact.source_turn < len(messages) else ""
-        if excerpt in source:
-            kept.append(fact)
+        if excerpt not in source:
+            continue
+        if normalized(fact.value).replace(" ", "_") == NOT_SURE and not says_not_known(
+            sentence_of(founder_messages, fact)
+        ):
+            continue  # "not sure" only from words that say so, never from another answer
+        kept.append(fact)
 
     # A requested decision needs the founder's own words too (it only ever adds checks).
     def cited(action: RequestedAction) -> bool:
@@ -491,6 +496,24 @@ def check_evidence(
         ),
         dropped,
     )
+
+
+_SENTENCE_BREAK: Final = re.compile(r"[.!?\n]")
+
+
+def sentence_of(founder_messages: Sequence[str], fact: FactProposal) -> str:
+    """The founder's sentence around a fact's excerpt (the excerpt itself when it isn't found)."""
+    if fact.source_turn is None or not 0 <= fact.source_turn < len(founder_messages):
+        return fact.excerpt
+    message = normalized(founder_messages[fact.source_turn])
+    excerpt = normalized(fact.excerpt)
+    at = message.find(excerpt)
+    if not excerpt or at < 0:
+        return fact.excerpt
+    starts = [m.end() for m in _SENTENCE_BREAK.finditer(message, 0, at)]
+    start = starts[-1] if starts else 0
+    found = _SENTENCE_BREAK.search(message, at + len(excerpt))
+    return message[start : found.start() if found else len(message)]
 
 
 def without_contradicted(

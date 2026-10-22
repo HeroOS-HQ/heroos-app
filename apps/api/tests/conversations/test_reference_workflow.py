@@ -906,3 +906,24 @@ def test_an_optional_case_question_the_founder_didnt_answer_isnt_offered_at_once
     later = "OK, thanks."
     journey.ask(later, absent(later, turn=3, topics=("workplace_reminder",)))
     assert date in offered()
+
+
+def test_when_the_required_question_cant_be_asked_the_case_record_questions_can(
+    journey: Journey,
+) -> None:
+    """Robustness pass, found live: once the founder said they don't know the one thing the checks
+    needed, HeroOS kept to methodology questions and never reached what the Case record needs.
+    The memory persists through the checkpoint: the required question isn't asked again, and the
+    Case's open questions are offered instead."""
+    first = journey.ask(ABSENT, absent(topics=("workplace_reminder",)))
+    required = last_heroos(first)["text"].rsplit(". ", 1)[-1]
+    assert required.endswith("?")
+    unknown = "No idea, I'd have to check."
+    data = absent(unknown, turn=1, topics=("workplace_reminder",))
+    data["previous_question_answer"] = "does_not_know"
+    reply = journey.ask(unknown, data)
+    assert required not in last_heroos(reply)["text"]
+    offered = [t["about"] for t in journey.sections()["approved_knowledge"]["question_targets"]]
+    assert "Date of the incident" in offered
+    state = journey.sections()["conversation_state"]
+    assert state["founder_does_not_know"]

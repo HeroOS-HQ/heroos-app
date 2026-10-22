@@ -320,3 +320,26 @@ def test_a_reask_is_answered_directly_never_as_yes_thats_right(
     assert result.answered is (expected is not None)
     if expected is not None:
         assert result.facts.sources["employee_aware_of_relevant_policy"] == "confirmation"
+
+
+@pytest.mark.parametrize(
+    ("value", "excerpt", "sentence", "hedged"),
+    [
+        # A hedge anywhere in the founder's sentence counts, not only inside the cited words.
+        ("raised_before", "gave her a verbal disciplinary about it once",
+         "i think her line manager gave her a verbal disciplinary about it once, but id need to "
+         "check with him", True),
+        ("no", "nobody saw it", "Not that I know of, nobody saw it", True),
+        ("yes", "there were messages", "I was told there were messages", True),
+        ("no", "he hasn't been in touch", "I don't think he has been in touch", True),
+        # Plain statements stay statements; a fact about the employee being told is not hearsay.
+        ("yes", "he was told the rules", "He was told the rules last month.", False),
+        ("no", "I haven't spoken to him", "No, I haven't spoken to him.", False),
+        ("yes", "I did speak to him", "He didn't come in on Monday but I did speak to him", False),
+        ("not_sure", "I'd need to check", "No idea, I'd need to check.", False),
+    ],
+)  # fmt: skip
+def test_a_hedge_in_the_founders_sentence_makes_any_reading_uncertain(
+    value: str, excerpt: str, sentence: str, hedged: bool
+) -> None:
+    assert contradicted(value, excerpt, context=sentence) is hedged

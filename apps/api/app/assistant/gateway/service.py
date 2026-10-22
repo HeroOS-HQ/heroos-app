@@ -102,6 +102,7 @@ from app.assistant.gateway.proposals import (
     check_evidence,
     parse_response,
     parse_understanding,
+    sentence_of,
     without_contradicted,
 )
 from app.assistant.limits import UsageLimits
@@ -119,7 +120,9 @@ from app.evaluation.facts import (
     PriorState,
     StatedFact,
     TrustOutcome,
+    canonical,
     contradicted,
+    says_not_known,
     trust_facts,
 )
 from app.evaluation.model import (
@@ -817,14 +820,55 @@ def _known(
     return frozenset(known)
 
 
+# A sentence announcing the question that follows ("HeroOS will ask you next whether ..."): the
+# question itself is what follows (found live: the announcement, then the same question).
+_ANNOUNCES: Final = re.compile(
+    r"\b(?:heroos|i)\s+(?:will|'ll|is\s+going\s+to|am\s+going\s+to)\s+(?:now\s+|also\s+)?"
+    r"(?:ask|need\s+to\s+ask|follow\s+up)\b|\b(?:next|one\s+more|following)\s+question\b",
+    re.IGNORECASE,
+)
+
+
 def _with_question(reply: str, question: str) -> str:
     """The reply with the server's question as its one question (its own trailing questions
     are left out: the server's wording is what the founder's answer is read against)."""
-    sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s]
+    sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s and not _ANNOUNCES.search(s)]
     while sentences and sentences[-1].rstrip().endswith("?"):
         sentences.pop()
     kept = " ".join(sentences)
     return f"{kept} {question}".strip() if kept else question
+
+
+def _noted_facts(execution: WorkflowExecution, noted: Mapping[str, str]) -> dict[str, str]:
+    """The noted readings by fact key (they are kept by Case question key)."""
+    facts: dict[str, str] = {}
+    for question_key, value in noted.items():
+        schema = next(
+            (s for s in execution.schemas.values() if question_key in (s.key, s.question)), None
+        )
+        if schema is not None:
+            facts[schema.key] = value
+    return facts
+
+
+def _corrects(
+    execution: WorkflowExecution,
+    understanding: UnderstandingProposal,
+    current: int,
+    earlier: Mapping[str, str],
+) -> bool:
+    """Whether the current message corrects something said before: it states another value for a
+    fact the conversation holds, or the understanding reads conflicting statements."""
+    if "conflicting_statements" in understanding.uncertainties:
+        return True
+    for proposal in understanding.facts:
+        before = earlier.get(proposal.fact_key)
+        schema = execution.schemas.get(proposal.fact_key)
+        if proposal.source_turn != current or before is None or schema is None:
+            continue
+        if canonical(schema, proposal.value) not in (None, canonical(schema, before)):
+            return True
+    return False
 
 
 def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
@@ -1075,6 +1119,17 @@ class AiGateway:
                 for f in understanding.facts
                 if f.source_turn == current and f.fact_key not in trust.facts.conversational
             )
+            carried = carry(execution, trust.facts, turn.memory, hedged=hedged)
+            noted = turn.noted
+            said_before = {
+                **{k: str(v) for k, v in turn.memory.said.items()},
+                **_noted_facts(execution, noted),
+            }
+            if _corrects(execution, understanding, current, said_before):
+                # A correction: only what the understanding still reads stands (found live: "it
+                # was raised with him before" corrected to "that was another operative", and the
+                # reading "discussed with him" from the same words stayed noted).
+                carried, noted = {}, {}
             stated = {
                 f.fact_key
                 for f in understanding.facts
@@ -1103,13 +1158,7 @@ class AiGateway:
                 ),
                 jurisdiction_conflict="jurisdiction_conflict" in understanding.uncertainties,
                 clarification=trust.jurisdiction,
-                facts=_with_noted(
-                    execution,
-                    trust.facts,
-                    turn.noted,
-                    carry(execution, trust.facts, turn.memory, hedged=hedged),
-                    hedged,
-                ),
+                facts=_with_noted(execution, trust.facts, noted, carried, hedged),
                 requested=tuple(dict.fromkeys(requested)),
                 topics=understanding.topics if plan is None else plan.query.topics,
                 two_state=trust.two_state,
@@ -1139,7 +1188,8 @@ class AiGateway:
             facts=None if trust is None else evaluation.facts,
             stated=stated,
             answered=trust is not None and trust.answered,
-            does_not_know=understanding.previous_answer == "does_not_know",
+            does_not_know=understanding.previous_answer == "does_not_know"
+            and says_not_known(turn.message),
             jurisdiction_answered=trust is not None and trust.answered,
             said={} if trust is None or execution is None else said_values(
                 execution, evaluation.facts
@@ -1187,7 +1237,10 @@ class AiGateway:
             None,
         )
         if requirement is None:
-            return planned
+            # Nothing the checks need can be asked now: what the Case record still needs can.
+            unanswered = {a.key for a in result.prior.asked if a.kind == "fact"}
+            optional = _case_targets(execution, case, evaluation, planned, unanswered | settled)
+            return (*optional, *planned)
         if (
             requirement.kind == "jurisdiction"
             and evaluation.jurisdiction_state == "company_unconfirmed"
@@ -1283,7 +1336,8 @@ class AiGateway:
             understanding, view.catalog, founder, company_text(company), answering=answering
         )
         understanding = without_contradicted(
-            understanding, lambda f: contradicted(f.value, f.excerpt)
+            understanding,
+            lambda f: contradicted(f.value, f.excerpt, context=sentence_of(founder, f)),
         )
         telemetry.facts_rejected = dropped
         # Thanks, a reaction or a goodbye in the middle of a matter: answered, never asked a

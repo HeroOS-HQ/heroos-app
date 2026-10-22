@@ -335,3 +335,44 @@ def test_the_response_has_no_room_for_outcomes_or_references(
     with pytest.raises(ProposalError) as error:
         parse_response(json.dumps(data), ["q1"])
     assert error.value.code == expected
+
+
+def test_the_sentence_around_an_excerpt_is_the_founders_whole_sentence() -> None:
+    from app.assistant.gateway.proposals import FactProposal, sentence_of
+
+    messages = [
+        "Hi. I think her manager gave her a verbal warning once, but I'd need to check! Thanks",
+    ]
+    proposal = FactProposal(
+        "verbal_warnings_reported", "yes", "high", "current_user_message", 0,
+        "gave her a verbal warning once", "explicit",
+    )  # fmt: skip
+    assert sentence_of(messages, proposal) == (
+        " i think her manager gave her a verbal warning once, but i'd need to check"
+    )
+    missing = FactProposal(
+        "verbal_warnings_reported", "yes", "high", "current_user_message", 0, "not there",
+        "explicit",
+    )  # fmt: skip
+    assert sentence_of(messages, missing) == "not there"
+
+
+@pytest.mark.parametrize(
+    ("words", "kept"),
+    [
+        ("No idea, I'd have to check.", True),
+        ("I wasn't there, my manager might know", True),
+        ("not sure tbh", True),
+        # Another answer is never "not sure" about the question asked.
+        ("i havent said anything to her yet", False),
+        ("No, nobody has heard from him.", False),
+    ],
+)
+def test_not_sure_is_kept_only_from_words_that_say_so(
+    bundle: KnowledgeBundle, words: str, kept: bool
+) -> None:
+    catalog = routing_catalog(bundle)
+    key = "employee_aware_of_relevant_policy"
+    proposal = parse(bundle, understanding(facts=[fact(key, "not_sure", words)]), current=0)
+    checked, _ = check_evidence(proposal, catalog, [words], "")
+    assert bool(checked.facts) is kept

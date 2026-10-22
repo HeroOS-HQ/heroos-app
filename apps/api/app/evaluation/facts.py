@@ -63,6 +63,13 @@ _QUALIFIERS: Final = re.compile(
     r"|perhaps|probably|possibly|sometimes|not\s+really|not\s+exactly|i\s+think|i\s+guess"
     r"|i\s+believe|i\s+suppose|more\s+or\s+less|in\s+a\s+way|not\s+sure|unsure)\b"
 )
+# The hedges among them, which count anywhere in the founder's sentence (a contrast word such as
+# "but" only qualifies the words it is part of).
+_HEDGES: Final = re.compile(
+    r"\b(?:partly|partially|sort\s+of|kind\s+of|kinda|maybe|perhaps|probably|possibly|not\s+really"
+    r"|not\s+exactly|i\s+think|i\s+guess|i\s+believe|i\s+suppose|more\s+or\s+less|in\s+a\s+way"
+    r"|not\s+sure|unsure)\b"
+)
 _NEGATION: Final = re.compile(r"\b(?:not|never|no|nobody|nothing|didn't|hasn't|haven't|wasn't"
                               r"|weren't|isn't|aren't|doesn't|don't|won't|can't|couldn't)\b"
                               r"|n't\b")  # fmt: skip
@@ -222,20 +229,54 @@ _ROUGHLY: Final = re.compile(
 )
 
 
-def contradicted(value: str, excerpt: str, schema: FactSchema | None = None) -> bool:
+# Words that say the founder doesn't actually know (whatever the reading, "no" included): "not
+# that I know of" is not a definite no; "I was told" or "I'd need to check" is not a fact.
+_UNKNOWING: Final = re.compile(
+    r"\b(?:not\s+that\s+i\s+know|as\s+far\s+as\s+i\s+know|i\s+don'?t\s+think|i\s+do\s+not\s+think"
+    r"|(?:need|have|got)\s+to\s+check|(?:i|we)\s+(?:was|were|have\s+been|'ve\s+been)\s+told"
+    r"|i'?m\s+told|i\s+heard|apparently|supposedly|i\s+reckon"
+    r"|not\s+(?:100%|a\s+hundred\s+percent|certain))"
+)
+
+
+# The founder saying, in any words, that they don't know (a "not sure" reading needs such words).
+_NOT_KNOWING: Final = re.compile(
+    r"\b(?:not\s+sure|unsure|don'?t\s+know|do\s+not\s+know|dunno|idk|no\s+idea|no\s+clue"
+    r"|not\s+certain|(?:need|have|got)\s+to\s+(?:check|ask|find\s+out)|check\s+with|find\s+out"
+    r"|(?:wasn'?t|weren'?t|was\s+not|were\s+not)\s+there|(?:can'?t|cannot|don'?t)\s+remember"
+    r"|(?:might|would|may)\s+know|not\s+aware|can'?t\s+say|unclear|no\s+way\s+to\s+know)"
+)
+
+
+def says_not_known(text: str) -> bool:
+    """The words say the founder doesn't know (found live: "i havent said anything to her yet",
+    an answer to another question, was read as not knowing whether it was raised before)."""
+    return _NOT_KNOWING.search(normalized(text)) is not None
+
+
+def contradicted(
+    value: str, excerpt: str, schema: FactSchema | None = None, context: str | None = None
+) -> bool:
     """A reading the founder's own words don't support exactly.
 
     An affirmative reading of negative or hedged words ("I did NOT speak to
     him", "I sort of spoke to him"), any reading of hedged words, and an exact
-    number read from approximate words ("basically all week").
+    number read from approximate words ("basically all week"). ``context``: the
+    founder's whole sentence around the excerpt, where a hedge counts too (found
+    live: "i think her manager gave her a verbal warning ..., but honestly id need
+    to check" cited without its first and last words was noted as a fact).
     """
     reading = _bare(value)
     words = normalized(excerpt)
+    around = normalized(context) if context else words
     if schema is not None and schema.kind == "count" and _ROUGHLY.search(words):
         return True
+    if reading != NOT_SURE and _UNKNOWING.search(around):
+        return True
+    qualified = _QUALIFIERS.search(words) is not None or _HEDGES.search(around) is not None
     if reading in ("yes", "true", "y") or reading.startswith("yes"):
-        return _NEGATION.search(words) is not None or _QUALIFIERS.search(words) is not None
-    return _QUALIFIERS.search(words) is not None and reading not in ("no", "false", NOT_SURE)
+        return _NEGATION.search(words) is not None or qualified
+    return qualified and reading not in ("no", "false", NOT_SURE)
 
 
 # --- the pipeline ------------------------------------------------------------------------------
