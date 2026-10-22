@@ -60,6 +60,8 @@ class RoutingCatalog:
     facts: Mapping[str, str]
     # A choice fact's canonical option values (what a proposed value should be one of).
     options: Mapping[str, tuple[str, ...]] = MappingProxyType({})
+    # A Case-backed fact's question, in the case's own words (what the fact means).
+    questions: Mapping[str, str] = MappingProxyType({})
 
     def workflow(self, key: str) -> CatalogWorkflow | None:
         return next((w for w in self.workflows if w.key == key), None)
@@ -79,6 +81,7 @@ class RoutingCatalog:
             ],
             "facts": [
                 {"key": key, "label": label}
+                | ({"asks": self.questions[key]} if key in self.questions else {})
                 | ({"options": list(self.options[key])} if key in self.options else {})
                 for key, label in self.facts.items()
             ],
@@ -100,6 +103,7 @@ def routing_catalog(
     *,
     case_facts: Mapping[str, str] | None = None,
     options: Mapping[str, tuple[str, ...]] | None = None,
+    questions: Mapping[str, str] | None = None,
 ) -> RoutingCatalog:
     """``case_facts``: a workflow's own Case questions no knowledge fact holds (key -> label),
     which the founder may state too (chat-first); ``options``: choice facts' option values."""
@@ -119,8 +123,12 @@ def routing_catalog(
     for key, label in (case_facts or {}).items():
         facts.setdefault(key, label)
     choices = {k: v for k, v in (options or {}).items() if k in facts}
+    asks = {k: v for k, v in (questions or {}).items() if k in facts}
     return RoutingCatalog(
-        workflows=workflows, facts=MappingProxyType(facts), options=MappingProxyType(choices)
+        workflows=workflows,
+        facts=MappingProxyType(facts),
+        options=MappingProxyType(choices),
+        questions=MappingProxyType(asks),
     )
 
 

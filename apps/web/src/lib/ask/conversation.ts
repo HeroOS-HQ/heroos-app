@@ -328,10 +328,17 @@ export const parseConversationDetail = (body: unknown) => detailOf(body, "bff");
 export const parseMessagePage = (body: unknown) => pageOf(body, "bff");
 export const parseConversation = (body: unknown) => conversationOf(body, "bff");
 
-/** The browser's "save what HeroOS noted" request: the revision it saw, nothing else (never a value). */
-export function parseNotedRequest(body: unknown): { ok: true; expectedRevision: number } | { ok: false } {
-  if (!isRecord(body) || Object.keys(body).some((key) => key !== "expectedRevision")) return { ok: false };
-  return validInt(body.expectedRevision, 0, MAX_REVISION) ? { ok: true, expectedRevision: body.expectedRevision } : { ok: false };
+/**
+ * The browser's "save what HeroOS noted" request: the revision it saw and the labels of the
+ * items the employer ticked (never a value: the API holds those).
+ */
+export function parseNotedRequest(body: unknown): { ok: true; expectedRevision: number; confirmed: string[] } | { ok: false } {
+  if (!isRecord(body) || Object.keys(body).some((key) => key !== "expectedRevision" && key !== "confirmed")) return { ok: false };
+  const confirmed = body.confirmed;
+  if (!Array.isArray(confirmed) || confirmed.length === 0 || confirmed.length > MAX_NOTED) return { ok: false };
+  if (!confirmed.every((label) => validText(label, MAX_TITLE))) return { ok: false };
+  if (!validInt(body.expectedRevision, 0, MAX_REVISION)) return { ok: false };
+  return { ok: true, expectedRevision: body.expectedRevision, confirmed: [...(confirmed as string[])] };
 }
 
 /** The browser's request, re-validated and rebuilt by the BFF (unknown keys refused). */

@@ -65,6 +65,10 @@ def _tls_context() -> ssl.SSLContext:
     return context
 
 
+# How much of a refusal's body is read (for its error type and code only).
+MAX_ERROR_BYTES: Final = 4096
+
+
 def _send(
     url: str, headers: Mapping[str, str], body: bytes, timeout: float
 ) -> tuple[int, Mapping[str, str], bytes]:
@@ -81,7 +85,8 @@ def _send(
             return response.status, dict(response.headers), response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
         with exc:
-            return exc.code, dict(exc.headers or {}), b""
+            # Bounded: only its error type and code are ever read (``_error_code``).
+            return exc.code, dict(exc.headers or {}), exc.read(MAX_ERROR_BYTES)
 
 
 def _retry_after(headers: Mapping[str, str]) -> int | None:
@@ -93,6 +98,19 @@ def _retry_after(headers: Mapping[str, str]) -> int | None:
                 return None
             return min(max(seconds, 1), 3600)
     return None
+
+
+def _error_code(body: bytes) -> str:
+    """The provider's error code if it is a short identifier (never its message or output)."""
+    try:
+        error = json.loads(body)["error"]
+        parts = [error.get("type"), error.get("code")]
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return "-"
+    shown = [
+        p for p in parts if isinstance(p, str) and p.replace("_", "").isalnum() and len(p) <= 40
+    ]
+    return "/".join(shown) or "-"
 
 
 def _content(body: bytes) -> tuple[str, Any]:
@@ -214,5 +232,8 @@ class GroqChatProvider:
         if status == 429:
             raise AssistantError("rate_limited", retry_after=_retry_after(response_headers))
         if status != 200:
+            logger.warning(
+                "Groq request refused (status=%d, code=%s)", status, _error_code(response_body)
+            )
             raise AssistantError("unavailable")
         return response_body

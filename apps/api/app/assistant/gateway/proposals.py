@@ -221,7 +221,13 @@ def _unique(values: Sequence[str], where: str) -> tuple[str, ...]:
 # --- understanding --------------------------------------------------------------------
 
 
-def _fact(raw: object, where: str, current_turn: int) -> FactProposal:
+def _fact(raw: object, where: str, current_turn: int) -> FactProposal | None:
+    """The fact proposal, or None when it cites no founder message that exists (left out).
+
+    A founder message's provenance follows the turn it cites (the evidence check
+    then looks for the excerpt in exactly that message); a turn that isn't one of
+    the founder's messages leaves the fact out rather than failing the turn.
+    """
     if not isinstance(raw, dict):
         raise ProposalError("expected_object", where)
     _fields(raw, _FACT_FIELDS, frozenset(), where)
@@ -230,17 +236,11 @@ def _fact(raw: object, where: str, current_turn: int) -> FactProposal:
     turn = raw["source_turn"]
     if provenance == "company_blueprint":
         if turn is not None:
-            raise ProposalError("bad_turn", f"{where}.source_turn")
+            return None
     else:
-        if not isinstance(turn, int) or isinstance(turn, bool):
-            raise ProposalError("bad_turn", f"{where}.source_turn")
-        expected = (
-            turn == current_turn
-            if provenance == "current_user_message"
-            else 0 <= turn < current_turn
-        )
-        if not expected:
-            raise ProposalError("bad_turn", f"{where}.source_turn")
+        if not isinstance(turn, int) or isinstance(turn, bool) or not 0 <= turn <= current_turn:
+            return None
+        provenance = "current_user_message" if turn == current_turn else "prior_user_message"
     assert key is not None
     value = _text(raw["proposed_value"], MAX_VALUE_CHARS, f"{where}.proposed_value")
     excerpt = _text(raw["support_excerpt"], MAX_EXCERPT_CHARS, f"{where}.support_excerpt")
@@ -294,15 +294,17 @@ def parse_understanding(
     ):
         raise ProposalError("unknown_pathway", "$.pathway_candidate")
 
+    # Topics are retrieval hints from the closed catalog: one outside it (a model's own
+    # word for the matter, "absenteeism") is left out, never used, and never fails the turn.
     topics: list[str] = []
-    for i, topic in enumerate(_list(data["topics"], MAX_TOPICS, "$.topics")):
-        if workflow is None or not isinstance(topic, str) or not workflow.has_topic(topic):
-            raise ProposalError("unknown_topic", f"$.topics[{i}]")
-        topics.append(topic)
+    for topic in _list(data["topics"], MAX_TOPICS, "$.topics"):
+        if workflow is not None and isinstance(topic, str) and workflow.has_topic(topic):
+            topics.append(topic)
 
     facts = tuple(
-        _fact(raw, f"$.fact_proposals[{i}]", current_turn)
+        fact
         for i, raw in enumerate(_list(data["fact_proposals"], MAX_FACTS, "$.fact_proposals"))
+        if (fact := _fact(raw, f"$.fact_proposals[{i}]", current_turn)) is not None
     )
     uncertainties = [
         _code(u, UNCERTAINTIES, f"$.uncertainties[{i}]")
@@ -340,7 +342,7 @@ def _actions(
             raise ProposalError("unknown_action", f"{where}.action")
         turn = raw["source_turn"]
         if not isinstance(turn, int) or isinstance(turn, bool) or not 0 <= turn <= current_turn:
-            raise ProposalError("bad_turn", f"{where}.source_turn")
+            continue  # cites no founder message: left out (its words can't be checked)
         excerpt = _text(raw["support_excerpt"], MAX_EXCERPT_CHARS, f"{where}.support_excerpt")
         assert excerpt is not None
         actions.append(RequestedAction(key, turn, excerpt))

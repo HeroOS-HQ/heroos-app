@@ -659,6 +659,14 @@ class AiGateway:
         if view is None:
             bundle = snapshot.knowledge
             schemas = [s for e in snapshot.workflows.values() for s in e.schemas.values()]
+            # A Case-backed fact's question, in the case's own words.
+            prompts = {
+                s.key: question.prompt
+                for e in snapshot.workflows.values()
+                for s in e.schemas.values()
+                if s.question is not None
+                and (question := e.definition.question(s.question)) is not None
+            }
             view = _SnapshotView(
                 catalog=EMPTY_CATALOG
                 if bundle is None
@@ -671,6 +679,7 @@ class AiGateway:
                         for s in schemas
                         if s.kind in ("yes_no", "choice")
                     },
+                    questions=prompts,
                 ),
                 labels=internal_labels(bundle) if bundle is not None else re.compile(r"(?!x)x"),
             )
@@ -1192,6 +1201,8 @@ class AiGateway:
             return parse(completion.text)
         except ProposalError as first:
             telemetry.repairs.append(name)
+            # The fixed structural code only (never the output).
+            logger.info("AI gateway output repaired (phase=%s, code=%s)", name, first.code)
             repaired = self._call(
                 provider, system, repair_turns(turns, completion.text, [first.code]),
                 temperature, tokens, telemetry, deadline,

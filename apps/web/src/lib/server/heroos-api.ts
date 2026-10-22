@@ -1131,6 +1131,7 @@ export async function saveNotedFacts(
   companyId: string,
   conversationId: string,
   expectedRevision: number,
+  confirmed: string[],
   fetcher: Fetch = fetch,
 ): Promise<ApiResult<Conversation>> {
   if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
@@ -1138,7 +1139,7 @@ export async function saveNotedFacts(
   if (path === null) return { ok: false, failure: "not_found" };
   const result = await apiCall(config, accessToken, fetcher, `${path}/noted`, fromApiConversation, {
     method: "POST",
-    body: { expected_revision: expectedRevision },
+    body: { expected_revision: expectedRevision, confirmed },
   });
   if (result.ok && result.data.id !== conversationId) return { ok: false, failure: "unavailable" };
   return result;

@@ -39,6 +39,8 @@ const READ = { headers: { Accept: "application/json" }, cache: "no-store", crede
 export type CaseStep =
   | { kind: "hold"; title: string; body: string }
   | { kind: "question"; stepKey: string; question: Question }
+  /** A sensitive step's open questions, answered together (never in words). */
+  | { kind: "screening"; stepKey: string; title: string; questions: Question[] }
   | { kind: "gate"; title: string; body: string }
   | { kind: "pathway"; options: PathwayOption[] }
   | { kind: "checklist"; stepKey: string; stage: string; question: ChecklistQuestion }
@@ -57,6 +59,10 @@ export function nextCaseStep(view: WorkflowView): CaseStep | null {
   const structured = open.find(
     ({ step, question }) => question.kind === "choice" && (question.key === JURISDICTION_QUESTION || step.sensitive),
   );
+  if (structured?.step.sensitive) {
+    const questions = open.filter(({ step }) => step.key === structured.step.key).map(({ question }) => question);
+    return { kind: "screening", stepKey: structured.step.key, title: structured.step.title, questions };
+  }
   if (structured) return { kind: "question", stepKey: structured.step.key, question: structured.question };
   // The conversation collects the rest: nothing to press yet.
   if (open.length > 0) return null;
@@ -131,6 +137,8 @@ export function CaseSteps({
   // The pathway chosen while its cautions are shown, and the cautions acknowledged.
   const [chosen, setChosen] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState<string | null>(null);
+  // A screening's answers while the employer picks them (saved together).
+  const [picks, setPicks] = useState<Record<string, string>>({});
   const { busy, send } = useCaseRequest({ companyId, caseId, fetcher });
 
   useEffect(() => {
@@ -165,6 +173,7 @@ export function CaseSteps({
     setDone(request.route === "answers" ? null : recorded(result.view));
     setChosen(null);
     setAcknowledged(null);
+    setPicks({});
     onChanged?.();
   }
 
@@ -200,13 +209,56 @@ export function CaseSteps({
       tone: "guidance",
       body: (
         <>
-          <p>For the case record, HeroOS needs your answer:</p>
+          <p>One quick check for your case record:</p>
           <p className="font-bold">{step.question.prompt}</p>
           {optionButtons(
             step.question.options,
             (value) => void act({ route: "answers", stepKey: step.stepKey, answers: { [step.question.key]: value } }),
             step.question.label,
           )}
+        </>
+      ),
+    };
+  } else if (step?.kind === "screening") {
+    const complete = step.questions.every((question) => picks[question.key] !== undefined);
+    card = {
+      tone: "guidance",
+      title: step.title,
+      body: (
+        <>
+          <p>
+            A short safety screening for your case record. Answer each one with the buttons: these answers stay in the
+            case and are never asked in the chat.
+          </p>
+          <ul className="space-y-3">
+            {step.questions.map((question) => (
+              <li className="space-y-1.5" key={question.key}>
+                <p className="text-[0.9375rem] font-semibold">{question.prompt}</p>
+                <div aria-label={question.label} className="flex flex-wrap gap-2" role="group">
+                  {question.options.map((option) => (
+                    <button
+                      aria-pressed={picks[question.key] === option.value}
+                      className={`${buttonSecondary} aria-[pressed=true]:border-hero-navy aria-[pressed=true]:bg-hero-blue-tint`}
+                      disabled={busy}
+                      key={option.value}
+                      onClick={() => setPicks((current) => ({ ...current, [question.key]: option.value }))}
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <button
+            className={buttonPrimary}
+            disabled={busy || !complete}
+            onClick={() => void act({ route: "answers", stepKey: step.stepKey, answers: picks })}
+            type="button"
+          >
+            Save to case
+          </button>
         </>
       ),
     };

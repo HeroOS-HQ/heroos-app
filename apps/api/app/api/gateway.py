@@ -198,6 +198,11 @@ class NotedSaveIn(BaseModel):
 
     # The conversation revision the browser saw the noted list at.
     expected_revision: Annotated[StrictInt, Field(ge=0, le=MAX_REVISION)]
+    # The noted items the employer confirms, by their label (the rest are discarded).
+    confirmed: Annotated[
+        list[Annotated[StrictStr, StringConstraints(min_length=1, max_length=200)]],
+        Field(min_length=1, max_length=24),
+    ]
 
 
 class GatewayStatusOut(BaseModel):
@@ -567,7 +572,11 @@ def save_noted_facts(
         raise _not_found()
     try:
         summary, value = service.save_noted(
-            scope.session, context, conversation_id, expected_revision=body.expected_revision
+            scope.session,
+            context,
+            conversation_id,
+            expected_revision=body.expected_revision,
+            confirmed=frozenset(body.confirmed),
         )
     except (ConversationNotFound, NothingNoted):
         raise _not_found() from None

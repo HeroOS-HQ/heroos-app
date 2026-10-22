@@ -330,10 +330,10 @@ export function AskConversation({
     }
   }
 
-  /** The employer saves what HeroOS noted to the Case (the API holds the values). */
-  async function saveNoted() {
-    if (current === null || saving) return;
-    const noted = current.status.noted;
+  /** The employer saves the noted items they ticked to the Case (the API holds the values). */
+  async function saveNoted(confirmed: NotedFact[]) {
+    if (current === null || saving || confirmed.length === 0) return;
+    const noted = confirmed;
     setSaving(true);
     setFailure(null);
     try {
@@ -342,7 +342,7 @@ export function AskConversation({
         {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ expectedRevision: current.revision }),
+          body: JSON.stringify({ expectedRevision: current.revision, confirmed: confirmed.map((item) => item.label) }),
           cache: "no-store",
           credentials: "same-origin",
           redirect: "error",
@@ -552,7 +552,14 @@ export function AskConversation({
       </ol>
       {current && pending === null && (current.status.noted.length > 0 || saved) ? (
         <div className="mt-7">
-          <NotedFacts busy={saving} items={current.status.noted} onSave={() => void saveNoted()} saved={saved} />
+          <NotedFacts
+            busy={saving}
+            items={current.status.noted}
+            // A new list (a later turn noted something else): everything is ticked again.
+            key={current.status.noted.map((item) => `${item.label}=${item.answer}`).join("|")}
+            onSave={(confirmed) => void saveNoted(confirmed)}
+            saved={saved}
+          />
         </div>
       ) : null}
       {current?.case && current.status.workflow && pending === null ? (
@@ -605,10 +612,24 @@ export function FounderTurn({ text, at, by }: { text: string; at: Date; by: "you
 
 /**
  * What the founder said that the Case could hold, as HeroOS's server read it:
- * shown, never saved by itself. One click saves it all to the Case (the
- * employer's own action); a correction is just said in the chat.
+ * shown, never saved by itself. The employer unticks anything HeroOS got wrong
+ * and saves the rest with one click (their own action); a correction can also
+ * just be said in the chat.
  */
-function NotedFacts({ items, saved, busy, onSave }: { items: NotedFact[]; saved: NotedFact[] | null; busy: boolean; onSave: () => void }) {
+function NotedFacts({
+  items,
+  saved,
+  busy,
+  onSave,
+}: {
+  items: NotedFact[];
+  saved: NotedFact[] | null;
+  busy: boolean;
+  onSave: (confirmed: NotedFact[]) => void;
+}) {
+  // Labels the employer unticked (everything is ticked at first).
+  const [unticked, setUnticked] = useState<string[]>([]);
+  const confirmed = items.filter((item) => !unticked.includes(item.label));
   if (items.length === 0 && saved) {
     return (
       <p className="rounded-2xl border border-hero-border bg-white px-4 py-3 text-[0.9375rem] text-hero-navy" role="status">
@@ -619,18 +640,33 @@ function NotedFacts({ items, saved, busy, onSave }: { items: NotedFact[]; saved:
   return (
     <AdviserTurn id="noted" outcome="guidance" title="For your case record">
       <p>From what you&apos;ve told me, I can add this to your case:</p>
-      <ul aria-label="Noted for your case" className="space-y-1">
+      <ul aria-label="Noted for your case" className="space-y-1.5">
         {items.map((item) => (
           <li className="text-[0.9375rem]" key={item.label}>
-            <span className="font-semibold">{item.label}:</span> {item.answer}
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input
+                checked={!unticked.includes(item.label)}
+                className="mt-1 size-4 shrink-0 accent-hero-navy"
+                disabled={busy}
+                onChange={(event) =>
+                  setUnticked((current) =>
+                    event.target.checked ? current.filter((label) => label !== item.label) : [...current, item.label],
+                  )
+                }
+                type="checkbox"
+              />
+              <span>
+                <span className="font-semibold">{item.label}:</span> {item.answer}
+              </span>
+            </label>
           </li>
         ))}
       </ul>
       <div className="flex flex-wrap items-center gap-3">
-        <button className={buttonPrimary} disabled={busy} onClick={onSave} type="button">
-          {busy ? "Saving…" : "Add to case"}
+        <button className={buttonPrimary} disabled={busy || confirmed.length === 0} onClick={() => onSave(confirmed)} type="button">
+          {busy ? "Saving…" : confirmed.length === items.length ? "Add to case" : "Add ticked to case"}
         </button>
-        <span className="text-[0.875rem] text-hero-muted">Not quite right? Just tell me in your own words.</span>
+        <span className="text-[0.875rem] text-hero-muted">Untick anything I got wrong, or just tell me in your own words.</span>
       </div>
     </AdviserTurn>
   );

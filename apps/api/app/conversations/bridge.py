@@ -238,6 +238,16 @@ def accepted_values(
     return _accepted(candidates, definition, current=current, open_steps=open_steps, today=today)
 
 
+def noted_labels(noted: Mapping[str, str], definition: WorkflowDefinition) -> dict[str, str]:
+    """Case question key -> the label it is shown under (what the employer confirms by)."""
+    labels: dict[str, str] = {}
+    for key in noted:
+        question = definition.question(key)
+        if question is not None:
+            labels[key] = question.label
+    return labels
+
+
 def noted_view(
     noted: Mapping[str, str], definition: WorkflowDefinition
 ) -> tuple[tuple[str, str], ...]:

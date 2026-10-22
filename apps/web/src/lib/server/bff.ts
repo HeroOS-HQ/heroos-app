@@ -777,7 +777,8 @@ export async function handleConversationMessages(
  * POST /bff/companies/{id}/assistant/conversations/{conversationId}/noted →
  * `POST .../noted`: the employer saves what HeroOS noted from the conversation
  * to its Case (the chat-first Case). The browser sends only the revision it
- * saw; the API holds the values. Answers the conversation as it is now.
+ * saw and the labels of the items the employer ticked; the API holds the values. Answers the
+ * conversation as it is now.
  */
 export async function handleNotedSave(
   request: Request,
@@ -792,7 +793,15 @@ export async function handleNotedSave(
   if (!UUID.test(conversationId)) return error(404, "not_found");
   const parsed = parseNotedRequest(guarded.body);
   if (!parsed.ok) return error(422, "invalid", []);
-  const result = await saveNotedFacts(guarded.accessToken, config, companyId, conversationId, parsed.expectedRevision, deps.fetch);
+  const result = await saveNotedFacts(
+    guarded.accessToken,
+    config,
+    companyId,
+    conversationId,
+    parsed.expectedRevision,
+    parsed.confirmed,
+    deps.fetch,
+  );
   if (!result.ok) return workflowFailure(result.failure, []);
   return json(200, { conversation: result.data });
 }

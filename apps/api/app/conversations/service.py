@@ -812,14 +812,17 @@ class AskConversations:
         conversation_id: UUID,
         *,
         expected_revision: int,
+        confirmed: frozenset[str],
     ) -> tuple[ConversationSummary, ConversationStatus]:
         """Saves what the founder said that the Case could hold: the employer's explicit action.
 
-        The values are the server's own (the checkpoint's canonical readings,
-        checked again against the Case now), never the browser's. They go
-        through the shared pipeline as an Ask HeroOS submission of the
-        conversation's latest founder message. Raises ``ConversationNotFound``,
-        ``ConversationConflict`` (the conversation moved on) and ``NothingNoted``.
+        ``confirmed``: the noted items the employer ticked, by their label; the
+        others are discarded (not saved). The values are the server's own (the
+        checkpoint's canonical readings, checked again against the Case now),
+        never the browser's. They go through the shared pipeline as an Ask
+        HeroOS submission of the conversation's latest founder message. Raises
+        ``ConversationNotFound``, ``ConversationConflict`` (the conversation
+        moved on) and ``NothingNoted``.
         """
         scope = open_company_scope(session, context)
         try:
@@ -838,13 +841,15 @@ class AskConversations:
             if checkpoint is None or not checkpoint.noted or item is None or founder is None:
                 raise NothingNoted()
             state = evaluate_case(scope, item, self._policy, self._rules)
-            changes = bridge.accepted_values(
+            accepted = bridge.accepted_values(
                 checkpoint.noted,
                 state.definition,
                 current=state.answers,
                 open_steps=state.intake.available_steps,
                 today=datetime.now(UTC).date(),
             )
+            labels = bridge.noted_labels(accepted, state.definition)
+            changes = {k: v for k, v in accepted.items() if labels.get(k) in confirmed}
             if changes:
                 applied = apply_case_fact_changes(
                     scope,
@@ -981,7 +986,9 @@ class AskConversations:
         )
         noted: tuple[NotedFact, ...] = ()
         if conversation.case_id is not None and item is None:
-            case_hold = False  # a Case whose workflow isn't known yet is in progress
+            # A Case whose workflow isn't known yet: in progress, and no workflow until it has one.
+            case_hold = False
+            workflow = None
         if item is not None:
             state = evaluate_case(scope, item, self._policy, self._rules)
             checkpoint = decode(conversation.checkpoint)
