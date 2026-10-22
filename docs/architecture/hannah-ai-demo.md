@@ -32,7 +32,8 @@ or a decision, and nothing it says authorizes a step.
 browser (React state only)
   → POST /bff/companies/{id}/cases/{caseId}/assistant/messages   (same-origin, session, JSON ≤ 48 KiB)
   → POST /companies/{id}/cases/{caseId}/assistant/messages        (API; bearer token added server-side)
-  → GroqCloud chat completions (fixed URL, server-side key, no tools, one request, no retry)
+  → the configured provider: Anthropic Messages or GroqCloud chat completions
+    (fixed URL, server-side key, no tools, one request, no retry)
   ← API checks the reply (app/assistant/response_safety.py) → the reply, or a fixed neutral one
 ```
 
@@ -62,19 +63,25 @@ route.
 | Variable | Default | Notes |
 |---|---|---|
 | `HEROOS_HANNAH_DEMO_ENABLED` | `false` | The switch. |
-| `HEROOS_HANNAH_MODEL` | `openai/gpt-oss-120b` | A model identifier (never a URL). |
+| `HEROOS_HANNAH_PROVIDER` | `groq` | `anthropic` or `groq`. Never inferred from which keys exist. |
+| `HEROOS_HANNAH_MODEL` | `openai/gpt-oss-120b` | A model identifier of that provider (never a URL). Required with `anthropic` (the default is a GroqCloud model). |
 | `HEROOS_HANNAH_ACCOUNT_LIMIT` | `20` | Messages per account (HeroOS User) per 5 minutes. |
 | `HEROOS_HANNAH_GLOBAL_LIMIT_PER_MINUTE` | `20` | Messages per minute, whole service. |
 | `HEROOS_HANNAH_GLOBAL_LIMIT_PER_DAY` | `900` | Messages per day, whole service. |
-| `GROQ_API_KEY` | unset | Secret. Unset: the demo answers 503 "Not configured". |
+| `ANTHROPIC_API_KEY` | unset | Secret, used only with `HEROOS_HANNAH_PROVIDER=anthropic`. |
+| `GROQ_API_KEY` | unset | Secret, used only with `HEROOS_HANNAH_PROVIDER=groq`. The configured provider's key unset: the demo answers 503 "Not configured" and startup logs which key is missing. |
 
 ## Limits
 
 - Message ≤ 2,000 characters; history ≤ 12 turns of ≤ 4,000 characters; the
   API sends the newest turns within 8,000 characters. Control characters and
   unknown fields are refused (422, field locations only).
-- Provider request: temperature 0.3, `max_completion_tokens` 1024,
+- Provider request, GroqCloud: temperature 0.3, `max_completion_tokens` 1024,
   `reasoning_effort: low`, reasoning not returned, 30 s timeout, no tools.
+  Anthropic: `max_tokens` 2048 (adaptive thinking shares it), `effort: low`,
+  no temperature (current Claude models refuse one), only text blocks read,
+  a declined reply fails as 502 "Unavailable", 30 s timeout, no tools. Either
+  way the reply passes the same check (`app/assistant/response_safety.py`).
 - Usage ceilings, checked before the provider is called: per account per 5
   minutes, and for the whole service per minute and per day (defaults 20,
   20 and 900, below GroqCloud's shared free-tier limits for this model:
@@ -212,8 +219,11 @@ returns it and before the API answers the browser:
 ## Replacing the provider
 
 `app/assistant/provider.py` defines the interface (`ChatProvider.reply`,
-`AssistantError` kinds). A different provider (e.g. Anthropic) is another
-adapter next to `app/assistant/groq.py` and a change in `load_hannah_demo`.
+`AssistantError` kinds). `app/assistant/anthropic.py` and
+`app/assistant/groq.py` implement it through one guarded transport
+(`app/assistant/transport.py`); `HEROOS_HANNAH_PROVIDER` chooses between them
+with no code change. Another provider is another adapter and a branch in
+`app.main.external_provider`.
 
 ## Ask HeroOS chat-only demo (staging)
 
@@ -245,7 +255,8 @@ nowhere else. With the switch on:
 - The model gets this demo's fixed instruction and the recent turns only: no
   Blueprint, Case, facts or approved knowledge, and no tools.
 
-It needs `HEROOS_CHAT_ONLY_DEMO=true` and `GROQ_API_KEY` on the API, and
+It needs `HEROOS_CHAT_ONLY_DEMO=true` and the Hannah demo provider's key
+(`ANTHROPIC_API_KEY` or `GROQ_API_KEY`, per `HEROOS_HANNAH_PROVIDER`) on the API, and
 `HEROOS_CHAT_ONLY_DEMO=true` on the web server too (server only, never
 `NEXT_PUBLIC_`). The web's copy makes Ask fail closed: when the status can't be
 read, or doesn't say `chat_only` (an API without the switch), Ask shows only
@@ -254,4 +265,5 @@ Refresh link. It shows no box, so nothing can be sent and no case can open.
 With the web's copy off, a failed status read falls back to the case-opening
 Ask, as it always has. `HEROOS_HANNAH_DEMO_ENABLED` stays as it is. The model and limits are this
 demo's (`HEROOS_HANNAH_MODEL` and the `HEROOS_HANNAH_*_LIMIT` ceilings, shared
-with it). Use fictional scenarios only: the founder's words go to GroqCloud.
+with it), and so are its provider (`HEROOS_HANNAH_PROVIDER`). Use fictional
+scenarios only: the founder's words go to that provider.

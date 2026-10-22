@@ -28,13 +28,15 @@ LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR"]
 # "synthetic_demo": the environment holds synthetic demo data only.
 SensitiveScreening = Literal["disabled", "synthetic_demo"]
 
-# The Hannah AI demo's model id: an identifier, never a URL (the provider's
-# endpoint is fixed in app.assistant.groq).
+# An AI model id: an identifier, never a URL (each provider's endpoint is fixed
+# in its adapter, app.assistant.anthropic or app.assistant.groq).
 HANNAH_MODEL_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$")
+# A GroqCloud model: with HEROOS_HANNAH_PROVIDER=anthropic, HEROOS_HANNAH_MODEL is required.
 DEFAULT_HANNAH_MODEL = "openai/gpt-oss-120b"
 
-# The Ask HeroOS gateway's provider (server configuration only; one adapter today).
-AiGatewayProvider = Literal["groq"]
+# The AI providers HeroOS has adapters for (server configuration only, never a
+# client's choice). Each uses only its own key: ANTHROPIC_API_KEY or GROQ_API_KEY.
+AiProvider = Literal["anthropic", "groq"]
 # A reference to HeroOS's approval of this deployment's AI configuration (for
 # example a privacy decision id): a short identifier, never free text.
 AI_GATEWAY_APPROVAL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$")
@@ -208,11 +210,13 @@ class Settings(DatabaseSettings):
     heroos_execution_profile_sha256: str | None = None
     heroos_evaluation_continuation_key: SecretStr | None = None
 
-    # Hannah AI demo (conversational, GroqCloud). Off unless explicitly enabled;
-    # then any Company administrator can use it in their own Company's Cases.
-    # Production refuses it. The chat never changes a Case and receives no
-    # tools (docs/architecture/hannah-ai-demo.md).
+    # Hannah AI demo (conversational). Off unless explicitly enabled; then any
+    # Company administrator can use it in their own Company's Cases. Production
+    # refuses it. The chat never changes a Case and receives no tools
+    # (docs/architecture/hannah-ai-demo.md). Its provider is chosen here, never
+    # from which keys exist; groq unless set, and anthropic needs its own model.
     heroos_hannah_demo_enabled: bool = False
+    heroos_hannah_provider: AiProvider = "groq"
     heroos_hannah_model: str = DEFAULT_HANNAH_MODEL
     # Usage ceilings in this API process's memory (not durable or distributed):
     # messages per account per 5 minutes, and for the whole service per minute
@@ -220,11 +224,14 @@ class Settings(DatabaseSettings):
     heroos_hannah_account_limit: Annotated[int, Field(ge=1, le=1000)] = 20
     heroos_hannah_global_limit_per_minute: Annotated[int, Field(ge=1, le=10_000)] = 20
     heroos_hannah_global_limit_per_day: Annotated[int, Field(ge=1, le=1_000_000)] = 900
-    # The GroqCloud API key (server-side only). Unset: the demo answers 503.
+    # The providers' API keys (server-side only, never logged or returned). Each
+    # is used only by the provider it belongs to; the configured provider's key
+    # unset: the demo answers 503 and the gateway stays unavailable.
     groq_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
     # Ask HeroOS's staging chat-only demo (temporary). Off unless explicitly enabled;
     # production refuses it. On, Ask HeroOS is a plain conversation through the Hannah
-    # demo's model, key, instruction, reply check and limits (independent of
+    # demo's provider, model, key, instruction, reply check and limits (independent of
     # HEROOS_HANNAH_DEMO_ENABLED): no Case, facts, workflow, outcome or stored
     # conversation, and the persistent Ask HeroOS turn answers 404
     # (docs/architecture/hannah-ai-demo.md).
@@ -240,7 +247,7 @@ class Settings(DatabaseSettings):
     # production refuses. Anything missing: the gateway stays unavailable
     # (fail closed) and everything else works (docs/architecture/ai-gateway.md).
     heroos_ai_gateway_enabled: bool = False
-    heroos_ai_gateway_provider: AiGatewayProvider | None = None
+    heroos_ai_gateway_provider: AiProvider | None = None
     heroos_ai_gateway_model: str | None = None
     heroos_ai_gateway_approval: str | None = None
     heroos_ai_gateway_allow_development_knowledge: bool = False
@@ -295,6 +302,13 @@ class Settings(DatabaseSettings):
             )
         if not HANNAH_MODEL_ID.fullmatch(self.heroos_hannah_model):
             raise ValueError("HEROOS_HANNAH_MODEL must be a model identifier")
+        if self.heroos_hannah_provider == "anthropic" and (
+            self.heroos_hannah_model == DEFAULT_HANNAH_MODEL
+        ):
+            raise ValueError(
+                "HEROOS_HANNAH_MODEL must name an Anthropic model when "
+                "HEROOS_HANNAH_PROVIDER=anthropic (the default is a GroqCloud model)"
+            )
         return self
 
     @model_validator(mode="after")

@@ -271,13 +271,15 @@ def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
 def test_the_gateway_never_reaches_the_web_or_source_documents() -> None:
     """M2-NEW-05: no open-web research, URL fetching, browsing or raw-source reading.
 
-    Only the provider adapter (``app.assistant.groq``) opens a connection, to
-    its fixed endpoint. The gateway itself imports no network, document or
-    evaluation machinery, and its instructions name no tool.
+    Only the provider adapters (``app.assistant.anthropic``, ``app.assistant.groq``)
+    open a connection, through ``app.assistant.transport``, to their fixed
+    endpoints. The gateway itself imports no network, document or evaluation
+    machinery, and its instructions name no tool.
     """
     forbidden = (
         "urllib", "httpx", "requests", "socket", "http.client", "aiohttp", "ssl", "scripts",
         "zipfile", "xml", "openpyxl", "docx", "subprocess", "app.assistant.groq",
+        "app.assistant.anthropic", "app.assistant.transport", "anthropic", "openai", "groq",
     )  # fmt: skip
     for path in (APP / "assistant" / "gateway").rglob("*.py"):
         imported = _imports(path)

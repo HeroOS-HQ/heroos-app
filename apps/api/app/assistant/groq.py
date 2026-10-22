@@ -13,26 +13,21 @@ as text, unvalidated: the gateway validates it.
 
 Failures map to fixed kinds (``rate_limited``, ``timeout``, ``unavailable``);
 the provider's error bodies are read only up to a limit and then dropped, never
-logged or returned.
+logged or returned (``app.assistant.transport``).
 
 The transport refuses every request in an automated test run unless a live
 smoke test opted in (``app.assistant.live``): no test reaches GroqCloud.
 """
 
 import json
-import logging
-import ssl
-import urllib.error
-import urllib.request
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any, Final
 
 from pydantic import SecretStr
 
-from app.assistant.live import transport_permitted
+from app.assistant import transport
 from app.assistant.provider import AssistantError, ChatTurn, Completion
-
-logger = logging.getLogger(__name__)
+from app.assistant.transport import MAX_RESPONSE_BYTES, Send
 
 GROQ_CHAT_COMPLETIONS_URL: Final = "https://api.groq.com/openai/v1/chat/completions"
 TIMEOUT_SECONDS: Final = 30.0
@@ -40,7 +35,6 @@ TEMPERATURE: Final = 0.3
 # Reasoning tokens of the gpt-oss models are part of the completion: leave
 # room for a short reasoning pass and a reply of a few paragraphs.
 MAX_COMPLETION_TOKENS: Final = 1024
-MAX_RESPONSE_BYTES: Final = 256 * 1024
 MAX_REPLY_CHARS: Final = 6000
 USER_AGENT: Final = "HeroOS-API (Hannah demo)"
 # Bounds on what the gateway may ask for (whatever it passes).
@@ -48,69 +42,6 @@ MAX_JSON_TEMPERATURE: Final = 0.3
 MAX_JSON_COMPLETION_TOKENS: Final = 2048
 MAX_JSON_TIMEOUT_SECONDS: Final = 30.0
 MAX_JSON_CHARS: Final = 12_000
-
-# (status, headers, body) of one HTTP exchange; raises TimeoutError or OSError.
-Send = Callable[[str, Mapping[str, str], bytes, float], tuple[int, Mapping[str, str], bytes]]
-
-
-class _RefuseRedirects(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
-        return None
-
-
-def _tls_context() -> ssl.SSLContext:
-    context = ssl.create_default_context()
-    context.check_hostname = True
-    context.verify_mode = ssl.CERT_REQUIRED
-    return context
-
-
-# How much of a refusal's body is read (for its error type and code only).
-MAX_ERROR_BYTES: Final = 4096
-
-
-def _send(
-    url: str, headers: Mapping[str, str], body: bytes, timeout: float
-) -> tuple[int, Mapping[str, str], bytes]:
-    if not transport_permitted():
-        # An automated test run never reaches the provider (app.assistant.live).
-        logger.warning("External AI request blocked (automated test run)")
-        raise ConnectionRefusedError("external AI requests are blocked in automated tests")
-    opener = urllib.request.build_opener(
-        _RefuseRedirects(), urllib.request.HTTPSHandler(context=_tls_context())
-    )
-    request = urllib.request.Request(url, data=body, headers=dict(headers), method="POST")
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            return response.status, dict(response.headers), response.read(MAX_RESPONSE_BYTES + 1)
-    except urllib.error.HTTPError as exc:
-        with exc:
-            # Bounded: only its error type and code are ever read (``_error_code``).
-            return exc.code, dict(exc.headers or {}), exc.read(MAX_ERROR_BYTES)
-
-
-def _retry_after(headers: Mapping[str, str]) -> int | None:
-    for name, value in headers.items():
-        if name.lower() == "retry-after":
-            try:
-                seconds = int(float(value))
-            except ValueError:
-                return None
-            return min(max(seconds, 1), 3600)
-    return None
-
-
-def _error_code(body: bytes) -> str:
-    """The provider's error code if it is a short identifier (never its message or output)."""
-    try:
-        error = json.loads(body)["error"]
-        parts = [error.get("type"), error.get("code")]
-    except (ValueError, KeyError, TypeError, AttributeError):
-        return "-"
-    shown = [
-        p for p in parts if isinstance(p, str) and p.replace("_", "").isalnum() and len(p) <= 40
-    ]
-    return "/".join(shown) or "-"
 
 
 def _content(body: bytes) -> tuple[str, Any]:
@@ -140,7 +71,7 @@ def _tokens(data: Any, name: str) -> int | None:
 class GroqChatProvider:
     """The chat model on GroqCloud (the Hannah demo and the Ask HeroOS gateway)."""
 
-    def __init__(self, api_key: SecretStr, model: str, *, send: Send = _send) -> None:
+    def __init__(self, api_key: SecretStr, model: str, *, send: Send = transport.send) -> None:
         self._api_key = api_key
         self._model = model
         self._send = send
@@ -216,24 +147,6 @@ class GroqChatProvider:
             "Accept": "application/json",
             "User-Agent": USER_AGENT,
         }
-        body = json.dumps(payload).encode("utf-8")
-        try:
-            status, response_headers, response_body = self._send(
-                GROQ_CHAT_COMPLETIONS_URL, headers, body, timeout
-            )
-        except TimeoutError:
-            raise AssistantError("timeout") from None
-        except urllib.error.URLError as exc:
-            if isinstance(exc.reason, TimeoutError):
-                raise AssistantError("timeout") from None
-            raise AssistantError("unavailable") from None
-        except (OSError, ValueError):
-            raise AssistantError("unavailable") from None
-        if status == 429:
-            raise AssistantError("rate_limited", retry_after=_retry_after(response_headers))
-        if status != 200:
-            logger.warning(
-                "Groq request refused (status=%d, code=%s)", status, _error_code(response_body)
-            )
-            raise AssistantError("unavailable")
-        return response_body
+        return transport.exchange(
+            self._send, "Groq", GROQ_CHAT_COMPLETIONS_URL, headers, payload, timeout
+        )

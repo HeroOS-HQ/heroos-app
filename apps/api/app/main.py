@@ -6,12 +6,14 @@ from fastapi import FastAPI
 
 from app.api import assistant, companies, documents, gateway, onboarding, workflows
 from app.api.assistant import HannahDemo
+from app.assistant.anthropic import AnthropicChatProvider
 from app.assistant.gateway.service import AiGateway
 from app.assistant.groq import GroqChatProvider
 from app.assistant.limits import UsageLimits
 from app.assistant.live import OfflineProvider, external_ai_permitted
+from app.assistant.provider import StructuredChatProvider
 from app.auth.dependencies import get_authentication_provider
-from app.core.config import Settings, settings
+from app.core.config import AiProvider, Settings, settings
 from app.core.http_security import install_http_security
 from app.db.runtime_role import verify_runtime_role
 from app.db.session import engine
@@ -159,15 +161,25 @@ def continuation_codec(config: Settings) -> ContinuationCodec:
     return ContinuationCodec(None if key is None else parse_key(key.get_secret_value()))
 
 
-def external_provider(config: Settings, model: str) -> GroqChatProvider | OfflineProvider | None:
-    """The configured chat model, or an offline stand-in where real calls aren't allowed.
+# Each provider's key setting: only the configured provider's key is ever read.
+PROVIDER_KEYS: dict[AiProvider, str] = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "groq": "GROQ_API_KEY",
+}
 
-    None without a key. An automated test run or local development (unless a
-    live smoke test opted in) gets an ``OfflineProvider`` instead of the real
-    one, whatever else is configured: it never reaches the network
-    (app/assistant/live.py).
+
+def external_provider(
+    config: Settings, provider: AiProvider, model: str
+) -> StructuredChatProvider | None:
+    """The configured provider's chat model, or an offline stand-in where real calls aren't allowed.
+
+    ``provider`` comes from server configuration and is never inferred from
+    which keys exist. None without that provider's own key. An automated test
+    run or local development (unless a live smoke test opted in) gets an
+    ``OfflineProvider`` instead of the real one, whatever else is configured:
+    it never reaches the network (app/assistant/live.py).
     """
-    key = config.groq_api_key
+    key = config.anthropic_api_key if provider == "anthropic" else config.groq_api_key
     if key is None or not key.get_secret_value().strip():
         return None
     permitted = external_ai_permitted(
@@ -175,7 +187,11 @@ def external_provider(config: Settings, model: str) -> GroqChatProvider | Offlin
         automated_test=config.heroos_automated_test,
         live_smoke=config.heroos_ai_live_smoke_enabled,
     )
-    return GroqChatProvider(key, model) if permitted else OfflineProvider(model)
+    if not permitted:
+        return OfflineProvider(model)
+    if provider == "anthropic":
+        return AnthropicChatProvider(key, model)
+    return GroqChatProvider(key, model)
 
 
 def load_hannah_demo(config: Settings) -> HannahDemo:
@@ -184,7 +200,13 @@ def load_hannah_demo(config: Settings) -> HannahDemo:
     Off unless enabled; then for every Company administrator in their own
     Company's Cases. The log names the provider, model and limits, never the key.
     """
-    provider = external_provider(config, config.heroos_hannah_model)
+    provider = external_provider(config, config.heroos_hannah_provider, config.heroos_hannah_model)
+    if (config.heroos_hannah_demo_enabled or config.heroos_chat_only_demo) and provider is None:
+        logger.warning(
+            "Hannah AI demo provider key missing (provider=%s, key=%s)",
+            config.heroos_hannah_provider,
+            PROVIDER_KEYS[config.heroos_hannah_provider],
+        )
     if config.heroos_hannah_demo_enabled:
         logger.info(
             "Hannah AI demo enabled (provider=%s, model=%s, account_limit=%d/5min, "
@@ -234,12 +256,14 @@ def load_ai_gateway(
     allowed development knowledge); otherwise it stays unavailable and the
     log names what is missing, never a key or a value.
     """
-    model = config.heroos_ai_gateway_model
-    provider = (
-        external_provider(config, model)
-        if config.heroos_ai_gateway_provider == "groq" and model is not None
-        else None
-    )
+    model, name = config.heroos_ai_gateway_model, config.heroos_ai_gateway_provider
+    provider: StructuredChatProvider | None = None
+    if name is not None and model is not None:
+        provider = external_provider(config, name, model)
+        if provider is None and config.heroos_ai_gateway_enabled:
+            logger.warning(
+                "AI gateway provider key missing (provider=%s, key=%s)", name, PROVIDER_KEYS[name]
+            )
     ai = AiGateway(
         enabled=config.heroos_ai_gateway_enabled,
         provider=provider,

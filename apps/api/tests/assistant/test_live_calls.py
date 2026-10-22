@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from app.assistant.anthropic import AnthropicChatProvider
 from app.assistant.gateway.service import FounderTurn, GatewayFailure
 from app.assistant.groq import GroqChatProvider
 from app.assistant.live import (
@@ -102,31 +103,42 @@ def test_live_smoke_is_off_by_default_and_never_in_production() -> None:
 
 def test_a_test_run_gets_an_offline_provider_and_a_live_smoke_gets_the_real_one() -> None:
     with_key = {"groq_api_key": SecretStr(KEY)}
-    offline = external_provider(staging_settings().model_copy(update=with_key), "m")
+    offline = external_provider(staging_settings().model_copy(update=with_key), "groq", "m")
     assert isinstance(offline, OfflineProvider) and offline.name == "offline"
     smoke = staging_settings().model_copy(update=with_key | {"heroos_ai_live_smoke_enabled": True})
-    assert isinstance(external_provider(smoke, "m"), GroqChatProvider)  # built, never called here
-    assert external_provider(staging_settings(), "m") is None  # no key, no provider
+    # Built, never called here.
+    assert isinstance(external_provider(smoke, "groq", "m"), GroqChatProvider)
+    assert external_provider(staging_settings(), "groq", "m") is None  # no key, no provider
 
 
+@pytest.mark.parametrize(
+    "provider",
+    [
+        {"HEROOS_AI_GATEWAY_PROVIDER": "groq", "HEROOS_AI_GATEWAY_MODEL": "openai/gpt-oss-120b",
+         "GROQ_API_KEY": KEY},
+        {"HEROOS_AI_GATEWAY_PROVIDER": "anthropic", "HEROOS_AI_GATEWAY_MODEL": "claude-test-model",
+         "HEROOS_HANNAH_PROVIDER": "anthropic", "HEROOS_HANNAH_MODEL": "claude-test-model",
+         "ANTHROPIC_API_KEY": KEY},
+    ],
+    ids=["groq", "anthropic"],
+)  # fmt: skip
 def test_stale_gateway_and_demo_settings_never_reach_the_network(
     monkeypatch: pytest.MonkeyPatch,
     bundle_file: Path,
     no_network: list[str],
     caplog: pytest.LogCaptureFixture,
+    provider: dict[str, str],
 ) -> None:
     """Everything left enabled, a key in the environment: still no connection."""
     pin = hashlib.sha256(bundle_file.read_bytes()).hexdigest()
     for name, value in {
         "HEROOS_AI_GATEWAY_ENABLED": "true",
-        "HEROOS_AI_GATEWAY_PROVIDER": "groq",
-        "HEROOS_AI_GATEWAY_MODEL": "openai/gpt-oss-120b",
         "HEROOS_AI_GATEWAY_APPROVAL": "STALE-TEST",
         "HEROOS_AI_GATEWAY_ALLOW_DEVELOPMENT_KNOWLEDGE": "true",
         "HEROOS_HANNAH_DEMO_ENABLED": "true",
         "HEROOS_KNOWLEDGE_BUNDLE_PATH": str(bundle_file),
         "HEROOS_KNOWLEDGE_BUNDLE_SHA256": pin,
-        "GROQ_API_KEY": KEY,
+        **provider,
     }.items():
         monkeypatch.setenv(name, value)
     caplog.set_level("INFO")
@@ -144,10 +156,11 @@ def test_stale_gateway_and_demo_settings_never_reach_the_network(
     assert no_network == []
 
 
+@pytest.mark.parametrize("adapter", [GroqChatProvider, AnthropicChatProvider])
 def test_the_real_transport_refuses_inside_a_test_run(
-    no_network: list[str], caplog: pytest.LogCaptureFixture
+    no_network: list[str], caplog: pytest.LogCaptureFixture, adapter: type[GroqChatProvider]
 ) -> None:
-    provider = GroqChatProvider(SecretStr(KEY), "openai/gpt-oss-120b")
+    provider = adapter(SecretStr(KEY), "test-model")
     with pytest.raises(AssistantError) as error:
         provider.reply("SYSTEM", [ChatTurn("user", "[SYNTHETIC] hello")])
     assert error.value.kind == "unavailable"
@@ -159,13 +172,14 @@ def test_the_real_transport_refuses_inside_a_test_run(
     assert "External AI request blocked (automated test run)" in caplog.text
 
 
+@pytest.mark.parametrize("adapter", [GroqChatProvider, AnthropicChatProvider])
 def test_the_live_smoke_opt_in_is_what_reaches_the_transport(
-    monkeypatch: pytest.MonkeyPatch, no_network: list[str]
+    monkeypatch: pytest.MonkeyPatch, no_network: list[str], adapter: type[GroqChatProvider]
 ) -> None:
     """With the opt-in, the request gets as far as opening a connection (refused here)."""
     monkeypatch.setenv("HEROOS_AI_LIVE_SMOKE_ENABLED", "true")
     with pytest.raises(AssistantError):
-        GroqChatProvider(SecretStr(KEY), "m").reply("S", [ChatTurn("user", "[SYNTHETIC] x")])
+        adapter(SecretStr(KEY), "m").reply("S", [ChatTurn("user", "[SYNTHETIC] x")])
     assert len(no_network) == 1
 
 
