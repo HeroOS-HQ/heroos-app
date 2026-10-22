@@ -206,6 +206,22 @@ def load_hannah_demo(config: Settings) -> HannahDemo:
     )
 
 
+def load_chat_only_demo(config: Settings, demo: HannahDemo) -> bool:
+    """Ask HeroOS's staging chat-only demo switch (production refuses it at settings load).
+
+    On, Ask HeroOS is a plain conversation through the Hannah demo's provider,
+    instruction, reply check and limits, and its workflow path answers 404
+    (app/api/gateway.py). The log names the provider and model, never the key.
+    """
+    if config.heroos_chat_only_demo:
+        logger.info(
+            "Ask HeroOS chat-only demo enabled (provider=%s, model=%s)",
+            "none" if demo.provider is None else demo.provider.name,
+            config.heroos_hannah_model,
+        )
+    return config.heroos_chat_only_demo
+
+
 def load_ai_gateway(
     config: Settings,
     knowledge: KnowledgeBundle | None,
@@ -292,6 +308,8 @@ def create_app(config: Settings) -> FastAPI:
     application.state.knowledge_bundle = load_knowledge(config)
     # The Hannah AI demo: off unless enabled, then for every Company administrator.
     application.state.hannah_demo = load_hannah_demo(config)
+    # Staging only: Ask HeroOS as a plain chat through the Hannah demo, bypassing its workflow.
+    application.state.chat_only_demo = load_chat_only_demo(config, application.state.hannah_demo)
     # Ask HeroOS's deterministic evaluation: the compatible artifacts, one immutable snapshot.
     application.state.conversation_evaluation = load_evaluation(
         config, application.state.knowledge_bundle, application.state.rule_bundle

@@ -222,6 +222,13 @@ class Settings(DatabaseSettings):
     heroos_hannah_global_limit_per_day: Annotated[int, Field(ge=1, le=1_000_000)] = 900
     # The GroqCloud API key (server-side only). Unset: the demo answers 503.
     groq_api_key: SecretStr | None = None
+    # Ask HeroOS's staging chat-only demo (temporary). Off unless explicitly enabled;
+    # production refuses it. On, Ask HeroOS is a plain conversation through the Hannah
+    # demo's model, key, instruction, reply check and limits (independent of
+    # HEROOS_HANNAH_DEMO_ENABLED): no Case, facts, workflow, outcome or stored
+    # conversation, and the persistent Ask HeroOS turn answers 404
+    # (docs/architecture/hannah-ai-demo.md).
+    heroos_chat_only_demo: bool = False
 
     # Ask HeroOS's controlled AI conversation gateway (M2-NEW-05). Off unless
     # explicitly enabled. Enabled, it is active only when every prerequisite
@@ -280,6 +287,11 @@ class Settings(DatabaseSettings):
             raise ValueError(
                 "HEROOS_HANNAH_DEMO_ENABLED must be false when HEROOS_ENV=production "
                 "(a demonstration, not an approved service)"
+            )
+        if self.heroos_env == "production" and self.heroos_chat_only_demo:
+            raise ValueError(
+                "HEROOS_CHAT_ONLY_DEMO must be false when HEROOS_ENV=production "
+                "(a staging demonstration, not an approved service)"
             )
         if not HANNAH_MODEL_ID.fullmatch(self.heroos_hannah_model):
             raise ValueError("HEROOS_HANNAH_MODEL must be a model identifier")

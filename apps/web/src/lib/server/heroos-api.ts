@@ -915,8 +915,37 @@ export async function sendAssistantMessage(
   if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
   const path = assistantPath(companyId, caseId);
   if (path === null) return { ok: false, failure: "not_found" };
+  return postChat(accessToken, config, `${path}/messages`, payload, fetcher);
+}
+
+/**
+ * `POST /companies/{id}/assistant/chat`: Ask HeroOS's staging chat-only demo
+ * (`HEROOS_CHAT_ONLY_DEMO`). The same exchange as Hannah's, with no Case: one
+ * message and the recent turns in, one reply out, nothing stored. 404 when
+ * the demo is off.
+ */
+export async function sendAskChat(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  payload: AssistantRequest,
+  fetcher: Fetch = fetch,
+): Promise<AssistantResult> {
+  const path = gatewayPath(companyId);
+  if (path === null) return { ok: false, failure: "forbidden" };
+  return postChat(accessToken, config, `${path}/chat`, payload, fetcher);
+}
+
+/** One message and the recent turns to the API's chat model, its reply or a fixed failure. */
+async function postChat(
+  accessToken: string,
+  config: AuthConfig,
+  path: string,
+  payload: AssistantRequest,
+  fetcher: Fetch,
+): Promise<AssistantResult> {
   try {
-    const response = await fetcher(`${config.apiBaseUrl}${path}/messages`, {
+    const response = await fetcher(`${config.apiBaseUrl}${path}`, {
       method: "POST",
       headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json", "Content-Type": "application/json" },
       body: JSON.stringify(payload),

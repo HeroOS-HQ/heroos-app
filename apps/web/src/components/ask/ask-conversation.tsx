@@ -534,7 +534,7 @@ export function AskConversation({
   );
 }
 
-function FounderTurn({ text, at, by }: { text: string; at: Date; by: "you" | "another_administrator" }) {
+export function FounderTurn({ text, at, by }: { text: string; at: Date; by: "you" | "another_administrator" }) {
   // Relative to the viewer: their own words are "You"; a colleague's never are.
   const name = by === "you" ? "You" : "Another administrator";
   return (
@@ -567,7 +567,7 @@ function SafeNextStep({ text }: { text: string }) {
  * (its label, the server's own words, a line per requested step, the reply, the safe
  * next step). Without one: the neutral style, and a note when the checks can't run.
  */
-function HeroTurn({
+export function HeroTurn({
   id,
   text,
   safeNextStep,
@@ -630,7 +630,7 @@ function HeroTurn({
 }
 
 /** While HeroOS answers: the mark and three dots (no visible reasoning). */
-function Thinking() {
+export function Thinking() {
   return (
     <div aria-label="HeroOS is answering" role="status">
       <div className="flex items-center gap-3">

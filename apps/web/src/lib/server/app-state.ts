@@ -235,9 +235,21 @@ export async function loadCase(companyId: string, workflowKey: string, caseId: s
  * configured, no approved knowledge, a member, an API from before the
  * gateway, an unreachable API) is `null`, and Ask keeps opening a case
  * through its seam exactly as before (docs/architecture/signed-in-workspace.md).
+ * The staging chat-only demo is kept even while it can't answer: Ask then
+ * says so, and never falls back to opening a case.
  */
 export function askGateway(status: ApiResult<GatewayStatus>): GatewayStatus | null {
-  return status.ok && status.data.available ? status.data : null;
+  return status.ok && (status.data.available || status.data.chatOnly) ? status.data : null;
+}
+
+/**
+ * The web's own copy of the staging chat-only demo switch (`HEROOS_CHAT_ONLY_DEMO`,
+ * server only), so Ask fails closed: while it is on, Ask without the API's
+ * chat-only status (a failed read, or an API without the demo) says HeroOS
+ * couldn't connect, never the case-opening Ask. Off: nothing changes.
+ */
+export function chatOnlyDemoRequired(): boolean {
+  return process.env.HEROOS_CHAT_ONLY_DEMO === "true";
 }
 
 export async function loadAskGateway(companyId: string): Promise<GatewayStatus | null> {

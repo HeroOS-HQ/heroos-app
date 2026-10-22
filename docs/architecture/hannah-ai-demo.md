@@ -16,6 +16,11 @@
 > M2-NEW-05 (the controlled AI conversation gateway). With no page calling it,
 > the demo only answers a direct BFF request from a signed-in administrator.
 
+> **Staging chat-only demo of Ask HeroOS (`HEROOS_CHAT_ONLY_DEMO`, temporary).**
+> See [the section below](#ask-heroos-chat-only-demo-staging): the Ask HeroOS
+> page talks through this demo's provider, instruction, reply check and limits,
+> with no Case.
+
 A conversation with a language model ("Hannah") about a Disciplinary case, for
 demonstrating HeroOS's conversational direction with fictional scenarios. It
 is **not** the case workflow: it never writes the Case, its facts, its history
@@ -209,3 +214,44 @@ returns it and before the API answers the browser:
 `app/assistant/provider.py` defines the interface (`ChatProvider.reply`,
 `AssistantError` kinds). A different provider (e.g. Anthropic) is another
 adapter next to `app/assistant/groq.py` and a change in `load_hannah_demo`.
+
+## Ask HeroOS chat-only demo (staging)
+
+A temporary, reversible switch for a staging demo: `HEROOS_CHAT_ONLY_DEMO=true`
+(default `false`; production refuses it at startup). It shows Ask HeroOS as one
+plain conversation while the full workflow integration is refined. It changes
+nothing about the M2-NEW-08 architecture: with the switch off, every route and
+response is exactly as before.
+
+```
+browser (React state only: a reload starts a new conversation)
+  → POST /bff/companies/{id}/assistant/chat   (same-origin, session, JSON ≤ 48 KiB: message + recent turns)
+  → POST /companies/{id}/assistant/chat        (API; administrator; a transaction that refuses every write)
+  → this demo's provider, instruction, history budget, usage limits and reply check (app.api.assistant.converse)
+  ← the reply text, or a fixed neutral one
+```
+
+The bypass lives at the Ask HeroOS API boundary (`app/api/gateway.py`) and
+nowhere else. With the switch on:
+
+- `GET /companies/{id}/assistant` adds `"chat_only": true` (the key is never
+  sent otherwise), `available` says whether a provider key is set, and
+  `notice` is "Demo — use fictional employee scenarios only." The Ask page then
+  shows the chat (`components/ask/ask-chat.tsx`) instead of the stored
+  conversation or the case-opening seam, also when it can't answer.
+- `POST /companies/{id}/assistant/messages` (the persistent turn) answers 404:
+  no conversation, Case, `case_facts`, workflow, progression, outcome or Expert
+  Review state is created, whatever the AI gateway's own switch says.
+- The model gets this demo's fixed instruction and the recent turns only: no
+  Blueprint, Case, facts or approved knowledge, and no tools.
+
+It needs `HEROOS_CHAT_ONLY_DEMO=true` and `GROQ_API_KEY` on the API, and
+`HEROOS_CHAT_ONLY_DEMO=true` on the web server too (server only, never
+`NEXT_PUBLIC_`). The web's copy makes Ask fail closed: when the status can't be
+read, or doesn't say `chat_only` (an API without the switch), Ask shows only
+"HeroOS couldn't connect just now. Please refresh and try again." with a
+Refresh link. It shows no box, so nothing can be sent and no case can open.
+With the web's copy off, a failed status read falls back to the case-opening
+Ask, as it always has. `HEROOS_HANNAH_DEMO_ENABLED` stays as it is. The model and limits are this
+demo's (`HEROOS_HANNAH_MODEL` and the `HEROOS_HANNAH_*_LIMIT` ceilings, shared
+with it). Use fictional scenarios only: the founder's words go to GroqCloud.

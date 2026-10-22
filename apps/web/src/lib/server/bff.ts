@@ -22,6 +22,7 @@ import { isSameOriginRequest, sessionFromRequest } from "./auth-flow";
 import type { AuthConfig } from "./config";
 import {
   type ApiFailure,
+  type AssistantFailure,
   correctDecision,
   createWorkflowCase,
   getAssistantStatus,
@@ -38,6 +39,7 @@ import {
   requestTransition,
   saveStepAnswers,
   selectPathway,
+  sendAskChat,
   sendAssistantMessage,
   sendGatewayMessage,
   updateBlueprint,
@@ -612,11 +614,14 @@ export async function handleAssistantMessage(
   if (!parsed.ok) return error(422, "invalid", []);
 
   const result = await sendAssistantMessage(guarded.accessToken, config, companyId, caseId, parsed.value, deps.fetch);
-  if (result.ok) return json(200, { reply: result.data });
-  switch (result.failure) {
+  return result.ok ? json(200, { reply: result.data }) : chatFailure(result.failure, result.retryAfter);
+}
+
+function chatFailure(failure: AssistantFailure, retryAfter?: number): Response {
+  switch (failure) {
     case "rate_limited": {
       const response = error(429, "rate_limited");
-      response.headers.set("Retry-After", String(result.retryAfter ?? 60));
+      response.headers.set("Retry-After", String(retryAfter ?? 60));
       return response;
     }
     case "timeout":
@@ -624,8 +629,31 @@ export async function handleAssistantMessage(
     case "not_configured":
       return error(503, "not_configured");
     default:
-      return workflowFailure(result.failure, []);
+      return workflowFailure(failure, []);
   }
+}
+
+/**
+ * POST /bff/companies/{id}/assistant/chat → `POST /companies/{id}/assistant/chat`:
+ * Ask HeroOS's staging chat-only demo. The message and the recent turns
+ * (browser memory only), rebuilt field by field as for Hannah; 200 `{reply}`,
+ * the text alone. Nothing is stored or logged here, and nothing opens a Case.
+ * Failures as Hannah's; 404 `not_found` when the demo is off.
+ */
+export async function handleAskChat(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps, MAX_ASSISTANT_BYTES);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  const parsed = parseAssistantRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+
+  const result = await sendAskChat(guarded.accessToken, config, companyId, parsed.value, deps.fetch);
+  return result.ok ? json(200, { reply: result.data.reply }) : chatFailure(result.failure, result.retryAfter);
 }
 
 // --- Ask HeroOS's AI gateway (M2-NEW-05) ------------------------------------------------

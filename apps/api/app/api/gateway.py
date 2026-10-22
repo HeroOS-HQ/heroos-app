@@ -42,6 +42,16 @@ conversation, another Company's, or the gateway disabled for a new turn); 409
 ``Conflict``; 422 field locations only; 429 ``Too many requests`` with
 ``Retry-After``; 503 ``Not configured`` / ``Knowledge unavailable``; 504
 ``Timed out``; 502 ``Unavailable``. A failed turn stores nothing.
+
+Staging chat-only demo (``HEROOS_CHAT_ONLY_DEMO``, temporary; production
+refuses it). The bypass lives here and nowhere else. On, the status says
+``chat_only`` (its only appearance: off, the status is unchanged), a turn
+(``POST .../assistant/messages``) answers 404 so nothing reaches a
+conversation, Case, fact, workflow or outcome, and Ask HeroOS talks through
+``POST /companies/{id}/assistant/chat`` instead: the Hannah demo's provider,
+instruction, reply check and limits (``app.api.assistant.converse``), the
+message and the browser's recent turns in, one reply out, in a transaction
+that refuses every write. Off, that route answers 404.
 """
 
 import logging
@@ -62,7 +72,14 @@ from pydantic import (
     model_validator,
 )
 
-from app.api.assistant import MAX_MESSAGE_CHARS
+from app.api.assistant import (
+    MAX_MESSAGE_CHARS,
+    AssistantReplyOut,
+    Demo,
+    HannahDemo,
+    converse,
+)
+from app.api.assistant import MessageIn as ChatMessageIn
 from app.assistant.gateway.service import (
     AiGateway,
     ConversationState,
@@ -116,6 +133,29 @@ def ask_conversations(request: Request, gateway: Gateway) -> AskConversations:
 
 Conversations = Annotated[AskConversations, Depends(ask_conversations)]
 
+CHAT_ONLY_NOTICE: Final = "Demo — use fictional employee scenarios only."
+
+
+def chat_only_demo(request: Request) -> bool:
+    enabled: bool = request.app.state.chat_only_demo
+    return enabled
+
+
+ChatOnly = Annotated[bool, Depends(chat_only_demo)]
+
+
+def require_chat_only(chat_only: ChatOnly, demo: Demo) -> HannahDemo:
+    """The Hannah demo's provider and limits, while the chat-only demo is on.
+
+    404 otherwise: the route doesn't exist here.
+    """
+    if not chat_only:
+        raise _not_found()
+    return demo
+
+
+ChatOnlyDemo = Annotated[HannahDemo, Depends(require_chat_only)]
+
 
 def _message_text(value: str) -> str:
     try:
@@ -151,6 +191,8 @@ class GatewayStatusOut(BaseModel):
     available: bool
     reason: GatewayReason | None
     notice: str | None
+    # Only ever sent as true (the route excludes defaults; every other field is required).
+    chat_only: bool = False
 
 
 class OutcomeItemOut(BaseModel):
@@ -359,9 +401,19 @@ def _conversation_out(summary: ConversationSummary, value: ConversationStatus) -
     )
 
 
-@router.get("/assistant", response_model=GatewayStatusOut)
-def get_gateway_status(scope: CompanyAdminReadOnlyDb, gateway: Gateway) -> GatewayStatusOut:
+@router.get("/assistant", response_model=GatewayStatusOut, response_model_exclude_defaults=True)
+def get_gateway_status(
+    scope: CompanyAdminReadOnlyDb, gateway: Gateway, chat_only: ChatOnly, demo: Demo
+) -> GatewayStatusOut:
     """Whether Ask HeroOS can answer for this administrator's Company."""
+    if chat_only:
+        ready = demo.provider is not None
+        return GatewayStatusOut(
+            available=ready,
+            reason=None if ready else "not_configured",
+            notice=CHAT_ONLY_NOTICE,
+            chat_only=True,
+        )
     reason = gateway.reason
     return GatewayStatusOut(
         available=reason is None,
@@ -377,9 +429,11 @@ def send_gateway_message(
     context: CompanyAdminContext,
     gateway: Gateway,
     service: Conversations,
+    chat_only: ChatOnly,
 ) -> TurnOut:
     """One founder message and HeroOS's reply, stored together (or nothing, on failure)."""
-    if gateway.reason == "disabled":
+    # The chat-only demo bypasses this path entirely: no conversation, Case or fact.
+    if chat_only or gateway.reason == "disabled":
         raise _not_found()
     request = TurnRequest(
         message=body.message,
@@ -415,6 +469,25 @@ def send_gateway_message(
             _message_out(result.heroos, context.user_id),
         ],
         replayed=result.replayed,
+    )
+
+
+@router.post("/assistant/chat", response_model=AssistantReplyOut)
+def send_chat_message(
+    body: ChatMessageIn,
+    scope: CompanyAdminReadOnlyDb,
+    context: CompanyAdminContext,
+    demo: ChatOnlyDemo,
+) -> AssistantReplyOut:
+    """The staging chat-only demo: one message and the recent turns in, one reply out.
+
+    Nothing is stored and nothing changes: no conversation, Case, fact, workflow
+    or outcome. The model gets no tools and no Company or Case context.
+    """
+    # Release the database connection before waiting on the provider.
+    scope.session.rollback()
+    return converse(
+        demo, context.user_id, body, notice=CHAT_ONLY_NOTICE, label="Ask HeroOS chat-only demo"
     )
 
 
