@@ -16,6 +16,7 @@ from pydantic import SecretStr, ValidationError
 
 from app.assistant.anthropic import (
     ANTHROPIC_MESSAGES_URL,
+    JSON_THINKING_TOKENS,
     MAX_JSON_CHARS,
     MAX_JSON_TOKENS,
     MAX_REPLY_CHARS,
@@ -204,9 +205,11 @@ def test_a_json_request_is_one_bounded_request_to_the_fixed_endpoint() -> None:
 
 
 def test_the_callers_smaller_budget_and_timeout_are_kept() -> None:
+    # The caller's budget is for the object; adaptive thinking spends from max_tokens first.
     send = FakeSend(body=message(text("{}")))
     _json(_provider(send), max_completion_tokens=1200, timeout=12.5)
-    assert send.calls[0][2]["max_tokens"] == 1200 and send.calls[0][3] == 12.5
+    assert send.calls[0][2]["max_tokens"] == 1200 + JSON_THINKING_TOKENS <= MAX_JSON_TOKENS
+    assert send.calls[0][3] == 12.5
 
 
 def test_unreported_usage_stays_unknown() -> None:

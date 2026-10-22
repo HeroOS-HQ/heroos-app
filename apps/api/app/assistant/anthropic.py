@@ -49,8 +49,13 @@ EFFORT: Final = "low"
 MAX_TOKENS: Final = 2048
 MAX_REPLY_CHARS: Final = 6000
 USER_AGENT: Final = "HeroOS-API"
+# The gateway's completion budget is for the JSON object; adaptive thinking spends from the same
+# max_tokens first. Found live (Haiku 5.5, gateway budget 1,200): most turns spent it all thinking
+# and returned no text (unavailable) or a cut-off object (invalid output). So a JSON request adds
+# room for the thinking pass.
+JSON_THINKING_TOKENS: Final = 3000
 # Bounds on what the gateway may ask for (whatever it passes).
-MAX_JSON_TOKENS: Final = 2048
+MAX_JSON_TOKENS: Final = 4800
 MAX_JSON_TIMEOUT_SECONDS: Final = 30.0
 MAX_JSON_CHARS: Final = 12_000
 
@@ -161,7 +166,7 @@ class AnthropicChatProvider:
         timeout: float,
     ) -> Completion:
         # No temperature: current Claude models refuse one (see the module docstring).
-        tokens = min(max(max_completion_tokens, 1), MAX_JSON_TOKENS)
+        tokens = min(max(max_completion_tokens, 1) + JSON_THINKING_TOKENS, MAX_JSON_TOKENS)
         payload = self.payload(system, turns, max_tokens=tokens)
         body = self._post(payload, min(max(timeout, 1.0), MAX_JSON_TIMEOUT_SECONDS))
         text, data = _message(body)
