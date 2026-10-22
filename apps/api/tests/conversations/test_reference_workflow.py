@@ -877,3 +877,32 @@ def test_the_case_view_is_read_only_labels_and_follows_the_turns_snapshot(
     flat = repr(deepcopy(progress))
     assert journey.case is not None and journey.case not in flat
     assert "opt-" not in flat and "EX-" not in flat
+
+
+def test_an_optional_case_question_the_founder_didnt_answer_isnt_offered_at_once(
+    journey: Journey,
+) -> None:
+    """Found live: HeroOS asked for the incident date again right after the founder talked about
+    something else. It answers them first; it may come back to the question later."""
+
+    def offered() -> list[str]:
+        targets = journey.sections()["approved_knowledge"]["question_targets"]
+        return [t["about"] for t in targets]
+
+    journey.ask(ABSENT, absent(topics=("workplace_reminder",)))
+    date = "Date of the incident"
+    # HeroOS asks when it happened (an optional Case question)...
+    journey.ask(
+        "Yes.",
+        absent("Yes.", turn=1, topics=("workplace_reminder",)),
+        response(f"{SAFE} When did it happen?", ["c1"]),
+    )
+    assert date in offered()
+    # ...the founder talks about something else: not asked again at once.
+    other = "What should I say to him when he's back?"
+    journey.ask(other, absent(other, turn=2, topics=("workplace_reminder",)))
+    assert date not in offered()
+    # It may come back later.
+    later = "OK, thanks."
+    journey.ask(later, absent(later, turn=3, topics=("workplace_reminder",)))
+    assert date in offered()

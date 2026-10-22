@@ -61,7 +61,7 @@ import dataclasses
 import logging
 import re
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Final, Literal
@@ -505,13 +505,15 @@ def _case_targets(
     case: CaseContext | None,
     evaluation: ConversationEvaluation,
     planned: Sequence[QuestionTarget],
+    unanswered: Collection[str] = (),
 ) -> tuple[QuestionTarget, ...]:
     """Optional targets for the Case's open intake questions (never one the founder answered
-    or already said, and never twice): the reply may ask about one, in its own words."""
+    or already said, never one asked last turn that the reply didn't answer, and never twice):
+    the reply may ask about one, in its own words."""
     if case is None:
         return ()
     facts = evaluation.facts
-    known = {*facts.engine, *facts.conversational, *(t.fact_key for t in planned)}
+    known = {*facts.engine, *facts.conversational, *(t.fact_key for t in planned), *unanswered}
     targets: list[QuestionTarget] = []
     for question in case.open_questions:
         key = execution.question_facts.get(question, question)
@@ -949,7 +951,13 @@ class AiGateway:
         if execution is None:
             return plan.targets
         if not evaluation.missing:
-            return (*_case_targets(execution, case, evaluation, plan.targets), *plan.targets)
+            unanswered = (
+                {a.key for a in result.prior.asked if a.kind == "fact"}
+                if result.trust is not None and not result.trust.answered
+                else set()
+            )
+            optional = _case_targets(execution, case, evaluation, plan.targets, unanswered)
+            return (*optional, *plan.targets)
         requirement = evaluation.missing[0]
         if (
             requirement.kind == "jurisdiction"
