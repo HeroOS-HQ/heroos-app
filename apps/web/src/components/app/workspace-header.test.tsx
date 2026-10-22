@@ -6,7 +6,6 @@ import { parseCaseSummary } from "@/lib/workflows/model";
 import { COMPANY_ID } from "@/test/fixtures";
 import { apiCaseSummary, CASE_ID, OTHER_CASE_ID } from "@/test/workflow-fixtures";
 
-import { caseWhen, groupCases } from "./cases-panel";
 import { CompanyShell } from "./company-shell";
 import { AdviserMark } from "./workspace-chrome";
 
@@ -147,21 +146,3 @@ describe("the workspace header", () => {
   });
 });
 
-describe("the Cases drawer's times", () => {
-  const now = new Date(2026, 9, 21, 15, 30);
-  it("groups today's cases first, newest first, then the rest", () => {
-    const today = summary({ id: CASE_ID, title: "A", updated_at: new Date(2026, 9, 21, 9, 12).toISOString() });
-    const later = summary({ id: OTHER_CASE_ID, title: "B", updated_at: new Date(2026, 9, 21, 11, 0).toISOString() });
-    const old = summary({ id: "c4e0a000-0000-4000-8000-0000000000c3", title: "C", updated_at: new Date(2026, 9, 16, 9, 0).toISOString() });
-    expect(groupCases([today, old, later], now).map((group) => [group.label, group.cases.map((item) => item.title)])).toEqual([
-      ["Today", ["B", "A"]],
-      ["Earlier", ["C"]],
-    ]);
-  });
-
-  it("says the time today, the day this year and the year before that", () => {
-    expect(caseWhen(new Date(2026, 9, 21, 9, 12).toISOString(), now)).toBe("09:12");
-    expect(caseWhen(new Date(2026, 9, 16, 9, 0).toISOString(), now)).toBe("16 Oct");
-    expect(caseWhen(new Date(2025, 11, 2, 9, 0).toISOString(), now)).toBe("2 Dec 2025");
-  });
-});

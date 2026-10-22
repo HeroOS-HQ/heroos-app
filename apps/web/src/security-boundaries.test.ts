@@ -27,7 +27,6 @@ describe("browser/server boundary", () => {
     expect(clientFiles.map(({ path }) => path).sort()).toEqual([
       "components/app/account-menu.tsx",
       "components/app/back-forward-cache-guard.tsx",
-      "components/app/cases-panel.tsx",
       "components/app/workspace-header.tsx",
       "components/ask/ask-chat.tsx",
       "components/ask/ask-conversation.tsx",

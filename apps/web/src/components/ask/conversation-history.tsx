@@ -2,7 +2,7 @@
 
 import { type RefObject, useCallback, useEffect, useRef, useState } from "react";
 
-import { caseWhen } from "@/components/app/cases-panel";
+import { caseWhen } from "@/lib/workflows/when";
 import { useModalPanel } from "@/components/app/use-modal-panel";
 import { iconButton } from "@/components/app/workspace-chrome";
 import { CloseIcon, PlusIcon } from "@/components/site/icons";
