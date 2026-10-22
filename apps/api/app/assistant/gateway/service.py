@@ -1083,8 +1083,10 @@ class AiGateway:
             telemetry.grounding = grounding
             telemetry.wording = "fallback_grounding"
             return self._fallback(company, snapshot, "legal", understanding, plan, result, turn)
-        used = [t for t in plan.targets if t.id in proposal.target_ids]
         reply = proposal.reply
+        # A target counts as asked only if the reply asks something: a claim with no question
+        # in the words would make the founder's next message a "direct answer" to nothing.
+        used = [t for t in plan.targets if t.id in proposal.target_ids] if "?" in reply else []
         required = next((t for t in plan.targets if t.question is not None), None)
         if required is not None and required not in used:
             # A deterministic check needs this answer: ask it in the server's words.
