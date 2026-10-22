@@ -1,3 +1,9 @@
+from app.db.models.assistant import (
+    AssistantConversation,
+    AssistantMessage,
+    AssistantTurn,
+    AssistantTurnEvaluation,
+)
 from app.db.models.audit import CompanyEvent, IdentityEvent, MembershipEvent
 from app.db.models.case import Case
 from app.db.models.case_subject import CaseSubject
@@ -17,6 +23,10 @@ from app.db.models.workflow import (
 )
 
 __all__ = [
+    "AssistantConversation",
+    "AssistantMessage",
+    "AssistantTurn",
+    "AssistantTurnEvaluation",
     "Case",
     "CaseFact",
     "CaseSubject",

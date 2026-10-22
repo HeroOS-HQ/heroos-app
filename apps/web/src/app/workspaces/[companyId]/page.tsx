@@ -16,12 +16,16 @@ import { loadAskGateway, loadCases } from "@/lib/server/app-state";
 
 export const metadata: Metadata = { title: "Ask HeroOS · HeroOS" };
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /**
  * Ask HeroOS, the signed-in home of one Company (approved Oct 20 design,
  * Page 1). The URL id is only a resource identifier: the API authorizes every
  * request. `?cases=open` opens the Cases drawer (the old case-list URLs lead here).
  * When the API says its AI gateway can answer here (M2-NEW-05), Ask is a
  * conversation with HeroOS; otherwise it opens a case, as before.
+ * `?conversation={id}` reopens a stored conversation (M2-NEW-07); the API
+ * decides whether this administrator may read it.
  */
 export default function AskPage({ params, searchParams }: PageProps<"/workspaces/[companyId]">) {
   return (
@@ -51,6 +55,7 @@ async function AskContent({ params, searchParams }: Pick<PageProps<"/workspaces/
   // Administrators open cases; members can't (yet), and an API without workflows can't either.
   const mode: AskMode = state.kind === "cases_ready" ? "ready" : state.kind === "admin_only" ? "members" : "unavailable";
   const cases = state.kind === "cases_ready" ? state.cases : null;
+  const conversationId = typeof query.conversation === "string" && UUID.test(query.conversation) ? query.conversation : null;
   return (
     <CompanyShell
       cases={cases}
@@ -62,6 +67,7 @@ async function AskContent({ params, searchParams }: Pick<PageProps<"/workspaces/
       <AskWorkspace
         companyId={state.details.company.id}
         conversation={mode === "ready" ? gateway : null}
+        conversationId={mode === "ready" ? conversationId : null}
         mode={mode}
         returning={(cases?.length ?? 0) > 0}
       />

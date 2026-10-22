@@ -256,7 +256,8 @@ def test_privileges_on_the_new_columns_are_exactly_the_api_roles(admin_engine: E
                 "'public.company_blueprints', 'employment_jurisdiction', 'UPDATE')"
             )
         )
-        assert conn.scalar(text("SELECT heroos_schema_contract()")) == 8
+        # Head: D6 (M2-NEW-07) on top of D5.
+        assert conn.scalar(text("SELECT heroos_schema_contract()")) == 9
 
 
 @pytest.mark.parametrize(

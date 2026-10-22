@@ -5,7 +5,8 @@
 - The application's mutating HTTP routes are exactly: the administrator-only
   Blueprint update, founder self-registration and the administrator-only
   workflow writes (M2-01 Case creation and answer save, M2-03 pathway and
-  transitions, M2-04 decision records and corrections). No request can
+  transitions, M2-04 decision records and corrections, M2-NEW-07 the Ask
+  HeroOS message, which persists its conversation). No request can
   grant access to an existing Company, provision anyone into one, assign a
   role, suspend, revoke or confirm a jurisdiction, and nothing deletes.
 - The only other POST is the M2-04C document preview: administrator-only, in
@@ -14,10 +15,13 @@
 - The Hannah AI demo's message POST writes nothing either: administrator-only,
   a read-only transaction, the demo switch, and the assistant package
   can't reach the database or the workflow engine.
-- So does Ask HeroOS's AI gateway (M2-NEW-05) at Company level: the same
-  administrator chain in a read-only transaction; the gateway package can't
-  reach the database, the workflow engine or the network (only the provider
-  adapter talks to its fixed endpoint), and no route serves the knowledge.
+- Ask HeroOS's AI gateway (M2-NEW-05) at Company level: its reads use the
+  same administrator chain in a read-only transaction; since M2-NEW-07 its
+  message POST is an administrator write (the role checked again inside the
+  transaction) that persists the conversation only through
+  ``app.conversations``. The gateway package itself still can't reach the
+  database, the workflow engine or the network (only the provider adapter
+  talks to its fixed endpoint), and no route serves the knowledge.
 - Founder self-registration is the only route an authenticated identity that
   HeroOS has not provisioned can reach; every other API route resolves an
   active HeroOS User first.
@@ -59,7 +63,10 @@ WORKFLOW_DECISION_CORRECTION = (
     "POST",
     "/companies/{company_id}/cases/{case_id}/decisions/{record_id}/corrections",
 )
+# M2-NEW-07: one Ask HeroOS turn (the conversation, its Case and facts, persisted).
+GATEWAY_MESSAGE = ("POST", "/companies/{company_id}/assistant/messages")
 ADMIN_ROUTES = {
+    GATEWAY_MESSAGE,
     ADMIN_BLUEPRINT_UPDATE,
     WORKFLOW_CASE_CREATE,
     WORKFLOW_ANSWERS_SAVE,
@@ -93,9 +100,15 @@ ASSISTANT_ROUTES = {
     ("GET", "/companies/{company_id}/cases/{case_id}/assistant"),
     ASSISTANT_MESSAGE,
 }
-# Ask HeroOS's AI gateway (M2-NEW-05): Company level, no Case, nothing written.
-GATEWAY_MESSAGE = ("POST", "/companies/{company_id}/assistant/messages")
-GATEWAY_ROUTES = {("GET", "/companies/{company_id}/assistant"), GATEWAY_MESSAGE}
+# Ask HeroOS's AI gateway (M2-NEW-05): Company level. Its reads (M2-NEW-07: the stored
+# conversations) can't write; its message POST is an administrator write (ADMIN_ROUTES).
+GATEWAY_READS = {
+    ("GET", "/companies/{company_id}/assistant"),
+    ("GET", "/companies/{company_id}/assistant/conversations"),
+    ("GET", "/companies/{company_id}/assistant/conversations/{conversation_id}"),
+    ("GET", "/companies/{company_id}/assistant/conversations/{conversation_id}/messages"),
+}
+GATEWAY_ROUTES = {*GATEWAY_READS, GATEWAY_MESSAGE}
 
 
 def _imports(path: Path) -> set[str]:
@@ -164,7 +177,7 @@ def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() ->
         for route in _app_routes()
         for method in route.methods or set()
         if method not in ("GET", "HEAD")
-        and (method, route.path) not in (DOCUMENT_PREVIEW, ASSISTANT_MESSAGE, GATEWAY_MESSAGE)
+        and (method, route.path) not in (DOCUMENT_PREVIEW, ASSISTANT_MESSAGE)
     }
     assert set(mutating) == MUTATING_ROUTES
 
@@ -208,11 +221,15 @@ def test_assistant_routes_are_admin_only_switched_and_cannot_write() -> None:
     }
     found = {key for key in routes if "/assistant" in key[1]}
     assert found == ASSISTANT_ROUTES | GATEWAY_ROUTES
-    for key in ASSISTANT_ROUTES | GATEWAY_ROUTES:
+    for key in ASSISTANT_ROUTES | GATEWAY_READS:
         calls = _dependency_calls(routes[key].dependant)
         assert require_company_admin in calls, key
         assert get_company_admin_read_scope in calls, key
         assert get_company_admin_scope in calls, key
+    # The one Ask HeroOS write: the administrator scope, the role checked again in it.
+    calls = _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
+    assert require_company_admin in calls and get_company_admin_scope in calls
+    assert get_company_admin_read_scope not in calls
     assert require_hannah_demo in _dependency_calls(routes[ASSISTANT_MESSAGE].dependant)
     # The gateway is not the demo: its own switch and prerequisites, never the demo's.
     assert require_hannah_demo not in _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
@@ -230,15 +247,17 @@ def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
         name.startswith(("app.workflows", "app.api.workflows", "app.api.decisions", "app.db"))
         for name in imported
     )
-    # The gateway's route doesn't even look a Case up: Company context only.
+    # The gateway's route reaches stored conversations, Cases and facts only through
+    # app.conversations (M2-NEW-07): never a repository, a model or the workflow itself.
     imported = _imports(APP / "api" / "gateway.py")
     assert not any(
         name.startswith(
             ("app.workflows", "app.api.workflows", "app.api.decisions", "app.db",
-             "app.repositories", "app.knowledge")
+             "app.repositories", "app.knowledge", "app.cases", "app.evaluation")
         )
         for name in imported
     )  # fmt: skip
+    assert "app.conversations.service" in imported
 
 
 def test_the_gateway_never_reaches_the_web_or_source_documents() -> None:
@@ -317,6 +336,9 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/cases/{case_id}/assistant/messages",
         "/companies/{company_id}/assistant",
         "/companies/{company_id}/assistant/messages",
+        "/companies/{company_id}/assistant/conversations",
+        "/companies/{company_id}/assistant/conversations/{conversation_id}",
+        "/companies/{company_id}/assistant/conversations/{conversation_id}/messages",
     }
 
 

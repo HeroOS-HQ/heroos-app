@@ -26,6 +26,7 @@ R  several matters: one at a time, never mixed
 S  "generate the letter": no document, prerequisites unchanged
 """
 
+import json
 from collections.abc import Sequence
 from typing import Any
 
@@ -487,6 +488,41 @@ def test_o_no_jurisdiction_specific_result_while_unresolved(artifacts: Artifacts
     answered = chat.say("Yes.", understood("Yes.", uncertainties=["jurisdiction_conflict"]))
     assert evaluation(answered).jurisdiction == FED
     assert evaluation(answered).jurisdiction_state == "resolved"
+
+
+def test_o_an_employee_not_confirmed_under_the_jurisdiction_gets_shared_guidance_only(
+    artifacts: Artifacts,
+) -> None:
+    """M2-NEW-07: "Not sure" about this employee pauses only what depends on the jurisdiction."""
+    resolved = Conversation(artifacts)
+    message = "He may be employed by our sister company. Can I warn him?"
+    warning = [("opt-warning", "warn him")]
+    plain = "Can I warn him?"
+    resolved.say(plain, understood(plain, topics=["formal_warning"], actions=warning))
+    federal = json.dumps(resolved.provider.phase("response")[0].data["approved_knowledge"])  # type: ignore[union-attr]
+    assert "900 days" in federal  # a UAE Federal paragraph, under the confirmed jurisdiction
+    chat = Conversation(artifacts)
+    chat.say(
+        message,
+        understood(
+            message,
+            topics=["formal_warning"],
+            uncertainties=["jurisdiction_conflict"],
+            actions=warning,
+        ),
+    )
+    answered = chat.say("Not sure.", understood("Not sure.", topics=["formal_warning"]))
+    result = evaluation(answered)
+    assert result.jurisdiction_state == "case_not_sure" and result.jurisdiction is None
+    # The jurisdiction-specific decision is held until the jurisdiction is confirmed ...
+    (step,) = result.actions
+    assert step.disposition == "block" and "jurisdiction:case_not_sure" in step.reasons
+    # ... while the shared guidance continues, and no UAE Federal text reaches the model.
+    data = chat.provider.phase("response")[0].data  # type: ignore[union-attr]
+    shared = json.dumps(data["approved_knowledge"])
+    assert data["approved_knowledge"]["approved_guidance"]
+    assert "900 days" not in shared
+    assert data["jurisdiction_note"].startswith("Not confirmed for this employee")
 
 
 # --- P, Q, R: matters ------------------------------------------------------------------------

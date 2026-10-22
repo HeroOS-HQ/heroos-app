@@ -5,14 +5,30 @@ import { COMPANY_ID } from "@/test/fixtures";
 
 import { AskWorkspace } from "./ask-workspace";
 
-const CONTINUATION = "eyJ2IjoxLCJ0IjpbM10sIngiOjE3OTI2MjEzNTl9.xNc7X0hBpSOKTehKXpgdlw";
-const NEXT = "eyJ2IjoxLCJ0IjpbXSwieCI6MTc5MjYyMTM1OX0.AAAAAAAAAAAAAAAAAAAAAA";
+const CONVERSATION_ID = "9b1f3c3e-6a52-4b8f-9d0a-2c1e5f6a7b8c";
 const WORDS = "[SYNTHETIC] My employee has been late three times this month. What should I do?";
 const REPLY = "Thanks for explaining. Has the expected standard been explained to him?";
+const AT = "2026-10-22T10:00:00Z";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const STATUS = {
+  lifecycle: null,
+  workflow: null,
+  attention: { needsInformation: false, jurisdiction: null, expertReview: { active: false, scope: null, actions: [], serviceAvailable: false } },
+  checks: "not_applicable",
+  latestOutcome: "none",
+};
 const reply = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-const answer = (text = REPLY, extra: Record<string, unknown> = {}) =>
-  reply(200, { reply: text, safeNextStep: null, conversationState: "responded", continuation: CONTINUATION, ...extra });
+/** The BFF's stored turn: the conversation (at ``revision``) and its two visible messages. */
+const answer = (text = REPLY, extra: Record<string, unknown> = {}, revision = 1, founder = WORDS) =>
+  reply(200, {
+    conversation: { id: CONVERSATION_ID, title: null, case: null, createdAt: AT, updatedAt: AT, revision, status: STATUS },
+    messages: [
+      { sequence: 2 * revision - 1, author: "you", text: founder, safeNextStep: null, conversationState: null, outcome: null, createdAt: AT },
+      { sequence: 2 * revision, author: "heroos", text, safeNextStep: null, conversationState: "responded", outcome: null, createdAt: AT, ...extra },
+    ],
+    replayed: false,
+  });
 
 function setup(notice: string | null, ...responses: (Response | Error | Promise<Response>)[]) {
   const queue = [...responses];
@@ -56,7 +72,7 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(send()).toBeDisabled();
   });
 
-  it("asks HeroOS without opening a case, then shows the reply and keeps the box free", async () => {
+  it("asks HeroOS in the page, then shows the reply and keeps the box free", async () => {
     const { fetcher, navigate } = setup(null, answer());
     await ask(`  ${WORDS}\n`);
     expect(await screen.findByText(REPLY)).toBeInTheDocument();
@@ -65,28 +81,36 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(url).toBe(`/bff/companies/${COMPANY_ID}/assistant/messages`);
     expect(url).not.toContain("/ask");
     expect(init.method).toBe("POST");
-    expect(bodyOf(fetcher)).toEqual({ message: WORDS, history: [], continuation: null });
+    // A new conversation: its words and a turn key, nothing else.
+    const body = bodyOf(fetcher);
+    expect(body).toEqual({ message: WORDS, turnKey: body.turnKey, conversationId: null, expectedRevision: 0 });
+    expect(String(body.turnKey)).toMatch(UUID);
     expect(navigate).not.toHaveBeenCalled();
     // Free text stays the way to answer.
     expect(box()).toHaveValue("");
     expect(box()).not.toHaveAttribute("readonly");
-    expect(screen.getByText(/This conversation isn.t saved/)).toBeInTheDocument();
+    // Restrained, truthful footer: no "not saved" claim, no retention or deletion promise.
+    expect(screen.getByText("HeroOS doesn't make employment decisions.")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/isn.t saved|not saved|deleted|retain|retention/i);
   });
 
-  it("sends the recent conversation and the last continuation with the next message", async () => {
-    const { fetcher } = setup(null, answer(), answer("Thanks, that helps.", { continuation: NEXT }));
+  it("sends only its words, a new turn key, the conversation and the revision it last saw", async () => {
+    const { fetcher } = setup(null, answer(), answer("Thanks, that helps.", {}, 2), answer("Noted.", {}, 3));
     await ask(WORDS);
     await screen.findByText(REPLY);
     await ask("Yes, I explained it to him last week.");
     await screen.findByText("Thanks, that helps.");
-    expect(bodyOf(fetcher, 1)).toEqual({
+    const second = bodyOf(fetcher, 1);
+    expect(second).toEqual({
       message: "Yes, I explained it to him last week.",
-      history: [
-        { role: "user", content: WORDS },
-        { role: "assistant", content: REPLY },
-      ],
-      continuation: CONTINUATION,
+      turnKey: second.turnKey,
+      conversationId: CONVERSATION_ID,
+      expectedRevision: 1,
     });
+    expect(second.turnKey).not.toBe(bodyOf(fetcher, 0).turnKey);
+    await ask("He was late again today.");
+    await screen.findByText("Noted.");
+    expect(bodyOf(fetcher, 2).expectedRevision).toBe(2);
   });
 
   it("shows the founder's message once while HeroOS answers: in the conversation, not in the box", async () => {
@@ -120,8 +144,8 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     const slow = new Promise<Response>((resolve) => {
       release = resolve;
     });
-    const { fetcher } = setup(null, answer(), slow, answer("Thanks, that helps."));
     const SECOND = "[SYNTHETIC] Yes, I explained it to him last week.";
+    const { fetcher } = setup(null, answer(), slow, answer("Thanks, that helps.", {}, 2, SECOND));
     await ask(WORDS);
     await screen.findByText(REPLY);
     await ask(SECOND);
@@ -137,6 +161,8 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     fireEvent.click(send());
     expect(await screen.findByText("Thanks, that helps.")).toBeInTheDocument();
     expect(bodyOf(fetcher, 2).message).toBe(SECOND);
+    // The same words again: the same turn key, so a lost answer is never asked twice.
+    expect(bodyOf(fetcher, 2).turnKey).toBe(bodyOf(fetcher, 1).turnKey);
     expect(screen.getAllByText(SECOND)).toHaveLength(1);
   });
 
@@ -147,6 +173,7 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     [reply(429, { error: "rate_limited" }), /a lot of questions/],
     [reply(504, { error: "timeout" }), /took too long/],
     [reply(422, { error: "invalid", fields: [] }), /couldn.t accept this text/],
+    [reply(409, { error: "conflict" }), /couldn.t send this message/],
     [reply(403, { error: "refused" }), /Only company administrators/],
     [reply(200, { reply: "x", conversationState: "block" }), /couldn.t answer just now/],
     [new Error("offline"), /couldn.t answer just now/],
@@ -158,10 +185,11 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(screen.getAllByText(WORDS)).toHaveLength(1);
     await waitFor(() => expect(box()).toHaveFocus());
     expect(send()).toBeEnabled();
-    // Sending again works, with the same words.
+    // Sending again works, with the same words and the same turn key.
     fireEvent.click(send());
     expect(await screen.findByText(REPLY)).toBeInTheDocument();
     expect(bodyOf(fetcher, 1).message).toBe(WORDS);
+    expect(bodyOf(fetcher, 1).turnKey).toBe(bodyOf(fetcher, 0).turnKey);
   });
 
   it("offers sign-in again when the session has ended", async () => {
@@ -180,14 +208,18 @@ describe("AskConversation (Ask HeroOS with the AI gateway)", () => {
     expect(document.querySelector("[class*='tone-']")).toBeNull();
   });
 
-  it("shows the deployment's notice and starts over on request", async () => {
-    setup("Preview: use fictional scenarios only.", answer());
+  it("shows the deployment's notice and starts a new conversation on request", async () => {
+    const { fetcher } = setup("Preview: use fictional scenarios only.", answer(), answer("Hello again."));
     expect(screen.getByText("Preview: use fictional scenarios only.")).toBeInTheDocument();
     await ask(WORDS);
     await screen.findByText(REPLY);
     fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
     await waitFor(() => expect(screen.queryByText(REPLY)).toBeNull());
     expect(screen.getByRole("heading", { level: 1, name: "What can HR do for you today?" })).toBeInTheDocument();
+    // Only this page starts over (nothing is deleted): the next message opens a new one.
+    await ask("Another matter.");
+    await screen.findByText("Hello again.");
+    expect(bodyOf(fetcher, 1)).toMatchObject({ conversationId: null, expectedRevision: 0 });
   });
 
   it("scrolls to below the docked box, so the newest turn is never left under it", async () => {

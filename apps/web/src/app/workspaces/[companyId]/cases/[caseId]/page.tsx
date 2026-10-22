@@ -5,7 +5,7 @@ import { workspaceHeaderData } from "@/components/app/company-shell";
 import { LoadingView } from "@/components/app/loading-view";
 import { CaseNotFoundView, commonStateView } from "@/components/cases/case-states";
 import { CaseWorkspace } from "@/components/cases/case-workspace";
-import { loadCase } from "@/lib/server/app-state";
+import { loadCase, loadCaseConversation } from "@/lib/server/app-state";
 import { WORKFLOW_DISCIPLINARY } from "@/lib/workflows/model";
 
 export const metadata: Metadata = { title: "Case · HeroOS" };
@@ -13,7 +13,7 @@ export const metadata: Metadata = { title: "Case · HeroOS" };
 /**
  * CASE_READY: one case in the Ask HeroOS workspace. The Case and Company ids
  * are only resource identifiers; the API authorizes every request (Membership
- * and RLS).
+ * and RLS). A Case Ask HeroOS opened links to its conversation (M2-NEW-07).
  */
 export default function CasePage({ params }: PageProps<"/workspaces/[companyId]/cases/[caseId]">) {
   return (
@@ -25,7 +25,10 @@ export default function CasePage({ params }: PageProps<"/workspaces/[companyId]/
 
 async function CaseContent({ params }: Pick<PageProps<"/workspaces/[companyId]/cases/[caseId]">, "params">) {
   const { companyId, caseId } = await params;
-  const state = await loadCase(companyId, WORKFLOW_DISCIPLINARY, caseId);
+  const [state, conversation] = await Promise.all([
+    loadCase(companyId, WORKFLOW_DISCIPLINARY, caseId),
+    loadCaseConversation(companyId, caseId),
+  ]);
   const retry = `/workspaces/${encodeURIComponent(companyId)}/cases/${encodeURIComponent(caseId)}`;
   const common = commonStateView(state, retry);
   if (common !== null) return common;
@@ -36,6 +39,7 @@ async function CaseContent({ params }: Pick<PageProps<"/workspaces/[companyId]/c
   return (
     // Keyed by Case: opening another Case never carries form state over.
     <CaseWorkspace
+      askConversation={state.view.canEdit ? conversation : null}
       header={workspaceHeaderData(state.details, state.workspaces, state.cases)}
       initialView={state.view}
       key={state.view.case.id}

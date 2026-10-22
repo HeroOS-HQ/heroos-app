@@ -19,6 +19,9 @@ instance lock. A hold never blocks saving answers (they stay correctable); it
 closes the gate later stages must check (``IntakeEvaluation.next_stage_open``).
 A specialist-review hold is never released by changed answers: once a save
 recorded one, the Case stays held (no release exists in the product yet).
+A save is persisted by the shared Case mutation pipeline
+(``app.cases.mutation``, M2-NEW-07), the same one Ask HeroOS uses: only the
+input validation differs.
 
 Decision records (M2-04): an administrator records the employer's own account
 of how it is handling the Case (``POST .../decisions``) and corrects or
@@ -68,7 +71,6 @@ assesses or decides anything about the incident or the employee.
 
 import logging
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Final, Literal
 from uuid import UUID
@@ -99,18 +101,26 @@ from app.api.decisions import (
 )
 from app.api.progression import ProgressionOut, progression_out
 from app.auth.dependencies import CompanyContext
-from app.companies.jurisdiction import JurisdictionAssessment, assess_jurisdiction
+from app.cases.mutation import (
+    CaseState,
+    FormOrigin,
+    apply_case_fact_changes,
+    company_jurisdiction,
+    evaluate_case,
+    record_escalations,
+    transition_reasons,
+    workflow_definition,
+)
+from app.companies.jurisdiction import JurisdictionAssessment
 from app.core.config import SensitiveScreening
-from app.db.models import WorkflowInstance
 from app.db.models.membership import ROLE_COMPANY_ADMIN
 from app.repositories import workflows
-from app.repositories.company_blueprints import get_company_blueprint
 from app.tenancy.dependencies import CompanyAdminDb
 from app.tenancy.scope import CompanyScope
 from app.workflows import conversation
 from app.workflows.answers import validate_answers
 from app.workflows.conditions import RuleSet
-from app.workflows.conversation import StatusNotice, SubmissionRecord
+from app.workflows.conversation import StatusNotice
 from app.workflows.decisions import DecisionRecord, Relation, same_request
 from app.workflows.definition import (
     Question,
@@ -118,9 +128,8 @@ from app.workflows.definition import (
     StepGate,
     WorkflowDefinition,
     current_definition,
-    definition_for,
 )
-from app.workflows.history import HistoryItem, compose_history, evaluation_results
+from app.workflows.history import HistoryItem, compose_history
 from app.workflows.intake import (
     JURISDICTION_LABELS,
     EarlierEscalation,
@@ -134,13 +143,12 @@ from app.workflows.progression.bundle import JurisdictionProgram, RuleBundle
 from app.workflows.progression.engine import (
     EventKind,
     ProgressionEvaluation,
-    TransitionEvaluation,
     evaluate_progression,
     resolve_attempt,
 )
 from app.workflows.progression.presentation import compose_progress_history, progress_items
 from app.workflows.progression.records import StoredEvent
-from app.workflows.progression.spec import PROGRESSIONS, ProgressionSpec
+from app.workflows.progression.spec import ProgressionSpec
 from app.workflows.timeline import (
     DEFAULT_PAGE_SIZE,
     MAX_PAGE_SIZE,
@@ -516,18 +524,6 @@ def _workflow(workflow_key: str) -> WorkflowDefinition:
     return definition
 
 
-def _definition(instance: WorkflowInstance) -> WorkflowDefinition:
-    definition = definition_for(instance.workflow_key, instance.definition_version)
-    if definition is None:
-        # A stored version this code cannot serve: a deployment error, not input.
-        raise RuntimeError("workflow definition version is not available")
-    return definition
-
-
-def _jurisdiction(scope: CompanyScope) -> JurisdictionAssessment:
-    return assess_jurisdiction(get_company_blueprint(scope))
-
-
 def _summary(
     item: workflows.WorkflowCase,
     facts: list[FactRecord],
@@ -535,7 +531,7 @@ def _summary(
     policy: SensitiveScreening,
     earlier: EarlierEscalation | None,
 ) -> CaseSummaryOut:
-    definition = _definition(item.instance)
+    definition = workflow_definition(item.instance)
     evaluation = evaluate_intake(
         definition,
         latest_answers(facts),
@@ -606,53 +602,6 @@ def _caution_out(caution: conversation.CautionNotice) -> CautionOut:
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _CaseState:
-    """Everything one request reads about a Case, evaluated once."""
-
-    definition: WorkflowDefinition
-    submissions: list[SubmissionRecord]
-    answers: dict[str, object]
-    company: JurisdictionAssessment
-    earlier: EarlierEscalation | None
-    intake: IntakeEvaluation
-    spec: ProgressionSpec | None
-    events: list[StoredEvent]
-    progression: ProgressionEvaluation | None
-
-
-def _evaluate_case(
-    scope: CompanyScope,
-    item: workflows.WorkflowCase,
-    policy: SensitiveScreening,
-    bundle: RuleBundle | None,
-) -> _CaseState:
-    definition = _definition(item.instance)
-    submissions = workflows.submissions(scope, item.instance.id)
-    answers = latest_answers(
-        FactRecord(s.revision, key, value) for s in submissions for key, value in s.facts.items()
-    )
-    company = _jurisdiction(scope)
-    earlier = workflows.first_escalations(scope, [item.instance.id]).get(item.instance.id)
-    intake = evaluate_intake(
-        definition,
-        answers,
-        company,
-        screening_enabled=policy == "synthetic_demo",
-        earlier_escalation=earlier,
-    )
-    spec = PROGRESSIONS.get(definition.key)
-    events = workflows.progress_events(scope, item.instance.id) if spec is not None else []
-    progression = (
-        None
-        if spec is None
-        else evaluate_progression(spec, bundle, intake, answers, [e.engine() for e in events])
-    )
-    return _CaseState(
-        definition, submissions, answers, company, earlier, intake, spec, events, progression
-    )
-
-
 def _checklist_steps(program: JurisdictionProgram | None) -> list[Step]:
     """Every stage checklist of the installed rules for this Case's jurisdiction."""
     if program is None:
@@ -710,7 +659,7 @@ def _next_notice(spec: ProgressionSpec, evaluation: ProgressionEvaluation) -> St
 def _intake_history(
     scope: CompanyScope,
     item: workflows.WorkflowCase,
-    state: _CaseState,
+    state: CaseState,
     checklists: Sequence[Step],
     viewer_user_id: UUID,
 ) -> list[HistoryItem]:
@@ -727,7 +676,7 @@ def _intake_history(
 
 def _timeline(
     item: workflows.WorkflowCase,
-    state: _CaseState,
+    state: CaseState,
     history: Sequence[HistoryItem],
     records: Sequence[DecisionRecord],
     viewer_user_id: UUID,
@@ -761,7 +710,7 @@ def _view(
     attempt: StoredEvent | None = None,
     saved: UUID | None = None,
 ) -> WorkflowViewOut:
-    state = _evaluate_case(scope, item, policy, bundle)
+    state = evaluate_case(scope, item, policy, bundle)
     definition = state.definition
     ruleset = ruleset_for(definition)
     submissions = state.submissions
@@ -983,7 +932,7 @@ def list_workflow_cases(
     ids = [item.instance.id for item in items]
     facts = workflows.facts_by_instance(scope, ids)
     escalations = workflows.first_escalations(scope, ids)
-    company = _jurisdiction(scope)
+    company = company_jurisdiction(scope)
     return [
         _summary(item, facts[item.instance.id], company, policy, escalations.get(item.instance.id))
         for item in items
@@ -1041,14 +990,14 @@ def create_workflow_case(
                 scope.company_id,
                 definition.key,
             )
-            return _summary(created, [], _jurisdiction(scope), policy, None)
+            return _summary(created, [], company_jurisdiction(scope), policy, None)
     if not _replayed_case(existing, body, definition, context):
         raise _conflict()
     response.status_code = status.HTTP_200_OK
     instance_id = existing.instance.id
     facts = workflows.facts_by_instance(scope, [instance_id])
     earlier = workflows.first_escalations(scope, [instance_id]).get(instance_id)
-    return _summary(existing, facts[instance_id], _jurisdiction(scope), policy, earlier)
+    return _summary(existing, facts[instance_id], company_jurisdiction(scope), policy, earlier)
 
 
 @router.get("/cases/{case_id}/workflow", response_model=WorkflowViewOut)
@@ -1073,64 +1022,6 @@ def _reload(scope: CompanyScope, case_id: UUID) -> workflows.WorkflowCase:
     return item
 
 
-def _reasons(transition: TransitionEvaluation) -> list[dict[str, object]]:
-    """The stored trace of a decision: every result, as codes (never an answer)."""
-    return [
-        {
-            "rule": r.rule,
-            "source": r.source,
-            "action": r.action,
-            "fired": r.fired,
-            "reason": r.reason,
-            "provisional": r.provisional,
-            "unknown": list(r.unknown),
-        }
-        for r in transition.results
-    ]
-
-
-def _record_escalations(
-    scope: CompanyScope,
-    item: workflows.WorkflowCase,
-    progression: ProgressionEvaluation,
-    *,
-    bundle: RuleBundle,
-    definition: WorkflowDefinition,
-    intake: IntakeEvaluation,
-    revision: int,
-    submission_id: UUID | None,
-    user_id: UUID,
-) -> int:
-    """Record every transition the rules newly escalate (sticky from now on)."""
-    if not progression.open:
-        return 0
-    recorded = 0
-    for transition in progression.transitions:
-        if not transition.new_escalation or transition.key in progression.state.escalated:
-            continue
-        workflows.record_progress_event(
-            scope,
-            item.instance.id,
-            kind="escalation_recorded",
-            transition=transition.key,
-            pathway=transition.pathway,
-            previous_pathway=None,
-            stage=transition.stage,
-            decision="escalate",
-            reasons=_reasons(transition),
-            acknowledged=[],
-            revision=revision,
-            request_key=None,
-            submission_id=submission_id,
-            user_id=user_id,
-            bundle=bundle,
-            definition_version=definition.version,
-            intake_status=intake.status,
-        )
-        recorded += 1
-    return recorded
-
-
 @router.put("/cases/{case_id}/workflow/steps/{step_key}/answers", response_model=WorkflowViewOut)
 def save_step_answers(
     case_id: UUID,
@@ -1148,7 +1039,7 @@ def save_step_answers(
     item = workflows.get_workflow_case(scope, case_id, for_update=True)
     if item is None:
         raise _not_found()
-    definition = _definition(item.instance)
+    definition = workflow_definition(item.instance)
     step = definition.step(step_key)
     stage = None
     if step is None and bundle is not None:
@@ -1164,11 +1055,9 @@ def save_step_answers(
         # that depends on the current state, which that save may have changed.
         return _view(scope, item, context, policy, bundle)
 
-    state = _evaluate_case(scope, item, policy, bundle)
+    state = evaluate_case(scope, item, policy, bundle)
     current = state.answers
     company = state.company
-    enabled = policy == "synthetic_demo"
-    earlier = state.earlier
     before = state.intake
     if step is None:
         # Only the checklist of the stage in progress, while progression is open.
@@ -1199,57 +1088,33 @@ def save_step_answers(
     if not changes:
         return _view(scope, item, context, policy, bundle)
 
-    revision = workflows.advance_revision(scope, instance_id, body.expected_revision)
-    if revision is None:
+    # The same persistence as every other fact change (app.cases.mutation).
+    applied = apply_case_fact_changes(
+        scope,
+        item,
+        state,
+        origin=FormOrigin(step.key),
+        changes=changes,
+        expected_revision=body.expected_revision,
+        idempotency_key=body.submission_key,
+        user_id=context.user_id,
+        policy=policy,
+        bundle=bundle,
+    )
+    if applied is None:
         # Another save committed first. Same key: that save was this one.
         scope.rollback()
         if workflows.find_submission(scope, instance_id, body.submission_key) is not None:
             return _view(scope, _reload(scope, case_id), context, policy, bundle)
         raise _conflict()
-    submission = workflows.record_submission(
-        scope,
-        item.instance,
-        step_key=step.key,
-        revision=revision,
-        idempotency_key=body.submission_key,
-        user_id=context.user_id,
-        changes=changes,
-    )
-    after = {k: v for k, v in {**current, **changes}.items() if v is not None}
-    evaluation = evaluate_intake(
-        definition,
-        after,
-        company,
-        screening_enabled=enabled,
-        earlier_escalation=earlier,
-    )
-    workflows.record_evaluation(
-        scope, submission, evaluation, evaluation_results(evaluation, ruleset_for(definition))
-    )
-    escalated = 0
-    if bundle is not None and state.spec is not None:
-        # Changed answers can make a rule escalate a transition: record it now.
-        progression = evaluate_progression(
-            state.spec, bundle, evaluation, after, [e.engine() for e in state.events]
-        )
-        escalated = _record_escalations(
-            scope,
-            item,
-            progression,
-            bundle=bundle,
-            definition=definition,
-            intake=evaluation,
-            revision=revision,
-            submission_id=submission.id,
-            user_id=context.user_id,
-        )
     scope.commit()
+    evaluation = applied.intake
     if evaluation.hold is not None and evaluation.hold != before.hold:
         # The kind only: never the reason or an answer (HR case content).
         logger.info(
             "Workflow case held (company_id=%s, hold=%s)", scope.company_id, evaluation.hold.kind
         )
-    if escalated:
+    if applied.escalated:
         logger.info("Workflow transition escalated (company_id=%s)", scope.company_id)
     return _view(scope, _reload(scope, case_id), context, policy, bundle)
 
@@ -1298,7 +1163,7 @@ def _request_transition(
         # Answered before anything state-dependent: that request may have changed it.
         return _view(scope, item, context, policy, bundle, attempt=replay)
 
-    state = _evaluate_case(scope, item, policy, bundle)
+    state = evaluate_case(scope, item, policy, bundle)
     progression, spec = state.progression, state.spec
     if progression is None or spec is None:
         raise _not_found()
@@ -1319,7 +1184,7 @@ def _request_transition(
         "request_key": request_key,
         "submission_id": None,
         "user_id": context.user_id,
-        "reasons": _reasons(attempt),
+        "reasons": transition_reasons(attempt),
     }
     if attempt.allowed:
         # A warning never passes unacknowledged; acknowledging others isn't accepted.
@@ -1357,7 +1222,7 @@ def _request_transition(
             state.answers,
             [*(e.engine() for e in state.events), event.engine()],
         )
-        _record_escalations(
+        record_escalations(
             scope,
             item,
             after,
@@ -1383,7 +1248,7 @@ def _request_transition(
             revision=item.instance.revision,
             **common,  # type: ignore[arg-type]
         )
-        _record_escalations(
+        record_escalations(
             scope,
             item,
             progression,
@@ -1495,7 +1360,7 @@ def get_case_history(
     item = workflows.get_workflow_case(scope, case_id)
     if item is None:
         raise _not_found()
-    state = _evaluate_case(scope, item, policy, bundle)
+    state = evaluate_case(scope, item, policy, bundle)
     checklists = _checklist_steps(None if state.progression is None else state.progression.program)
     history = _intake_history(scope, item, state, checklists, context.user_id)
     records = workflows.decision_records(scope, item.instance.id)
@@ -1595,7 +1460,7 @@ def _record_decision(
         raise _conflict()
 
     # The workflow context when the record is made: read, never changed.
-    state = _evaluate_case(scope, item, policy, bundle)
+    state = evaluate_case(scope, item, policy, bundle)
     revision = workflows.advance_revision(scope, instance_id, body.expected_revision)
     if revision is None:  # pragma: no cover - the lock serializes writers first
         scope.rollback()

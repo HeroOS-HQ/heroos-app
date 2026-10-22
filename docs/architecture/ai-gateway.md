@@ -4,7 +4,13 @@ The founder explains a situation in their own words on Ask HeroOS. HeroOS
 makes sense of it, works out what HeroOS's **approved knowledge** says about
 it, and answers: what the approved methodology says applies, what it still
 needs to know (asked naturally, one thing at a time), and which requested
-actions need specialist review. No Case is needed and none is created.
+actions need specialist review. No Case is needed to ask.
+
+**Since M2-NEW-07** the conversation is persistent: the API stores the visible
+conversation, attaches a Case once the matter is clear, and takes the trusted
+state from the server instead of the browser. The message contract in §3, §8
+and §16 below is the M2-NEW-05/06 one, kept for history; the current contract
+is in [ask-conversations.md](ask-conversations.md).
 
 The gateway is **off by default** and stays unavailable until every
 activation prerequisite below holds. While it is unavailable, Ask HeroOS
@@ -55,6 +61,9 @@ runs between retrieval and the response: explicitly bound rules on
 server-trusted facts only, action by action, never the whole conversation.
 
 ## 3. One founder turn
+
+(M2-NEW-05/06. Since M2-NEW-07 the browser sends only its words, a turn key, the conversation
+and its revision, and the reply is stored: [ask-conversations.md §3](ask-conversations.md).)
 
 ```
 browser (React state only: the conversation is never stored)
@@ -159,6 +168,9 @@ When the founder corrects themselves, the newest explicit statement wins
 understanding phase never sees them, and nothing cites them.
 
 ## 8. What HeroOS last asked: the continuation
+
+(Since M2-NEW-07 a persisted conversation keeps this state server-side, as its checkpoint, and
+the browser neither sends nor receives a continuation: [ask-conversations.md §7](ask-conversations.md).)
 
 "Yes" or "twice" only means something next to the question it answers. Each
 reply carries an opaque `continuation` token. Since M2-NEW-06 it is the
@@ -401,6 +413,8 @@ digest) stays server-side: it is not sent to the browser.
 
 ## 16. Browser contract and UI
 
+(M2-NEW-05/06; superseded by the persistent contract in [ask-conversations.md §2](ask-conversations.md).)
+
 `POST /companies/{id}/assistant/messages`:
 
 - in: `{message (≤ 2,000), history (≤ 12 turns, ≤ 4,000 each), continuation?}`;
@@ -435,7 +449,10 @@ provenance, turn), tentative fact keys, uncertainties, case summary,
 knowledge status, jurisdiction, actions held for review, what was asked and
 the runtime bundle digest; since M2-NEW-06 also the requested action ids and
 the deterministic `ConversationEvaluation` (its `record()` is the versioned
-contract M2-NEW-07 may persist after re-evaluating it server-side).
+contract M2-NEW-07 may persist after re-evaluating it server-side). Since
+M2-NEW-07 it also carries the turn's execution snapshot, and `GatewayReply`
+the next trusted state (`next_state`), both server-side only, for the
+persistence in [Ask HeroOS Conversations](ask-conversations.md).
 
 ## 18. The legacy Hannah demo
 

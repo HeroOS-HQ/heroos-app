@@ -15,9 +15,9 @@ C1 (M1-10C: Company roles, registration and jurisdiction readiness), 4 after D1
 (M2-01: workflow instances, submissions and facts), 5 after D2 (M2-02: intake
 evaluations), 6 after D3 (M2-03: workflow progress events), 7 after D4 (M2-04:
 employer decision records), 8 after D5 (M2-NEW-03: the Company Blueprint
-context). The API needs at least 8; the operator needs exactly 8 (its own
-grants are unchanged by D1 to D5, but it refuses any schema it was not written
-against).
+context), 9 after D6 (M2-NEW-07: Ask HeroOS conversations). The API needs at
+least 9; the operator needs exactly 9 (its own grants are unchanged by D1 to
+D6, but it refuses any schema it was not written against).
 """
 
 from typing import Final
@@ -28,13 +28,14 @@ from sqlalchemy.exc import DBAPIError
 RUNTIME_GROUP_ROLE: Final = "heroos_app_runtime"
 OPERATOR_GROUP_ROLE: Final = "heroos_identity_operator"
 
-# Schema the API needs (D5: the Company Blueprint context, on top of D4 decision
-# records, D3 progress events, D2 intake evaluations, D1 workflow Cases and
-# facts, C1 roles and jurisdiction readiness and B1a/B1b identities and lifecycle).
-API_MINIMUM_SCHEMA_CONTRACT: Final = 8
+# Schema the API needs (D6: Ask HeroOS conversations, on top of D5 the Company
+# Blueprint context, D4 decision records, D3 progress events, D2 intake
+# evaluations, D1 workflow Cases and facts, C1 roles and jurisdiction readiness
+# and B1a/B1b identities and lifecycle).
+API_MINIMUM_SCHEMA_CONTRACT: Final = 9
 # Schema the operator CLI needs exactly (C1 registration, role and jurisdiction
-# confirmation grants on top of B1b provisioning; D1 to D5 add nothing for it).
-OPERATOR_SCHEMA_CONTRACT: Final = 8
+# confirmation grants on top of B1b provisioning; D1 to D6 add nothing for it).
+OPERATOR_SCHEMA_CONTRACT: Final = 9
 
 
 class UnsafeDatabaseRoleError(RuntimeError):

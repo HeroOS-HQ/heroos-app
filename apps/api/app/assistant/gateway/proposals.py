@@ -35,9 +35,9 @@ import re
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Final, Literal, cast
+from typing import Any, Final, Literal, cast
 
-from app.assistant.gateway.catalog import RoutingCatalog
+from app.assistant.gateway.catalog import CatalogWorkflow, RoutingCatalog
 
 UNDERSTANDING_SCHEMA: Final = "heroos.understanding/1"
 RESPONSE_SCHEMA: Final = "heroos.response/1"
@@ -134,6 +134,9 @@ class UnderstandingProposal:
     uncertainties: tuple[Uncertainty, ...]
     summary: str | None
     actions: tuple[RequestedAction, ...] = ()
+    # M2-NEW-07: decisions the founder says (now) they no longer consider; kept only when
+    # ``check_evidence`` finds their own explicit words.
+    withdrawn: tuple[RequestedAction, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -259,7 +262,12 @@ def parse_understanding(
     ``check_evidence`` (a fact-level refusal, not a structural one).
     """
     data = _load(text)
-    _fields(data, _UNDERSTANDING_FIELDS, frozenset({"case_summary", "requested_actions"}), "$")
+    _fields(
+        data,
+        _UNDERSTANDING_FIELDS,
+        frozenset({"case_summary", "requested_actions", "withdrawn_actions"}),
+        "$",
+    )
     if data["schema_version"] != UNDERSTANDING_SCHEMA:
         raise ProposalError("unknown_schema", "$.schema_version")
     intent = _code(data["intent"], INTENTS, "$.intent")
@@ -296,12 +304,27 @@ def parse_understanding(
         for i, u in enumerate(_list(data["uncertainties"], MAX_UNCERTAINTIES, "$.uncertainties"))
     ]
     summary = _text(data.get("case_summary"), MAX_SUMMARY_CHARS, "$.case_summary", nullable=True)
-    actions: list[RequestedAction] = []
-    raw_actions = _list(
-        data.get("requested_actions", []), MAX_REQUESTED_ACTIONS, "$.requested_actions"
+    actions = _actions(data, "requested_actions", workflow, current_turn)
+    withdrawn = _actions(data, "withdrawn_actions", workflow, current_turn)
+    return UnderstandingProposal(
+        intent=intent,
+        workflow=None if workflow is None else workflow.key,
+        pathway=pathway,
+        topics=_unique(topics, "$.topics"),
+        facts=facts,
+        uncertainties=cast(tuple[Uncertainty, ...], _unique(uncertainties, "$.uncertainties")),
+        summary=summary,
+        actions=actions,
+        withdrawn=withdrawn,
     )
-    for i, raw in enumerate(raw_actions):
-        where = f"$.requested_actions[{i}]"
+
+
+def _actions(
+    data: dict[str, Any], field: str, workflow: CatalogWorkflow | None, current_turn: int
+) -> tuple[RequestedAction, ...]:
+    actions: list[RequestedAction] = []
+    for i, raw in enumerate(_list(data.get(field, []), MAX_REQUESTED_ACTIONS, f"$.{field}")):
+        where = f"$.{field}[{i}]"
         if not isinstance(raw, dict):
             raise ProposalError("expected_object", where)
         _fields(raw, _ACTION_FIELDS, frozenset(), where)
@@ -315,23 +338,21 @@ def parse_understanding(
         assert excerpt is not None
         actions.append(RequestedAction(key, turn, excerpt))
     if len({a.action for a in actions}) != len(actions):
-        raise ProposalError("duplicate_value", "$.requested_actions")
-    return UnderstandingProposal(
-        intent=intent,
-        workflow=None if workflow is None else workflow.key,
-        pathway=pathway,
-        topics=_unique(topics, "$.topics"),
-        facts=facts,
-        uncertainties=cast(tuple[Uncertainty, ...], _unique(uncertainties, "$.uncertainties")),
-        summary=summary,
-        actions=tuple(actions),
-    )
+        raise ProposalError("duplicate_value", f"$.{field}")
+    return tuple(actions)
 
 
 # --- evidence -------------------------------------------------------------------------
 
 _QUOTES: Final = str.maketrans({"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-"})
 _SPACE: Final = re.compile(r"\s+")
+# Words that withdraw a decision explicitly ("no longer", "decided against"...); a change of
+# topic or a vague phrase withdraws nothing.
+_WITHDRAWAL: Final = re.compile(
+    r"\b(?:no\s+longer|not\s+(?:going|planning)\s+to|not\s+considering|won't|will\s+not"
+    r"|decided\s+(?:not|against)|don't\s+want\s+to|do\s+not\s+want\s+to|not\s+anymore"
+    r"|changed\s+(?:my|our)\s+mind|dropp(?:ed|ing))\b"
+)
 
 
 def normalized(text: str) -> str:
@@ -374,7 +395,23 @@ def check_evidence(
         and a.source_turn < len(messages)
         and normalized(a.excerpt) in messages[a.source_turn]
     )
-    dropped = len(proposal.facts) - len(kept) + len(proposal.actions) - len(actions)
+    # A withdrawal only from the current message, in the founder's own explicit words, and
+    # never of a decision the same message asks about (withdrawing only removes checks).
+    current = len(messages) - 1
+    asked = {a.action for a in actions}
+    withdrawn = tuple(
+        a
+        for a in proposal.withdrawn
+        if a.source_turn == current
+        and a.action not in asked
+        and normalized(a.excerpt)
+        and normalized(a.excerpt) in messages[current]
+        and _WITHDRAWAL.search(normalized(a.excerpt))
+    )
+    dropped = (
+        len(proposal.facts) - len(kept) + len(proposal.actions) - len(actions)
+        + len(proposal.withdrawn) - len(withdrawn)
+    )  # fmt: skip
     return (
         UnderstandingProposal(
             intent=proposal.intent,
@@ -385,6 +422,7 @@ def check_evidence(
             uncertainties=proposal.uncertainties,
             summary=proposal.summary,
             actions=actions,
+            withdrawn=withdrawn,
         ),
         dropped,
     )
@@ -421,6 +459,7 @@ def without_contradicted(
         uncertainties=proposal.uncertainties,
         summary=proposal.summary,
         actions=proposal.actions,
+        withdrawn=proposal.withdrawn,
     )
 
 

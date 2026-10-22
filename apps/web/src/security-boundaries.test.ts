@@ -32,8 +32,10 @@ describe("browser/server boundary", () => {
       "components/ask/ask-conversation.tsx",
       "components/ask/ask-parts.tsx",
       "components/ask/ask-workspace.tsx",
+      "components/ask/conversation-history.tsx",
       "components/blueprint/blueprint-page.tsx",
       "components/cases/answers-form.tsx",
+      "components/cases/case-conversation-link.tsx",
       "components/cases/case-status-panel.tsx",
       "components/cases/case-timeline.tsx",
       "components/cases/case-workspace.tsx",
@@ -77,12 +79,16 @@ describe("browser/server boundary", () => {
     expect(bff).toMatch(/isSameOriginRequest\(request, config\)/);
     expect(bff).toMatch(/sessionFromRequest\(request, config/);
     // The reads (M2-04: an older page of the case history; M2-04C: a Case's
-    // templates and one template's form) are GET-only.
+    // templates and one template's form; M2-NEW-07: the stored Ask HeroOS
+    // conversations) are GET-only.
     const reads = {
       "app/bff/companies/[companyId]/cases/[caseId]/history/route.ts": "handleHistoryPage",
       "app/bff/companies/[companyId]/cases/[caseId]/documents/route.ts": "handleDocumentsList",
       "app/bff/companies/[companyId]/cases/[caseId]/documents/[templateKey]/route.ts": "handleDocumentForm",
       "app/bff/companies/[companyId]/cases/[caseId]/assistant/route.ts": "handleAssistantStatus",
+      "app/bff/companies/[companyId]/assistant/conversations/route.ts": "handleConversationList",
+      "app/bff/companies/[companyId]/assistant/conversations/[conversationId]/route.ts": "handleConversationDetail",
+      "app/bff/companies/[companyId]/assistant/conversations/[conversationId]/messages/route.ts": "handleConversationMessages",
     };
     const routes = files.filter(({ path }) => path.startsWith("app/bff/") && !(path in reads));
     expect(routes.map(({ path }) => path).sort()).toEqual([
@@ -116,10 +122,20 @@ describe("browser/server boundary", () => {
     expect(history).toMatch(/^[\s\S]*?isSameOriginRequest\(request, config\)[\s\S]*?sessionFromRequest\(request, config/);
     const guardRead = bff.slice(bff.indexOf("function guardRead"));
     expect(guardRead).toMatch(/^[\s\S]*?isSameOriginRequest\(request, config\)[\s\S]*?sessionFromRequest\(request, config/);
-    for (const handler of ["handleDocumentsList", "handleDocumentForm", "handleAssistantStatus"]) {
+    for (const handler of [
+      "handleDocumentsList",
+      "handleDocumentForm",
+      "handleAssistantStatus",
+      "handleConversationList",
+      "handleConversationDetail",
+      "handleConversationMessages",
+    ]) {
       const body = bff.slice(bff.indexOf(`export async function ${handler}`));
-      expect(body, handler).toMatch(/^[^}]*?guardRead\(request, config, deps\)/);
+      expect(body, handler).toMatch(/^[^}]*?guardRead\(request, config, deps[,)]/);
     }
+    // An Ask HeroOS message is stored (M2-NEW-07): the shared guard, a bounded body.
+    const message = bff.slice(bff.indexOf("export async function handleGatewayMessage"));
+    expect(message).toMatch(/^[\s\S]*?await guard\(request, config, deps, MAX_ASSISTANT_BYTES\)/);
     // The preview (a POST, so personal details never travel in a URL) goes through the shared guard.
     const preview = bff.slice(bff.indexOf("export async function handleDocumentPreview"));
     expect(preview).toMatch(/^[\s\S]*?await guard\(request, config, deps, MAX_PREVIEW_BYTES\)/);

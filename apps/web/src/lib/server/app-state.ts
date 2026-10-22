@@ -1,7 +1,7 @@
 import "server-only";
 
 import { readAuthConfig, type AuthConfig } from "./config";
-import type { GatewayStatus } from "@/lib/ask/conversation";
+import type { ConversationSummary, GatewayStatus } from "@/lib/ask/conversation";
 import type { CaseSummary as WorkflowCaseSummary, WorkflowView } from "@/lib/workflows/model";
 
 import {
@@ -10,6 +10,7 @@ import {
   getCaseWorkflow,
   getGatewayStatus,
   getWorkspaceDetails,
+  listConversations,
   listWorkflowCases,
   type Workspace,
   type WorkspaceDetails,
@@ -243,4 +244,17 @@ export async function loadAskGateway(companyId: string): Promise<GatewayStatus |
   const gate = await sessionGate();
   if (gate.kind !== "ok") return null;
   return askGateway(await getGatewayStatus(gate.accessToken, gate.config, companyId));
+}
+
+/**
+ * The Ask HeroOS conversation a Case started from (M2-NEW-07), for its
+ * administrators: `null` when there is none, for a member (conversations are
+ * the administrators'), or when the API can't say. The Case page links to it;
+ * the conversation stays separate from the Case's own history.
+ */
+export async function loadCaseConversation(companyId: string, caseId: string): Promise<ConversationSummary | null> {
+  const gate = await sessionGate();
+  if (gate.kind !== "ok") return null;
+  const result = await listConversations(gate.accessToken, gate.config, companyId, { before: null, caseId });
+  return result.ok ? (result.data.items[0] ?? null) : null;
 }

@@ -46,6 +46,12 @@ WORKFLOW_TABLES = (
     "workflow_evaluations",
     "workflow_progress_events",
     "workflow_decision_records",
+    # Ask HeroOS conversations (M2-NEW-07 D6): tenant-owned, append-only but for a
+    # conversation's own state (column-level, compared by the column_grants view).
+    "assistant_conversations",
+    "assistant_turns",
+    "assistant_messages",
+    "assistant_turn_evaluations",
 )
 APPLICATION_TABLES = (
     *TENANT_TABLES,
@@ -362,3 +368,39 @@ def test_restored_database_rejects_cross_tenant_writes(restored_runtime: Engine)
             None,
             "",
         }
+
+
+def test_restored_ask_heroos_conversation_keeps_its_provenance(
+    restored_admin: Engine, restored_runtime: Engine
+) -> None:
+    """M2-NEW-07 D6: the stored chat, its evaluation and the Case fact it established."""
+    (conversation,) = snapshot(
+        restored_admin,
+        "SELECT case_id, workflow_key, revision FROM assistant_conversations",
+    )
+    assert conversation == (data.CASE_A, "disciplinary", 1)
+    messages = snapshot(
+        restored_admin,
+        "SELECT sequence, role, outcome->>'kind' FROM assistant_messages ORDER BY sequence",
+    )
+    assert messages == [(1, "founder", None), (2, "heroos", "guidance")]
+    assert snapshot(restored_admin, "SELECT presentation FROM assistant_turn_evaluations") == [
+        ("guidance",)
+    ]
+    # The assistant-origin fact still points at the founder message that established it.
+    provenance = snapshot(
+        restored_admin,
+        "SELECT s.origin, s.step_key, s.source_message_id, f.fact_key FROM workflow_submissions s "
+        "JOIN case_facts f ON f.submission_id = s.id WHERE s.origin = 'assistant'",
+    )
+    assert provenance == [
+        ("assistant", "ask_heroos", data.FOUNDER_MESSAGE_A, "context.policy_awareness")
+    ]
+    # And RLS still keeps it A's own.
+    for ctx, expected in ((CONTEXT_A, 1), (CONTEXT_B, 0)):
+        with Session(restored_runtime) as session:
+            open_company_scope(session, ctx)
+            for table in ("assistant_conversations", "assistant_messages"):
+                visible = session.scalar(text(f"SELECT count(*) FROM {table}"))
+                assert visible == (2 if table == "assistant_messages" else 1) * expected, table
+            session.rollback()

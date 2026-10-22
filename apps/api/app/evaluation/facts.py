@@ -35,7 +35,10 @@ from typing import Final, Literal
 from app.evaluation.model import FactSource, TrustedFactState, TwoState, Value
 from app.evaluation.snapshot import FactSchema, WorkflowExecution
 from app.workflows.conditions import Tri
-from app.workflows.definition import NOT_SURE, Option
+
+# NOT_SURE is re-exported: the canonical "Not sure" answer, for the gateway (no workflow import).
+from app.workflows.definition import NOT_SURE as NOT_SURE
+from app.workflows.definition import Option
 
 MAX_ANSWER_CHARS: Final = 160
 
