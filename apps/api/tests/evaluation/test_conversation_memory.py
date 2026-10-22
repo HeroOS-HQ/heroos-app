@@ -327,3 +327,64 @@ def test_a_correction_drops_what_the_understanding_no_longer_reads(artifacts: Ar
     facts = evaluation(result).facts
     assert facts.conversational.get("incident.history") == "new"
     assert "incident.discussed_with_employee" not in facts.conversational
+
+
+def test_the_jurisdiction_question_is_not_asked_twice_in_a_row(artifacts: Artifacts) -> None:
+    chat = Remembering(artifacts)
+    question = "Is this employee employed under your company's confirmed employment jurisdiction"
+    first = "Can I give him a formal warning? He's on our DIFC entity's payroll."
+    data = understood(
+        first, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")]
+    )
+    data["uncertainties"] = ["jurisdiction_conflict"]
+    opened = chat.say(first, data)
+    assert question in opened.reply
+    words = "His contract is with the DIFC company."
+    again = understood(
+        words, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")]
+    )
+    again["uncertainties"] = ["jurisdiction_conflict"]
+    result = chat.say(words, again)
+    assert question not in result.reply
+    # Unresolved, so its safeguard still holds the step.
+    assert evaluation(result).jurisdiction_state == "conversation_conflict"
+    assert disposition(result) == "block"
+
+
+def test_a_question_asked_again_after_an_uncertain_answer_says_so(artifacts: Artifacts) -> None:
+    chat = Remembering(artifacts)
+    warning(chat)
+    unsure = "I think so?"
+    data = understood(
+        unsure,
+        topics=["formal_warning"],
+        actions=[("opt-warning", "a formal warning")],
+        facts=[fact("given_opportunity_to_explain", "yes", "I think so", turn=1)],
+    )
+    chat.say(unsure, data)  # hedged: not asked again at once
+    later = aside(chat, "What else do I need?")
+    assert later.reply.endswith(
+        "You weren't certain earlier, so just to check: could you tell me about given "
+        "opportunity to explain?"
+    )
+
+
+@pytest.mark.parametrize(
+    ("words", "expected"),
+    [
+        (f"{SAFE} It matters for the warning, so", f"{SAFE} It matters for the warning, so c"),
+        (f"{SAFE} One thing first:", f"{SAFE} One thing first: c"),
+        ("Thanks", "Thanks. C"),
+    ],
+)
+def test_the_question_follows_the_reply_as_one_sentence(
+    artifacts: Artifacts, words: str, expected: str
+) -> None:
+    chat = Remembering(artifacts)
+    result = chat.say(
+        WARN,
+        understood(WARN, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")]),
+        response(words, ["q1"]),
+    )
+    assert result.reply.startswith(expected)
+    assert result.reply.endswith("ould you tell me about given opportunity to explain?")

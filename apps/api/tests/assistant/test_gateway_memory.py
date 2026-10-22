@@ -126,3 +126,13 @@ def test_the_view_says_what_is_known_not_known_and_how_the_last_question_went() 
         {"about": "Standard explained", "value": "yes", "status": "confirmed by the founder"}
     ]
     assert "last_question" not in view
+
+
+def test_an_uncertain_answer_is_recorded_as_such_and_asked_once_more_at_most() -> None:
+    hedged = after(ASKED, (Asked("fact", KEY),), hedged={KEY})
+    assert hedged.asked[KEY] == AskRecord(1, "hedged") and KEY not in hedged.settled()
+    again = after(record(hedged, [("fact", KEY)]), (Asked("fact", KEY),), hedged={KEY})
+    assert again.asked[KEY] == AskRecord(2, "hedged") and KEY in again.settled()
+    view = conversation_view(None, LABELS, facts(), hedged, (Asked("fact", KEY),))
+    assert view["answered_without_certainty"] == ["Standard explained"]
+    assert "without being certain" in view["last_question"]["founder_reply"]  # type: ignore[index]

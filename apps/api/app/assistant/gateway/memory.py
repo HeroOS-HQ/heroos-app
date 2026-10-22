@@ -31,8 +31,11 @@ MAX_UNANSWERED: Final = 2
 STATED: Final = "stated"
 JURISDICTION: Final = "jurisdiction"
 
-Outcome = Literal["pending", "answered", "not_sure", "unanswered"]
-OUTCOMES: Final[tuple[Outcome, ...]] = ("pending", "answered", "not_sure", "unanswered")
+# "hedged": the founder answered, but not with certainty ("I think so", "sort of").
+Outcome = Literal["pending", "answered", "not_sure", "unanswered", "hedged"]
+OUTCOMES: Final[tuple[Outcome, ...]] = (
+    "pending", "answered", "not_sure", "unanswered", "hedged",
+)  # fmt: skip
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +55,7 @@ class ConversationMemory:
             key
             for key, record in self.asked.items()
             if record.last in ("answered", "not_sure")
-            or (record.last == "unanswered" and record.times >= MAX_UNANSWERED)
+            or (record.last in ("unanswered", "hedged") and record.times >= MAX_UNANSWERED)
         }
         return frozenset({*self.said, *done})
 
@@ -134,6 +137,8 @@ def resolve(
             outcome = "not_sure"
         elif key in stated or (answered and single):
             outcome = "answered"
+        elif key in hedged:
+            outcome = "hedged"
         elif does_not_know and single:
             outcome = "not_sure"
         else:
@@ -160,6 +165,9 @@ REPLIES: Final[Mapping[Outcome, str]] = {
     "answered": "answered it",
     "not_sure": "said they don't know (acknowledge that it's still unclear; don't ask it again)",
     "unanswered": ("didn't answer it (never treat it as answered; answer what they actually said)"),
+    "hedged": (
+        "answered it without being certain (acknowledge the uncertainty; never treat it as settled)"
+    ),
 }
 
 
@@ -219,6 +227,9 @@ def conversation_view(
         "known": known,
         "founder_does_not_know": sorted(label(k) for k in not_known if label(k)),
         "asked_before_without_an_answer": unanswered,
+        "answered_without_certainty": [
+            label(k) for k, r in memory.asked.items() if r.last == "hedged" and label(k)
+        ],
     }
     last = [q for q in previous if q.kind != "insistence"]
     if last:

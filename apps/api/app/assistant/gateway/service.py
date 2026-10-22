@@ -567,7 +567,12 @@ def _case_targets(
     if case is None:
         return ()
     facts = evaluation.facts
-    known = {*facts.engine, *facts.conversational, *(t.fact_key for t in planned), *unanswered}
+    # Never what the founder already said only approximately ("last week"): an optional question
+    # asking for more precision reads as asking again (found live).
+    known = {
+        *facts.engine, *facts.conversational, *facts.proposed, *(t.fact_key for t in planned),
+        *unanswered,
+    }  # fmt: skip
     targets: list[QuestionTarget] = []
     for question in case.open_questions:
         key = execution.question_facts.get(question, question)
@@ -583,12 +588,16 @@ def _case_targets(
 def _asked_again(result: "_Turn", requirement: MissingRequirement) -> bool:
     """Whether HeroOS asked exactly this fact last turn and the founder's reply didn't answer it.
 
-    Only a question for information: the insistence question of a two-state caution and the
-    jurisdiction question are part of their safeguard's protocol and are asked again.
+    Not the insistence question of a two-state caution: it is part of its safeguard's protocol and
+    is asked again. The jurisdiction question is a question for information too (found live: the
+    founder said "his contract is with the DIFC company" and was asked it again at once, twice);
+    while it is unresolved its safeguard holds the steps, asked or not.
     """
     if result.trust is None or result.trust.answered:
         return False
-    kind = {"fact": "fact", "confirmation": "confirm"}.get(requirement.kind)
+    kind = {"fact": "fact", "confirmation": "confirm", "jurisdiction": "jurisdiction"}.get(
+        requirement.kind
+    )
     return kind is not None and any(
         a.kind == kind and a.key == requirement.key for a in result.prior.asked
     )
@@ -829,14 +838,24 @@ _ANNOUNCES: Final = re.compile(
 )
 
 
+_LEAD_IN: Final = re.compile(r"(?:[,:]|\b(?:so|and|then))$", re.IGNORECASE)
+
+
 def _with_question(reply: str, question: str) -> str:
     """The reply with the server's question as its one question (its own trailing questions
     are left out: the server's wording is what the founder's answer is read against)."""
     sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s and not _ANNOUNCES.search(s)]
     while sentences and sentences[-1].rstrip().endswith("?"):
         sentences.pop()
-    kept = " ".join(sentences)
-    return f"{kept} {question}".strip() if kept else question
+    kept = " ".join(sentences).rstrip()
+    if not kept:
+        return question
+    if _LEAD_IN.search(kept):
+        # "..., so" or "...:" leads into the question (found live: "... so Has a sanction ...?").
+        return f"{kept} {question[:1].lower()}{question[1:]}"
+    if kept[-1] not in ".!?":
+        kept += "."
+    return f"{kept} {question}"
 
 
 def _noted_facts(execution: WorkflowExecution, noted: Mapping[str, str]) -> dict[str, str]:
@@ -1260,6 +1279,13 @@ class AiGateway:
             jurisdiction=company.jurisdiction.employment_jurisdiction,
             prompt=None if definition_question is None else definition_question.prompt,
         )
+        earlier = result.memory.asked.get(
+            MEMORY_JURISDICTION if requirement.kind == "jurisdiction" else requirement.key
+        )
+        if earlier is not None and earlier.last == "hedged":
+            # Asked again after an uncertain answer: said so, never the bare question repeated.
+            lowered = question[:1].lower() + question[1:]
+            question = f"You weren't certain earlier, so just to check: {lowered}"
         kind = {"fact": "fact", "confirmation": "confirm"}.get(requirement.kind, requirement.kind)
         candidate = requirement.candidate
         if requirement.kind == "confirmation" and definition_question is not None:
