@@ -30,6 +30,25 @@ export function provisionalCaseTitle(at: Date): string {
   return `New case · ${DAY.format(at)}, ${TIME.format(at)}`;
 }
 
+/**
+ * A message that is only a greeting ("Hi Hannah", "Good morning!"): no situation to open a
+ * case for yet (M2-NEW-08). The same rule as the API gateway's (`is_greeting`).
+ */
+const GREETING =
+  /^(?:(?:hi|hello|hey|hiya|howdy|greetings|yo|salam|salaam|marhaba|ahlan|assalamu?\s+alaikum|as-?salamu\s+alaikum|good\s+(?:morning|afternoon|evening|day))(?:\s+(?:there|again|all|everyone|team|hannah|heroos|hero\s+os))*(?:\s+[a-z]+)?(?:\s+how\s+are\s+you(?:\s+(?:doing|today))?)?)$/;
+
+export function isGreeting(text: string): boolean {
+  const words = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_\s'-]/gu, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return words.length > 0 && words.length <= 7 && GREETING.test(words.join(" "));
+}
+
+/** HeroOS's answer to a greeting: what can it help with (nothing is opened or stored). */
+export const GREETING_REPLY = "Hi! What can HR help you with today? Tell me what's happening at work in your own words.";
+
 /** The BFF's answer: the case opened, and whether the founder's words were saved into it. */
 export type AskStarted = { caseId: string; narrativeSaved: boolean };
 

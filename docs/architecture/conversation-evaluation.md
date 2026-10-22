@@ -5,6 +5,8 @@
 **Milestone:** [M2 — Reliable AI HR Workflow Platform](../milestones/m2-reliable-ai-hr-workflow-platform.md), issue M2-NEW-06\
 **Related:** [ai-gateway.md](ai-gateway.md) (M2-NEW-05, the conversation), [knowledge-runtime.md](knowledge-runtime.md) (M2-NEW-04, the only HR/legal authority), [workflow-progression.md](workflow-progression.md) (the rule bundle and predicate engine), [disciplinary-intake.md](disciplinary-intake.md) (the intake rules)
 
+> **Current architecture (M2-NEW-08):** Ask HeroOS reads the Case's workflow position, the Case is chat-first (its formal steps appear inline in the conversation) and requested decisions can need the Case's formal record. See [disciplinary-reference-workflow.md](disciplinary-reference-workflow.md). This document stays the record of what its own milestone built.
+
 > **The language model never determines a HeroOS outcome. It proposes understanding and phrases a response. The deterministic backend determines the outcome.**
 
 > **A Condition result and a requested action's availability are separate concepts.**
@@ -256,3 +258,14 @@ M2-NEW-07 (Part 1) persists it: the record of each turn's own server-side evalua
 - `tests/evaluation/test_real_runtime.py`: the real artifacts (local only: `KNOWLEDGE_BUNDLE=… EXECUTION_PROFILE=… uv run pytest tests/evaluation/test_real_runtime.py`).
 - Fictional content: `tests/fixtures/evaluation.py` (a fictional cap, prerequisite rules, and the invented second workflow `synthetic_probation`).
 - Web: `components/ask/ask-conversation.test.tsx`, `lib/server/gateway-bff.test.ts`.
+
+## 18. M2-NEW-08: the Case's formal record and hypothetical decisions
+
+- `EvaluationRequest.progress` (`CaseProgress`) carries the attached Case's completed stages and stage checklist answers, under the jurisdiction its progression runs under.
+  - Only an employer decision's prerequisite rule reads them, and only when the evaluation resolves that same jurisdiction (`CaseProgress.applies`). Anywhere else no stage is completed and no checklist answer is known.
+  - A bound rule's callables take `(answers, completed stages)`.
+  - A missing checklist answer is never a chat question.
+  - Such a Block's next step is `complete_case_step`, and the outcome card adds `CASE_STEP_NOTE`.
+- `EvaluationRequest.hypothetical` evaluates decisions asked about only hypothetically. Their `ActionEvaluation.hypothetical` is true, they are never asked about insistence, and the AI view says `"asked": "hypothetically"`. The gateway never carries them in the next state.
+- The record gains additive fields `actions[].hypothetical` and `case_progress`; the schema name is unchanged.
+- The rule bundle (still `heroos.rule-bundle/1`) lets a conversation **prerequisite** read `stage_completed` and `progress.<stage>.<item>` of its own jurisdiction's programme. A Condition's rule still never reads a stage (`stage_referenced_in_conversation`).

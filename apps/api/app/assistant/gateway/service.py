@@ -37,6 +37,18 @@
 At most four provider requests per founder turn, inside one time budget.
 A provider failure is never retried and never answered by anything else.
 
+**The Case's workflow position (M2-NEW-08).** A persisted conversation with a
+Case passes its authoritative position (``CaseContext``, built by
+``app.conversations.progress`` from the Case's own records): the deterministic
+evaluation reads it as input (an employer decision's prerequisite may need a
+completed stage or a stage checklist answer), and the response phase reads a
+labels-only view of it (``case_progress``) so HeroOS can say where the Case
+stands. It is read-only: nothing here selects a pathway, starts or completes a
+stage or records anything; the employer does that in the Case.
+
+**A greeting** ("Hi Hannah") gets a friendly fixed reply with no model request:
+there is nothing to understand or evaluate yet, and no Case is created.
+
 The result carries a ``Handoff`` (server-side only: never sent to the browser)
 with the understanding, the deterministic evaluation and the snapshot the turn
 used, and the next trusted state (``GatewayReply.next_state``), for the
@@ -95,7 +107,7 @@ from app.evaluation.facts import (
     contradicted,
     trust_facts,
 )
-from app.evaluation.model import ConversationEvaluation, Matter, TrustedFactState
+from app.evaluation.model import CaseProgress, ConversationEvaluation, Matter, TrustedFactState
 from app.evaluation.presentation import (
     Outcome,
     fallback_reply,
@@ -174,6 +186,25 @@ UNCLEAR: Final = (
     "Tell me a little more about what's happening at work, in your own words: who's involved "
     "and what happened. Then I can see how HeroOS's approved guidance can help."
 )
+GREETING: Final = (
+    "Hi! What can HR help you with today? Tell me what's happening at work in your own words."
+)
+# A message that is only a greeting ("Hi Hannah", "Good morning!"): nothing to understand yet.
+_GREETING: Final = re.compile(
+    r"^(?:(?:hi|hello|hey|hiya|howdy|greetings|yo|salam|salaam|marhaba|ahlan"
+    r"|assalamu?\s+alaikum|as-?salamu\s+alaikum|good\s+(?:morning|afternoon|evening|day))"
+    r"(?:\s+(?:there|again|all|everyone|team|hannah|heroos|hero\s+os))*"
+    r"(?:\s+[a-z]+)?"
+    r"(?:\s+how\s+are\s+you(?:\s+(?:doing|today))?)?)$"
+)
+
+
+def is_greeting(message: str) -> bool:
+    """The message is only a greeting (at most a name after it): no HR situation in it yet."""
+    words = re.sub(r"[^\w\s'-]", " ", message.casefold()).split()
+    return 0 < len(words) <= 7 and _GREETING.match(" ".join(words)) is not None
+
+
 SOURCE_CONFLICT: Final = (
     "HeroOS can't safely guide this specific question yet: the approved material behind it is "
     "still being reviewed, and I won't choose between versions of it. A qualified employment "
@@ -212,6 +243,7 @@ FALLBACK_FAMILY: Final[dict[str, str]] = {
     "procedural_certainty": "outcome",
     "legal_certainty": "legal",
     "jurisdiction_certainty": "legal",
+    "misconduct_finding": "outcome",
     "contradicts_hold": "outcome",
     "contradicts_review": "outcome",
     "contradicts_caution": "outcome",
@@ -236,6 +268,38 @@ class GatewayFailure(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class CaseContext:
+    """The attached Case's authoritative workflow position for one turn (M2-NEW-08).
+
+    Built from the Case's own records (never from the conversation) by
+    ``app.conversations.progress``. Read-only for the AI: the model can describe
+    it, never change it; the employer changes it through the Case's controls.
+    """
+
+    # The evaluation's input: completed stages and checklist answers, per jurisdiction.
+    progress: CaseProgress
+    # The labels-only view the response phase reads (``case_progress``): never an id, a rule,
+    # a raw row or an answer value.
+    view: Mapping[str, object]
+    # The view's texts (stage titles, pathway labels), for the grounding check.
+    texts: tuple[str, ...] = ()
+    # What a reply's wording about the Case rests on (``AiGateway.reconcile``).
+    signature: tuple[object, ...] = ()
+    # The decisions currently needing Expert Review (option ids; titled from the turn's
+    # snapshot), and whether the matter as a whole does.
+    reviews: tuple[str, ...] = ()
+    matter_review: bool = False
+
+    def model_view(self, knowledge: KnowledgeBundle) -> tuple[dict[str, object], tuple[str, ...]]:
+        """The view the response phase reads, and its texts (for the grounding check)."""
+        titles = {o.id: o.title for o in knowledge.options}
+        held = [titles.get(a, "A decision you asked about") for a in self.reviews]
+        if self.matter_review:
+            held.append("The matter as a whole")
+        return {**self.view, "decisions_needing_expert_review": held}, (*self.texts, *held)
+
+
+@dataclass(frozen=True, slots=True)
 class FounderTurn:
     message: str
     # Recent conversation, oldest first, both roles: as the browser holds it (untrusted), or
@@ -245,6 +309,8 @@ class FounderTurn:
     # A persisted conversation's trusted state for this turn's snapshot (M2-NEW-07); it
     # replaces the continuation, which is then not read.
     resume: Callable[[ExecutionSnapshot], ReadResult] | None = None
+    # M2-NEW-08: the attached Case's workflow position (None: no Case).
+    case: CaseContext | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +348,8 @@ class Handoff:
     snapshot: ExecutionSnapshot | None = None
     # M2-NEW-07: the decisions the founder explicitly withdrew in this message (option ids).
     withdrawn_actions: tuple[str, ...] = ()
+    # M2-NEW-08: the decisions asked about only hypothetically (evaluated, never intended).
+    hypothetical_actions: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -380,6 +448,8 @@ class _Turn:
     trust: TrustOutcome | None
     prior: PriorState
     reconfirm: bool
+    # M2-NEW-08: the Case position the reply's wording rests on.
+    case: tuple[object, ...] = ()
 
 
 def _label(target: QuestionTarget) -> str:
@@ -409,6 +479,7 @@ def _signature(result: "_Turn") -> tuple[object, ...]:
         evaluation.jurisdiction_state,
         tuple((a.action, a.disposition) for a in evaluation.actions),
         tuple((m.key, m.kind, m.candidate) for m in evaluation.missing),
+        result.case,
     )
 
 
@@ -720,12 +791,15 @@ class AiGateway:
                 blueprint=_blueprint_values(company),
             )
             requested = [a.action for a in understanding.actions]
+            hypothetical = tuple(a.action for a in understanding.hypothetical)
             if trust.answered and read.state is not None:
                 # A direct answer keeps the steps it was about under evaluation (unless the
                 # founder withdrew one in the same message).
                 withdrawn = {a.action for a in understanding.withdrawn}
                 requested += [
-                    a for a in read.state.actions if a in execution.options and a not in withdrawn
+                    a
+                    for a in read.state.actions
+                    if a in execution.options and a not in withdrawn and a not in hypothetical
                 ]
             confirmed = company.jurisdiction
             request = EvaluationRequest(
@@ -744,6 +818,8 @@ class AiGateway:
                 multiple_matters="multiple_matters" in understanding.uncertainties,
                 pathway_candidate=understanding.pathway,
                 declined=trust.declined,
+                progress=None if turn.case is None else turn.case.progress,
+                hypothetical=hypothetical,
             )
         evaluation = self._evaluation.evaluate(snapshot, request)
         telemetry.evaluation_us = (time.perf_counter_ns() - started) // 1000
@@ -757,7 +833,8 @@ class AiGateway:
         telemetry.conversational_untrusted = evaluation.facts.not_engine_trusted
         if execution is not None and execution.rule_bundle is not None:
             telemetry.rule_bundle = execution.rule_bundle.version
-        return _Turn(evaluation, card, trust, prior, reconfirm)
+        case = () if turn.case is None else turn.case.signature
+        return _Turn(evaluation, card, trust, prior, reconfirm, case)
 
     def _targets(
         self,
@@ -831,6 +908,19 @@ class AiGateway:
         facts = {f.key: f.label for f in bundle.facts}
         labels = [ASKED_LABELS.get(a.kind, facts.get(a.key, "")) for a in asked_before]
 
+        if is_greeting(turn.message):
+            # Nothing to understand or evaluate yet: a friendly reply, no model request.
+            understanding = UnderstandingProposal(
+                intent="unclear", workflow=None, pathway=None, topics=(), facts=(),
+                uncertainties=(), summary=None,
+            )  # fmt: skip
+            telemetry.wording = "greeting"
+            result = self._evaluate(snapshot, company, turn, understanding, None, read, telemetry)
+            return self._reply(
+                company, snapshot, GREETING, None, "clarifying", (), understanding, None, result,
+                turn, fixed=True,
+            )  # fmt: skip
+
         understanding = self._understand(
             provider, company, founder, [lbl for lbl in labels if lbl], telemetry, deadline,
             view.catalog,
@@ -871,9 +961,14 @@ class AiGateway:
         plan = dataclasses.replace(plan, targets=self._targets(snapshot, plan, result, company))
         knowledge = knowledge_view(bundle, plan)
         decided, decided_texts = outcome_view(result.evaluation, result.card)
+        case_view, case_texts = (
+            ({}, ()) if turn.case is None else turn.case.model_view(bundle)
+        )  # fmt: skip
         sections: dict[str, object] = {
             "approved_knowledge": knowledge.data,
             **({"heroos_outcome": decided} if decided is not None else {}),
+            # M2-NEW-08: where the Case stands, as its employer recorded it (read-only).
+            **({"case_progress": case_view} if turn.case is not None else {}),
             "company_context": company_view(company),
             "established_facts": [
                 {"about": facts[f.fact_key], "value": f.value} for f in plan.established
@@ -916,7 +1011,7 @@ class AiGateway:
             )
         grounding = check_grounding(
             texts,
-            knowledge=(*knowledge.texts, *decided_texts),
+            knowledge=(*knowledge.texts, *decided_texts, *case_texts),
             founder=founder,
             jurisdiction=plan.context.jurisdiction,
             prohibited=plan.context.prohibited_behaviors,
@@ -1182,10 +1277,11 @@ class AiGateway:
             runtime_bundle_digest=None
             if snapshot.knowledge is None
             else snapshot.knowledge.runtime_digest,
-            requested_actions=tuple(a.action for a in evaluation.actions),
+            requested_actions=tuple(a.action for a in evaluation.actions if not a.hypothetical),
             evaluation=evaluation,
             snapshot=snapshot,
             withdrawn_actions=tuple(a.action for a in understanding.withdrawn),
+            hypothetical_actions=tuple(a.action for a in evaluation.actions if a.hypothetical),
         )
         next_state = self._next_state(result, asked)
         return GatewayReply(
@@ -1230,7 +1326,8 @@ class AiGateway:
             jurisdiction=result.trust.jurisdiction,
             two_state={t.rule: t for t in evaluation.two_state},
             reconfirm=result.reconfirm,
-            actions=tuple(a.action for a in evaluation.actions),
+            # A "what if" is never carried as a step the employer still considers.
+            actions=tuple(a.action for a in evaluation.actions if not a.hypothetical),
         )
 
     def _log(

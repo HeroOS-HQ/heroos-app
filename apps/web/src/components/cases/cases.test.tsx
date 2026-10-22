@@ -38,7 +38,8 @@ const summary = (overrides: Record<string, unknown> = {}) => parseCaseSummary(ap
 
 describe("CaseWorkspace", () => {
   const OTHER = () => summary({ id: OTHER_CASE_ID, title: "[SYNTHETIC] Other case" });
-  function renderWorkspace(initial = view(), fetcher = fetcherOf()) {
+  /** The case page with its case details unfolded (they are secondary: folded until asked for). */
+  function renderWorkspace(initial = view(), fetcher = fetcherOf(), { details = true } = {}) {
     render(
       <CaseWorkspace
         fetcher={fetcher as unknown as typeof fetch}
@@ -46,6 +47,7 @@ describe("CaseWorkspace", () => {
         initialView={initial}
       />,
     );
+    if (details) fireEvent.click(screen.getByRole("button", { name: "Review case details" }));
     return fetcher;
   }
   const save = () => fireEvent.click(screen.getByRole("button", { name: /Save answers/ }));
@@ -64,33 +66,42 @@ describe("CaseWorkspace", () => {
         initialView={view()}
       />,
     );
-    const link = screen.getByRole("link", { name: /Your Ask HeroOS conversation/ });
+    const link = screen.getByRole("link", { name: /^Continue with HeroOS/ });
     expect(link).toHaveAttribute("href", `/workspaces/${COMPANY_ID}?conversation=${conversationId}`);
-    // The chat isn't copied into the Case: its guided conversation and history stay its own.
-    expect(screen.getByRole("log", { name: /Conversation: / })).not.toHaveTextContent("Your Ask HeroOS conversation");
+    // The Case is chat-first: its conversation is Ask HeroOS, never a second chat thread here.
+    expect(screen.queryByRole("log")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/not an AI assistant|guided workflow/);
   });
 
-  it("shows no Ask HeroOS link for a Case without a conversation", () => {
+  it("points a Case without a conversation to Ask HeroOS", () => {
     renderWorkspace();
-    expect(screen.queryByRole("link", { name: /Your Ask HeroOS conversation/ })).toBeNull();
+    expect(screen.queryByRole("link", { name: /^Continue with HeroOS/ })).toBeNull();
+    expect(screen.getByRole("link", { name: /^Ask HeroOS/ })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}`);
   });
 
-  it("is the case's conversation in the approved thread, then what HeroOS needs to know, without Hannah", () => {
-    renderWorkspace();
+  it("is the case's record, chat-first: Continue with HeroOS, what needs attention, then the case details folded away", () => {
+    renderWorkspace(view(), fetcherOf(), { details: false });
     expect(screen.getByRole("heading", { level: 1 })).toHaveTextContent("[SYNTHETIC] Attendance concern");
-    const conversation = screen.getByRole("log", { name: "Conversation: [SYNTHETIC] Attendance concern" });
-    expect(within(conversation).getByText("This is a guided workflow, not an AI assistant.")).toBeInTheDocument();
-    expect(within(conversation).getByText("Still to answer")).toBeInTheDocument();
+    // No second conversation: the old guided thread (and its "not an AI assistant" welcome) isn't shown.
+    expect(screen.queryByRole("log")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/not an AI assistant|guided workflow/);
     // The Company's jurisdiction isn't confirmed: a pause, shown as a Block (its own words, the stop sign, never colour alone).
-    const pause = within(conversation).getByRole("article", { name: "HeroOS, Stop" });
+    const attention = screen.getByRole("list", { name: "Case notices" });
+    const pause = within(attention).getByRole("article", { name: "HeroOS, Stop" });
     expect(within(pause).getByText("Paused: jurisdiction not confirmed")).toBeInTheDocument();
     // HeroOS speaks; no mascot and no AI demo on the case page.
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(document.body.textContent).not.toMatch(/Hannah|AI demo/);
 
-    const answers = screen.getByRole("region", { name: "Your answers" });
-    expect(within(answers).getByText("HeroOS needs to know")).toBeInTheDocument();
-    const groups = within(answers).getByRole("navigation", { name: "Question groups" });
+    const details = screen.getByRole("region", { name: "Case details" });
+    expect(within(details).getByText(/details are still open\. Tell HeroOS in your own words, or review them here\./)).toBeInTheDocument();
+    // Secondary: folded until asked for, then the same structured answers as before.
+    expect(within(details).queryByRole("navigation", { name: "Question groups" })).toBeNull();
+    const unfold = within(details).getByRole("button", { name: "Review case details" });
+    expect(unfold).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(unfold);
+    expect(within(details).getByRole("button", { name: "Hide case details" })).toHaveAttribute("aria-expanded", "true");
+    const groups = within(details).getByRole("navigation", { name: "Question groups" });
     expect(within(groups).getAllByRole("button").map((b) => b.textContent)).toEqual([
       expect.stringContaining("1. Initial facts"),
       expect.stringContaining("2. Employment jurisdiction"),
@@ -199,7 +210,7 @@ describe("CaseWorkspace", () => {
     const fetcher = renderWorkspace(confirmed, fetcherOf(reply(200, { view: confirmed })));
     fireEvent.click(screen.getByRole("button", { name: /Safety screening/ }));
     expect(screen.getByText(/haven't been legally reviewed yet/)).toBeInTheDocument();
-    const groups = within(screen.getByRole("region", { name: "Your answers" })).getAllByRole("group");
+    const groups = within(screen.getByRole("region", { name: "Case details" })).getAllByRole("group");
     expect(groups).toHaveLength(9);
     for (const group of groups) fireEvent.click(within(group).getByRole("radio", { name: "No" }));
     fireEvent.click(within(groups[3]).getByRole("radio", { name: "Not sure" }));
@@ -248,7 +259,8 @@ describe("CaseWorkspace", () => {
 
   it("shows a hold and cautions from the API without promising an expert", () => {
     renderWorkspace(view({ company: "uae_federal", hold: HIGH_RISK_HOLD, cautions: [POLICY_CAUTION] }));
-    const conversation = screen.getByRole("log", { name: /^Conversation/ });
+    // Never folded away: above the case's record.
+    const conversation = screen.getByRole("list", { name: "Case notices" });
     // The hold for specialist review is Expert Review; the caution is a Warning (words and icons, not colour alone).
     const expert = within(conversation).getByRole("article", { name: "HeroOS, Expert Review" });
     expect(within(expert).getByText("On hold: specialist review needed")).toBeInTheDocument();
@@ -292,9 +304,7 @@ describe("CaseWorkspace", () => {
     expect(body.submissionKey).toMatch(UUID);
     expect(body.answers).toEqual({ "incident.narrative": NARRATIVE, "incident.history": "new" });
 
-    // The view is the API's answer: the employer's turn and the new progress.
-    const conversation = screen.getByRole("log", { name: /^Conversation/ });
-    expect(within(conversation).getByText("You")).toBeInTheDocument();
+    // The view is the API's answer: the new progress.
     expect(screen.getByText(/3 still to answer/)).toBeInTheDocument();
     // The next group with questions left is offered.
     fireEvent.click(screen.getByRole("button", { name: "Continue to Incident context" }));

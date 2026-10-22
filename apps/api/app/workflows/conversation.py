@@ -376,6 +376,21 @@ def _assistant_notice(
     )
 
 
+# M2-NEW-08: the current product framing of a Case's record, in the presentation layer. A
+# definition's own welcome ("a guided workflow, not an AI assistant") is historical wording
+# kept with its versioned definition; Ask HeroOS is where the founder talks to HeroOS now.
+CASE_RECORD: Final = (
+    "This is the case's record. Ask HeroOS is where you describe the situation and ask "
+    "questions in your own words; here your company reviews the case details, records its own "
+    "workflow decisions (the pathway and each stage) and keeps the history. HeroOS doesn't make "
+    "employment decisions."
+)
+
+
+def record_title(definition: WorkflowDefinition) -> str:
+    return f"Your {definition.title} case"
+
+
 def compose(
     definition: WorkflowDefinition,
     submissions: Sequence[SubmissionRecord],
@@ -389,7 +404,7 @@ def compose(
     """The full conversation for the current state, oldest first."""
     first = definition.steps[0]
     messages: list[Message] = [
-        Information("welcome", definition.welcome_title, definition.welcome),
+        Information("welcome", record_title(definition), CASE_RECORD),
         QuestionGroup(
             f"step:{first.key}",
             first.key,

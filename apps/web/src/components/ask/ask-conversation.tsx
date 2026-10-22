@@ -19,6 +19,7 @@ import {
 } from "@/lib/ask/conversation";
 
 import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
+import { CaseSteps } from "./case-steps";
 import { ConversationContext } from "./conversation-context";
 import { ConversationHistory } from "./conversation-history";
 import { AdviserTurn, type Outcome as Tone, OutcomeLabel } from "./response-tone";
@@ -49,6 +50,11 @@ import { AdviserTurn, type Outcome as Tone, OutcomeLabel } from "./response-tone
  * (another tab, another administrator), the page shows the latest and keeps
  * the unsent words in the box. "New conversation" only starts a new one here:
  * nothing is deleted, and nothing is stored until HeroOS answers.
+ *
+ * A conversation with a Case is that Case (M2-NEW-08): the Case's own formal
+ * steps (choosing the pathway, starting and completing stages, a stage's
+ * checklist, acknowledging a caution) appear inline after the latest message
+ * (`CaseSteps`), one at a time, and only the founder's own click takes one.
  */
 
 type Failure =
@@ -503,6 +509,21 @@ export function AskConversation({
           </>
         ) : null}
       </ol>
+      {current?.case && pending === null ? (
+        <div className="mt-7">
+          <CaseSteps
+            caseId={current.case.id}
+            companyId={companyId}
+            fetcher={fetcher}
+            // The employer moved the Case here: the conversation's status reads it again.
+            onChanged={() => {
+              const id = current.id;
+              void fetchDetail(id).then((result) => apply(id, result));
+            }}
+            revision={current.revision}
+          />
+        </div>
+      ) : null}
       <div className="sticky bottom-0 mt-6 bg-gradient-to-t from-hero-bg from-60% to-transparent pb-2 pt-4">
         {composer(true)}
         <p className="mt-2 text-center text-[0.75rem] text-hero-muted">HeroOS doesn&apos;t make employment decisions.</p>

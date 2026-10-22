@@ -7,7 +7,7 @@
 // reload -> sign out and in -> still there; then a member's access, another
 // Company's denial, duplicate and stale writes, PostgreSQL rows and RLS, and no
 // case content in any log. Synthetic data only.
-import { newFounder, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
+import { newFounder, openCaseDetails, openFullCaseDetails, quote, signOutFromMenu } from "./common.mjs";
 
 const NARRATIVE = "[SYNTHETIC E2E] A team member left the site early on two shifts without telling anyone.";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -15,6 +15,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // Once the initial facts are complete, a case opens on the next question group
 // with questions left; open "Initial facts" explicitly to see its answers.
 async function openInitialFacts(page) {
+  await openCaseDetails(page);
   await page.waitForHydrated('nav[aria-label="Question groups"] button');
   await page.clickText("button", "1. Initial facts");
   await page.waitForHydrated("#q-incident-narrative");
@@ -63,7 +64,8 @@ export async function run(ctx) {
   // A double click on Send: the same button twice in one task.
   await page.eval(`(() => { const b = document.querySelector('button[aria-label="Send"]'); b.click(); b.click(); return true; })()`);
   await page.waitFor(`/^\\/workspaces\\/[^/]+\\/cases\\/[0-9a-f-]{36}$/.test(location.pathname)`, { message: "the new case opens" });
-  await page.waitForText("Welcome to your Disciplinary case");
+  // M2-NEW-08: the Case is chat-first; its record page leads with Ask HeroOS, details folded.
+  await page.waitForText("Review case details");
   const caseId = await page.eval("location.pathname.split('/').pop()");
   const instances = await owner(`SELECT count(*), min(c.case_type), min(i.created_by_user_id::text), min(c.title) FROM workflow_instances i JOIN cases c ON c.id = i.case_id WHERE i.company_id = ${quote(founder.companyId)}`);
   const TITLE = instances[0][3];
@@ -74,11 +76,14 @@ export async function run(ctx) {
       JSON.stringify(asked) === JSON.stringify([[NARRATIVE, "1"]]),
     JSON.stringify({ instances, asked }));
 
-  // The progress and "not available yet" lists are in the case status's folded "Full case details": open them as a person would.
+  // The case details (secondary, M2-NEW-08) and the case status's folded "Full case details": open them as a person would.
+  const folded = await page.eval(`document.querySelector('button[aria-controls="case-details-body"]')?.getAttribute("aria-expanded")`);
+  await openCaseDetails(page);
   await openFullCaseDetails(page);
   const opened = await page.text();
-  check("CASE-4", "the case says it is not AI, asks the initial questions, and pauses on the unconfirmed jurisdiction with stages coming later",
-    opened.includes("not an AI assistant") && opened.includes("What happened?") && opened.includes("Paused: jurisdiction not confirmed") &&
+  check("CASE-4", "the case is chat-first (Ask HeroOS first, no second conversation, details folded until asked for), asks the initial questions there, and pauses on the unconfirmed jurisdiction with stages coming later",
+    folded === "false" && opened.includes("Ask HeroOS") && !opened.includes("not an AI assistant") && !opened.includes("guided workflow") &&
+      opened.includes("What happened?") && opened.includes("Paused: jurisdiction not confirmed") &&
       opened.includes("Needs information") && opened.includes("Coming later") && opened.includes("Expert review") && !/Hannah|AI demo/.test(opened),
     opened.slice(0, 200));
   await ctx.screenshot(page, "case-new-1440");
@@ -105,10 +110,11 @@ export async function run(ctx) {
       ]),
     JSON.stringify({ prefilled: prefilled === NARRATIVE, facts }));
   const saved = await page.text();
-  check("CASE-6", "the saved answers appear as the employer's turn and progress follows them",
-    saved.includes("You") && saved.includes("Awaiting jurisdiction confirmation") && saved.includes("4 of 5 answered"));
+  check("CASE-6", "the saved answers are the case's record and progress follows them",
+    saved.includes("Awaiting jurisdiction confirmation") && saved.includes("4 of 5 answered"));
 
   await page.goto(`${webOrigin}${companyPath}/cases/${caseId}`);
+  await openCaseDetails(page);
   await page.waitForHydrated("#q-incident-narrative");
   const restored = await page.eval(`({ narrative: document.getElementById("q-incident-narrative").value, date: document.getElementById("q-incident-date").value,
     history: document.getElementById("q-incident-history-new").checked, discussed: document.getElementById("q-incident-discussed-with-employee-no").checked })`);

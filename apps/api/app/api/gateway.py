@@ -205,6 +205,21 @@ class AttentionOut(BaseModel):
     expert_review: ExpertReviewOut
 
 
+class PositionOut(BaseModel):
+    """The Case's formal workflow position (M2-NEW-08): what its employer recorded, in words."""
+
+    # The progression status code ("unavailable": no stages here).
+    state: str
+    label: str
+    # The recorded pathway (the employer's decision); None: not chosen yet.
+    pathway: str | None
+    # The stage in progress, else the next stage that can start.
+    stage: str | None
+    stage_in_progress: bool
+    # Case steps the progression rules hold for specialist review (never the whole Case).
+    held_steps: list[str]
+
+
 class StatusOut(BaseModel):
     """Separate dimensions, never one enum: an action's review doesn't pause the Case."""
 
@@ -213,6 +228,8 @@ class StatusOut(BaseModel):
     attention: AttentionOut
     checks: Literal["ready", "unavailable", "not_applicable"]
     latest_outcome: Literal["guidance", "warning", "block", "expert_review", "unavailable", "none"]
+    # None: the conversation has no Case.
+    position: PositionOut | None
 
 
 class ConversationSummaryOut(BaseModel):
@@ -311,6 +328,16 @@ def _status_out(value: ConversationStatus) -> StatusOut:
         ),
         checks=value.checks,
         latest_outcome=value.latest_outcome,
+        position=None
+        if value.position is None
+        else PositionOut(
+            state=value.position.state,
+            label=value.position.label,
+            pathway=value.position.pathway,
+            stage=value.position.stage,
+            stage_in_progress=value.position.stage_in_progress,
+            held_steps=list(value.position.held_steps),
+        ),
     )
 
 

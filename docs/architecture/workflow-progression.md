@@ -13,6 +13,8 @@ is unavailable (fail closed) until one is approved and installed (§4).\
 [Tenant Isolation](tenant-isolation.md), [ADR-006](../decisions/ADR-006-workflow-orchestration.md),
 [Document Templates and Safe Previews](document-templates.md) (M2-04C: templates are bound to this bundle's stages)
 
+> **Current architecture (M2-NEW-08):** Ask HeroOS reads the Case's workflow position, the Case is chat-first (its formal steps appear inline in the conversation) and requested decisions can need the Case's formal record. See [disciplinary-reference-workflow.md](disciplinary-reference-workflow.md). This document stays the record of what its own milestone built.
+
 ## 1. What M2-03 is
 
 A server-authoritative progression engine that keeps an employer from skipping
@@ -296,3 +298,9 @@ transition as available, whatever the payload says.
 Document generation, penalty or outcome decisions, termination, expert
 tickets or clearance, deadline tracking, cross-case history, AI of any kind,
 Probation and Recruitment content, AWS deployment.
+
+## 10. M2-NEW-08: one workflow authority, read by Ask HeroOS
+
+- The progression engine stays the only workflow authority. Ask HeroOS reads the Case's position (`app/conversations/progress.py`) and never writes a progress event. The pathway, transitions, checklists and acknowledgments are still the employer's own requests to these routes: on the Case page, or inline in Ask HeroOS (the same routes, `use-case-request.ts`).
+- A conversation **prerequisite** rule may read `stage_completed` and a stage checklist answer of its own jurisdiction's programme (parse-checked), so "investigation completed" can be the employer's recorded stage rather than the founder's words.
+- A recorded transition escalation stays sticky on its transition. It is never the Case's status: the case pill keeps the Case's own, and the case status says "Specialist review needed before: <step>". A decision's Expert Review (M2-NEW-07) is a separate, current requirement (disciplinary-reference-workflow.md §5).

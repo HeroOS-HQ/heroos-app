@@ -40,7 +40,7 @@ from datetime import date
 from types import MappingProxyType
 from typing import Final, Literal, Protocol
 
-from app.evaluation.model import Availability, Category, Note, Provenance
+from app.evaluation.model import CHECKLIST_PREFIX, Availability, Category, Note, Provenance
 from app.evaluation.profile import (
     Binding,
     CoveredAction,
@@ -65,6 +65,8 @@ from app.workflows.progression.bundle import ConversationRule, RuleBundle
 logger = logging.getLogger(__name__)
 
 Answers = Mapping[str, object]
+# The Case's completed stages (``CaseProgress.completed``); empty without a Case.
+Stages = frozenset[str]
 FactKind = Literal["yes_no", "choice", "count", "date", "blueprint"]
 SEVERITY: Final[Mapping[str, int]] = {
     "none": 0, "warn": 1, "block": 2, "escalate": 3,
@@ -129,9 +131,18 @@ class BoundRule:
     note: Note | None
     # The knowledge fact keys it reads.
     reads: tuple[str, ...]
-    truth: Callable[[Answers], Tri] = field(compare=False)
-    unknown: Callable[[Answers], tuple[str, ...]] = field(compare=False)
-    follow_up_truth: Callable[[Answers], Tri] | None = field(default=None, compare=False)
+    # Each takes the trusted answers and the Case's completed stages (M2-NEW-08: only an
+    # employer decision's prerequisite rule may read a stage or a stage checklist answer).
+    truth: Callable[[Answers, Stages], Tri] = field(compare=False)
+    unknown: Callable[[Answers, Stages], tuple[str, ...]] = field(compare=False)
+    follow_up_truth: Callable[[Answers, Stages], Tri] | None = field(default=None, compare=False)
+    # The stages it reads (an employer decision's prerequisite only).
+    stages: tuple[str, ...] = ()
+
+    @property
+    def reads_case_progress(self) -> bool:
+        """It reads the Case's formal progression (a stage, or a stage checklist answer)."""
+        return bool(self.stages) or any(k.startswith(CHECKLIST_PREFIX) for k in self.reads)
 
 
 class RuleExecutor(Protocol):
@@ -199,8 +210,8 @@ class IntakeExecutor:
             provisional=found.provisional,
             note=None,
             reads=intake_rules.predicate_keys(predicate),
-            truth=lambda answers: intake_rules.evaluate(predicate, answers),
-            unknown=lambda answers: _intake_unknown(predicate, answers),
+            truth=lambda answers, _: intake_rules.evaluate(predicate, answers),
+            unknown=lambda answers, _: _intake_unknown(predicate, answers),
         )
 
 
@@ -209,8 +220,8 @@ def bound_conversation_rule(item: ConversationRule, executor: str) -> BoundRule:
     trigger = rule.trigger
     follow_trigger = None if follow_up is None else follow_up.trigger
 
-    def context(answers: Answers) -> predicates.Context:
-        return predicates.Context(answers, frozenset())
+    def context(answers: Answers, completed: Stages) -> predicates.Context:
+        return predicates.Context(answers, completed)
 
     reads = list(predicates.fact_keys(trigger))
     if follow_trigger is not None:
@@ -224,11 +235,18 @@ def bound_conversation_rule(item: ConversationRule, executor: str) -> BoundRule:
         provisional=rule.provisional,
         note=Note(rule.message.title, (rule.message.body,), rule.provisional),
         reads=tuple(reads),
-        truth=lambda answers: predicates.evaluate(trigger, context(answers)),
-        unknown=lambda answers: predicates.unknown_keys(trigger, context(answers)),
+        truth=lambda answers, completed: predicates.evaluate(trigger, context(answers, completed)),
+        unknown=lambda answers, completed: predicates.unknown_keys(
+            trigger, context(answers, completed)
+        ),
         follow_up_truth=None
         if follow_trigger is None
-        else (lambda answers: predicates.evaluate(follow_trigger, context(answers))),
+        else (
+            lambda answers, completed: predicates.evaluate(
+                follow_trigger, context(answers, completed)
+            )
+        ),
+        stages=predicates.stage_keys(trigger),
     )
 
 
@@ -541,6 +559,7 @@ def _build_workflow(
                 truth=rule.truth,
                 unknown=rule.unknown,
                 follow_up_truth=rule.follow_up_truth,
+                stages=rule.stages,
             )
             for key in reads:
                 fact = facts.get(key)

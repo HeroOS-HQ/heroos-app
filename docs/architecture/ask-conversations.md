@@ -2,6 +2,8 @@
 
 **Status:** complete (Parts 1 to 3): persistence, the persistent API and BFF contract, and the Ask HeroOS history UX. Migration D6 (`8860b86ef2ba`), schema contract 9. Not deployed, D6 not applied to staging, nothing activated (the gateway stays off by default, M2-NEW-05).
 
+> **Current architecture (M2-NEW-08):** Ask HeroOS reads the Case's workflow position, the Case is chat-first (its formal steps appear inline in the conversation) and requested decisions can need the Case's formal record. See [disciplinary-reference-workflow.md](disciplinary-reference-workflow.md). This document stays the record of what its own milestone built.
+
 > AI controls the conversation. Approved HeroOS methodology controls the guidance. The employer makes the final employment decision.
 
 HeroOS persists the **user-visible** conversation so authorized users can reopen and review it: the founder's messages, HeroOS's visible replies (with the safe next step and the outcome card), timestamps and authors, the Case it belongs to, and the minimum durable state a correct resume needs. It never persists provider requests or responses, hidden or system prompts, reasoning, provider scratch state or duplicate payloads. Retention duration, deletion mechanics and PRIV-020 stay open (§12).
@@ -212,3 +214,11 @@ Deploy order: D6, then the API and the operator CLI, then the web app. The web n
   - `test_ask_scenarios.py`: the end-to-end scenarios A to L through the production application over HTTP, with a scripted model only.
 - `tests/recovery/`: the D6 dataset (a conversation, its turn, messages and evaluation, an assistant-origin fact) restores identically, with RLS.
 - Web: `lib/server/gateway-bff.test.ts` (send and reads, field by field, authority refused, a Case's conversation), `components/ask/ask-conversation.test.tsx` and `ask-history.test.tsx` (turn keys, revisions, retries, reopening, History, earlier messages, attribution, status dimensions, conflicts, new conversation), `components/cases/cases.test.tsx` (the Case's link), `security-boundaries.test.ts`.
+
+## 15. M2-NEW-08 additions
+
+- **The Case's position at every turn** (`app/conversations/progress.py`): read when the turn starts and again at commit under the instance lock. It gives the evaluation `CaseProgress` and the model a labels-only `case_progress`. It is part of the reply's signature, so a stage another administrator completes while HeroOS answers relaxes the result at commit, and the stale wording is replaced (§4).
+- **Status `position`**: the recorded pathway (the employer's decision), the stage in progress or next, the transitions held for specialist review. The lifecycle is unchanged: an action's review never pauses the Case.
+- **Hypothetical decisions** never become active reviews or carried actions. `Reviews.after` and `Reviews.replay` skip records marked `hypothetical`.
+- **The chat-first Case.** The Case page no longer shows the guided conversation thread. "Continue with HeroOS" comes first, and the structured case details are folded until asked for. The Case's formal steps appear inline in Ask HeroOS (`CaseSteps`) through the Case's existing routes.
+- **A greeting** gets a greeting: no model request, no Case.

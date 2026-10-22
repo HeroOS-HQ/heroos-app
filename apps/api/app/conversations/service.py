@@ -14,12 +14,14 @@ conversation id and the revision it last saw; everything else is the server's.
    transaction ends, and the connection is released, before the provider is
    called: no row is locked while a model answers.
 3. **Answer**: the gateway (M2-NEW-05/06) starts from that server-side state
-   (``FounderTurn.resume``), never from anything the browser holds. A provider
-   failure writes nothing, so no empty conversation is ever stored.
+   (``FounderTurn.resume``), never from anything the browser holds, with the
+   Case's authoritative workflow position (``FounderTurn.case``, M2-NEW-08:
+   ``app.conversations.progress``). A provider failure writes nothing, so no
+   empty conversation is ever stored.
 4. **Record** (a short write), after confirming the administrator's role
    again: lock the conversation (a first turn creates it) and refuse a
    revision another turn consumed; lock the Case's workflow instance like
-   every writer of it; reload the Case's facts and the Blueprint and
+   every writer of it; reload the Case's facts, its workflow position and the Blueprint and
    **reconcile** (``AiGateway.reconcile``): the deterministic evaluation runs
    again on the current state, with no model request, and the freshest
    authoritative result is stored. The same result keeps the model's words;
@@ -56,6 +58,7 @@ from sqlalchemy.orm import Session
 
 from app.assistant.gateway.service import (
     AiGateway,
+    CaseContext,
     FounderTurn,
     GatewayReply,
     Handoff,
@@ -84,6 +87,7 @@ from app.conversations.checkpoint import (
     next_checkpoint,
     resume,
 )
+from app.conversations.progress import case_context, position
 from app.conversations.status import Checks, ConversationStatus, project
 from app.core.config import SensitiveScreening
 from app.db.models import AssistantConversation, AssistantMessage, AssistantTurn
@@ -213,6 +217,8 @@ class _Loaded:
     history: tuple[ChatTurn, ...] = ()
     stored: object | None = None
     case: CaseView | None = None
+    # M2-NEW-08: the Case's workflow position when the turn started (read-only for the AI).
+    case_context: CaseContext | None = None
 
 
 class _Resume:
@@ -372,7 +378,8 @@ class AskConversations:
         session.rollback()
         state = _Resume(loaded, company)
         reply = self._gateway.respond(
-            company, FounderTurn(request.message, loaded.history, resume=state)
+            company,
+            FounderTurn(request.message, loaded.history, resume=state, case=loaded.case_context),
         )
 
         scope = open_company_scope(session, context)
@@ -472,17 +479,32 @@ class AskConversations:
             for m in conversations.recent_messages(scope, conversation.id, limit=HISTORY_MESSAGES)
         )
         case = None
+        context = None
         if conversation.case_id is not None:
             item = workflows.get_workflow_case(scope, conversation.case_id)
             assert item is not None  # a conversation's Case can't be deleted (no cascade)
-            case, _ = self._case_view(scope, item)
+            case, state = self._case_view(scope, item)
+            context = self._case_context(scope, conversation, state)
         return _Loaded(
             conversation_id=conversation.id,
             workflow=conversation.workflow_key,
             history=history,
             stored=conversation.checkpoint,
             case=case,
+            case_context=context,
         )
+
+    def _reviews(self, scope: CompanyScope, conversation: AssistantConversation) -> Reviews:
+        """The active reviews (the checkpoint's, or rebuilt from the turn records)."""
+        checkpoint = decode(conversation.checkpoint)
+        if checkpoint is not None:
+            return checkpoint.reviews
+        return Reviews.replay(conversations.review_history(scope, conversation.id))
+
+    def _case_context(
+        self, scope: CompanyScope, conversation: AssistantConversation, state: CaseState
+    ) -> CaseContext:
+        return case_context(state, reviews=self._reviews(scope, conversation))
 
     def _record(
         self,
@@ -516,12 +538,17 @@ class AskConversations:
         )
         case_state = None
         fresh_case = None
+        fresh_context = None
         if item is not None:
             fresh_case, case_state = self._case_view(scope, item)
+            # The Case's position now: another administrator may have moved it meanwhile.
+            fresh_context = self._case_context(scope, conversation, case_state)
         company = load_company_blueprint_context(scope, context)
-        fresh = _Resume(replace(loaded, case=fresh_case), company)
+        fresh = _Resume(replace(loaded, case=fresh_case, case_context=fresh_context), company)
         reply, reconciliation = self._gateway.reconcile(
-            company, FounderTurn(request.message, loaded.history, resume=fresh), reply
+            company,
+            FounderTurn(request.message, loaded.history, resume=fresh, case=fresh_context),
+            reply,
         )
         resumed = fresh.resumed if fresh.called else first
         handoff = reply.handoff
@@ -799,6 +826,7 @@ class AskConversations:
             workflow = latest.workflow_key
         case_hold: bool | None = None
         title = None
+        where = None
         jurisdiction = [None if latest is None else latest.record.get("jurisdiction_state")]
         if conversation.case_id is not None:
             item = workflows.get_workflow_case(scope, conversation.case_id)
@@ -809,15 +837,11 @@ class AskConversations:
             case_hold = hold is not None and hold.kind == "specialist_review"
             jurisdiction.append(state.intake.jurisdiction.status)
             title = state.definition.title
+            where = position(state)
         elif workflow is not None:
             definition = current_definition(workflow)
             title = None if definition is None else definition.title
-        checkpoint = decode(conversation.checkpoint)
-        reviews = (
-            checkpoint.reviews
-            if checkpoint is not None
-            else Reviews.replay(conversations.review_history(scope, conversation.id))
-        )
+        reviews = self._reviews(scope, conversation)
         heroos = conversations.latest_message(scope, conversation.id, "heroos")
         knowledge = snapshot.knowledge
         return project(
@@ -832,4 +856,5 @@ class AskConversations:
             else str(heroos.outcome.get("kind")),
             checks=self._checks(snapshot, workflow),
             action_titles={} if knowledge is None else {o.id: o.title for o in knowledge.options},
+            position=where,
         )

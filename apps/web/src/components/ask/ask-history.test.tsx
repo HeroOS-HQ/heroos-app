@@ -63,12 +63,15 @@ function setup(
     if (next instanceof Error) throw next;
     return next;
   });
+  // The inline Case steps read the Case's view (M2-NEW-08; case-steps.test.tsx): apart from these calls.
+  const routed = (input: string, init?: RequestInit) =>
+    input.endsWith("/workflow") ? Promise.resolve(json(404, { error: "not_found" })) : fetcher(input, init);
   render(
     <AskWorkspace
       companyId={COMPANY_ID}
       conversation={available ? { available: true, reason: null, notice: null } : null}
       conversationId={conversationId}
-      fetcher={fetcher as unknown as typeof fetch}
+      fetcher={routed as unknown as typeof fetch}
       mode="ready"
       returning
     />,

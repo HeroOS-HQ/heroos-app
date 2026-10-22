@@ -1,6 +1,6 @@
 import "server-only";
 
-import { ASK_QUESTION, ASK_STEP, ASK_WORKFLOW } from "@/lib/ask/model";
+import { ASK_QUESTION, ASK_STEP, ASK_WORKFLOW, isGreeting } from "@/lib/ask/model";
 import { CONVERSATION_CURSOR, parseGatewayRequest, parseSequence } from "@/lib/ask/conversation";
 import { parseAssistantRequest } from "@/lib/assistant/model";
 import { TEMPLATE_KEY } from "@/lib/documents/model";
@@ -81,7 +81,8 @@ export type BffError =
   | "rate_limited"
   | "timeout"
   | "not_configured"
-  | "knowledge_unavailable";
+  | "knowledge_unavailable"
+  | "greeting";
 
 export const MAX_BODY_BYTES = 16 * 1024;
 export const MAX_PREVIEW_BYTES = 32 * 1024;
@@ -257,6 +258,8 @@ export async function handleAskStart(
   const parsed = parseAskStart(guarded.body);
   if (!parsed.ok) return error(422, "invalid", []);
   const { text, title, requestKey, submissionKey } = parsed.value;
+  // A greeting is no situation: never a case, and never "Hi" saved as what happened (M2-NEW-08).
+  if (isGreeting(text)) return error(422, "greeting", []);
   const token = guarded.accessToken;
 
   const created = await createWorkflowCase(
@@ -447,6 +450,29 @@ export async function handleHistoryPage(
   const result = await getCaseHistory(session.accessToken, config, companyId, caseId, before, deps.fetch);
   if (!result.ok) return workflowFailure(result.failure, []);
   return json(200, { page: result.data });
+}
+
+/**
+ * GET /bff/companies/{id}/cases/{caseId}/workflow →
+ * `GET /companies/{id}/cases/{caseId}/workflow` (M2-NEW-08): the Case's view as
+ * the API has it now, so Ask HeroOS can offer the Case's own formal steps
+ * inline (each one then goes through the existing pathway, transition and
+ * answers routes). A read: no body, no query.
+ */
+export async function handleCaseWorkflow(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  caseId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const read = guardRead(request, config, deps);
+  if (!read.ok) return read.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(caseId)) return error(404, "not_found");
+  const result = await getCaseWorkflow(read.accessToken, config, companyId, caseId, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, { view: result.data });
 }
 
 // --- document templates and previews (M2-04C) -----------------------------------------

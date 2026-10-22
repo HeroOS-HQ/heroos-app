@@ -69,6 +69,10 @@ NEXT_STEPS: Final[dict[NextStep, str]] = {
         "Choose which matter to work through first: HeroOS takes one matter at a time."
     ),
     "seek_specialist_advice": "Speak to a qualified HR or employment specialist about this.",
+    "complete_case_step": (
+        "Complete what's still needed through the case's own workflow stages; HeroOS reads it "
+        "from the case, not from the chat."
+    ),
 }
 STEP_RESULTS: Final[dict[str, str]] = {
     "escalate": "needs specialist review before it is taken",
@@ -91,6 +95,11 @@ UNSUPPORTED_HR: Final = (
     "cover it."
 )
 PROVIDER_NOTE: Final = "HeroOS couldn't put together a fuller reply just now."
+# M2-NEW-08: a prerequisite only the Case's formal record establishes.
+CASE_STEP_NOTE: Final = (
+    "This depends on your case's own record: what your company has completed in its workflow "
+    "stages and checklists. What's said in the chat doesn't change it."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +183,8 @@ def _action_message(
             parts.append(
                 f"{title} isn't available for your company under HeroOS's approved guidance."
             )
+        if action.next_step == "complete_case_step":
+            parts.append(CASE_STEP_NOTE)
     elif action.disposition == "unknown":
         parts.append(
             f"HeroOS can't yet confirm that {title.lower()} is clear of the approved safeguards, "
@@ -275,7 +286,15 @@ def outcome_view(
         }
         return view, ()
     presentation: Presentation = card.kind  # not "unavailable" (returned above)
-    steps = [{"step": a.title, "result": STEP_RESULTS[a.disposition]} for a in evaluation.actions]
+    steps = [
+        {
+            "step": a.title,
+            "result": STEP_RESULTS[a.disposition],
+            # A "what if": explain it as such, never as what the employer intends.
+            "asked": "hypothetically" if a.hypothetical else "as the employer's intention",
+        }
+        for a in evaluation.actions
+    ]
     cautions = [
         {
             "title": c.note.title,

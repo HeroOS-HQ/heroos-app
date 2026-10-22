@@ -53,6 +53,18 @@ export type ConversationMessage = {
   createdAt: string;
 };
 export type CaseLink = { id: string; title: string };
+/** The Case's formal workflow position (M2-NEW-08): what its employer recorded, in words. */
+export type CasePosition = {
+  state: string;
+  label: string;
+  /** The recorded pathway: the employer's decision. */
+  pathway: string | null;
+  /** The stage in progress, else the next one that can start. */
+  stage: string | null;
+  stageInProgress: boolean;
+  /** Case steps the progression rules hold for specialist review (never the whole Case). */
+  heldSteps: string[];
+};
 export type ConversationStatus = {
   lifecycle: "in_progress" | "paused" | null;
   workflow: { key: string; title: string | null } | null;
@@ -64,6 +76,8 @@ export type ConversationStatus = {
   };
   checks: "ready" | "unavailable" | "not_applicable";
   latestOutcome: OutcomeKind | "none";
+  /** Null: no Case (or an API from before M2-NEW-08). */
+  position: CasePosition | null;
 };
 export type ConversationSummary = { id: string; title: string | null; case: CaseLink | null; createdAt: string; updatedAt: string };
 export type Conversation = ConversationSummary & { revision: number; status: ConversationStatus };
@@ -161,7 +175,7 @@ function messagesOf(value: unknown, naming: Naming): ConversationMessage[] | nul
 }
 
 function statusOf(value: unknown, naming: Naming): ConversationStatus | null {
-  const s = read(value, ["lifecycle", "workflow", "attention", "checks", "latest_outcome"], naming);
+  const s = read(value, ["lifecycle", "workflow", "attention", "checks", "latest_outcome", "position"], naming);
   if (s === null) return null;
   if (s.lifecycle !== null && (typeof s.lifecycle !== "string" || !LIFECYCLES.has(s.lifecycle))) return null;
   if (typeof s.checks !== "string" || !CHECKS.has(s.checks) || typeof s.latest_outcome !== "string" || !LATEST.has(s.latest_outcome)) return null;
@@ -178,6 +192,24 @@ function statusOf(value: unknown, naming: Naming): ConversationStatus | null {
   if (r === null || typeof r.active !== "boolean" || typeof r.service_available !== "boolean") return null;
   if (r.scope !== null && r.scope !== "action" && r.scope !== "matter") return null;
   if (!Array.isArray(r.actions) || r.actions.length > MAX_REVIEW_ACTIONS || !r.actions.every((t) => validText(t, MAX_TITLE))) return null;
+  let position: CasePosition | null = null;
+  // Absent from an API before M2-NEW-08 (a web deploy may come first).
+  if (s.position !== null && s.position !== undefined) {
+    const p = read(s.position, ["state", "label", "pathway", "stage", "stage_in_progress", "held_steps"], naming);
+    if (p === null || typeof p.state !== "string" || !WORKFLOW_KEY.test(p.state) || !validText(p.label, MAX_TITLE)) return null;
+    if (!optionalText(p.pathway, MAX_TITLE) || !optionalText(p.stage, MAX_TITLE) || typeof p.stage_in_progress !== "boolean") return null;
+    if (!Array.isArray(p.held_steps) || p.held_steps.length > MAX_REVIEW_ACTIONS || !p.held_steps.every((t) => validText(t, MAX_TITLE))) {
+      return null;
+    }
+    position = {
+      state: p.state,
+      label: p.label,
+      pathway: p.pathway,
+      stage: p.stage,
+      stageInProgress: p.stage_in_progress,
+      heldSteps: [...(p.held_steps as string[])],
+    };
+  }
   return {
     lifecycle: s.lifecycle as ConversationStatus["lifecycle"],
     workflow,
@@ -188,6 +220,7 @@ function statusOf(value: unknown, naming: Naming): ConversationStatus | null {
     },
     checks: s.checks as ConversationStatus["checks"],
     latestOutcome: s.latest_outcome as ConversationStatus["latestOutcome"],
+    position,
   };
 }
 

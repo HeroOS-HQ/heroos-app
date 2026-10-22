@@ -7,7 +7,7 @@ import { Notice } from "@/components/ui/notice";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { buttonPrimary, buttonSecondary } from "@/components/ui/styles";
 import { formatDayTime, type Tone } from "@/lib/workflows/copy";
-import { isWorkflowView, type WorkflowView } from "@/lib/workflows/model";
+import type { WorkflowView } from "@/lib/workflows/model";
 import {
   checklistStep,
   type PathwayOption,
@@ -18,6 +18,7 @@ import {
 
 import { AnswersForm } from "./answers-form";
 import { ProvisionalTag } from "./conversation";
+import { CASE_REQUEST_FAILURES, type CaseRequestFailure, useCaseRequest } from "./use-case-request";
 
 /**
  * "Next steps": workflow progression (M2-03), rendered from the API's view.
@@ -31,29 +32,15 @@ import { ProvisionalTag } from "./conversation";
  * reuses the key, so the API applies it once. A refused request is recorded
  * by the API and nothing moves.
  *
- * The pathway is the employer's own judgement: HeroOS never suggests one.
+ * The pathway is the employer's own judgement, recorded only by their own
+ * click: HeroOS can explain the choices in Ask HeroOS but never chooses one.
+ * Ask HeroOS offers the same steps inline (M2-NEW-08); both send the same
+ * requests (``useCaseRequest``).
  */
 
-type Failure = "session_expired" | "forbidden" | "invalid" | "conflict" | "unavailable" | "not_found";
-type Outcome = { kind: "attempt" } | { kind: "failed"; reason: Failure } | null;
+type Outcome = { kind: "attempt" } | { kind: "failed"; reason: CaseRequestFailure } | null;
 
-const FAILURES: Record<Failure, { title: string; body: string }> = {
-  session_expired: { title: "Your session has ended", body: "Nothing was recorded. Sign in again to continue." },
-  forbidden: {
-    title: "Only company administrators can do this",
-    body: "Your access may have changed. Reload the page to see the case as it is now.",
-  },
-  invalid: { title: "HeroOS couldn't accept this request", body: "Reload the case and try again." },
-  conflict: {
-    title: "This case has changed since you opened it",
-    body: "Something was saved or recorded first, or the cautions shown no longer apply. Nothing was recorded. Reload the case to see its current state.",
-  },
-  not_found: { title: "This case can't be found", body: "It may not be available to you any more. Reload the page." },
-  unavailable: {
-    title: "Nothing was recorded",
-    body: "HeroOS couldn't be reached. Try again: if your request did go through, it won't be applied twice.",
-  },
-};
+const FAILURES = CASE_REQUEST_FAILURES;
 
 const STAGE_COPY: Record<StageStatus, { label: string; tone: Tone }> = {
   completed: { label: "Completed", tone: "positive" },
@@ -158,12 +145,11 @@ export function ProgressionPanel({
   fetcher?: typeof fetch;
 }) {
   const progression = view.progression;
-  const [busy, setBusy] = useState(false);
+  const { busy, send: sendRequest } = useCaseRequest({ companyId, caseId, fetcher });
   const [outcome, setOutcome] = useState<Outcome>(null);
   const [choice, setChoice] = useState<string | null>(null);
   const [changing, setChanging] = useState(false);
   const [acknowledged, setAcknowledged] = useState<Record<string, boolean>>({});
-  const request = useRef<{ signature: string; key: string } | null>(null);
   const outcomeRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -185,52 +171,21 @@ export function ProgressionPanel({
 
   async function send(route: "pathway" | "transitions", target: { pathway: string } | { transition: string }, warnings: string[]) {
     if (busy) return;
-    const payload = { expectedRevision: view.workflow.revision, ...target, acknowledgedWarnings: warnings };
-    const signature = JSON.stringify([route, payload]);
-    if (request.current?.signature !== signature) request.current = { signature, key: crypto.randomUUID() };
-    setBusy(true);
-    try {
-      const response = await (fetcher ?? fetch)(
-        `/bff/companies/${encodeURIComponent(companyId)}/cases/${encodeURIComponent(caseId)}/progression/${route}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ ...payload, requestKey: request.current.key }),
-          cache: "no-store",
-          credentials: "same-origin",
-          redirect: "error",
-          signal: AbortSignal.timeout(30_000),
-        },
-      );
-      const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-      if (response.status === 200 && body && isWorkflowView(body.view, caseId)) {
-        request.current = null;
-        setChoice(null);
-        setChanging(false);
-        setAcknowledged({});
-        onUpdated(body.view);
-        setOutcome({ kind: "attempt" });
-        return;
-      }
-      const reason: Failure =
-        response.status === 401
-          ? "session_expired"
-          : response.status === 403
-            ? "forbidden"
-            : response.status === 404
-              ? "not_found"
-              : response.status === 409
-                ? "conflict"
-                : response.status === 422
-                  ? "invalid"
-                  : "unavailable";
-      if (reason !== "unavailable") request.current = null;
-      setOutcome({ kind: "failed", reason });
-    } catch {
-      setOutcome({ kind: "failed", reason: "unavailable" });
-    } finally {
-      setBusy(false);
+    const result = await sendRequest(
+      view.workflow.revision,
+      "pathway" in target
+        ? { route: "pathway", pathway: target.pathway, acknowledgedWarnings: warnings }
+        : { route: "transitions", transition: target.transition, acknowledgedWarnings: warnings },
+    );
+    if ("failure" in result) {
+      setOutcome({ kind: "failed", reason: result.failure });
+      return;
     }
+    setChoice(null);
+    setChanging(false);
+    setAcknowledged({});
+    onUpdated(result.view);
+    setOutcome({ kind: "attempt" });
   }
 
   const { gate, rules, pathway, stages, actions, checklist, escalations } = progression;
@@ -335,9 +290,9 @@ export function ProgressionPanel({
           >
             <fieldset>
               <legend className="text-[0.9375rem] leading-relaxed text-hero-navy/85">
-                Choose the pathway that matches your own judgement as the employer. HeroOS doesn&apos;t classify the
-                incident, suggest a pathway or validate your choice. You can change it later; earlier records stay in
-                the history.
+                Choose the pathway that matches your own judgement as the employer: it&apos;s your decision. HeroOS can
+                explain the choices in Ask HeroOS, but it doesn&apos;t classify the incident, choose a pathway for you or
+                validate your choice. You can change it later; earlier records stay in the history.
               </legend>
               <div className="mt-3 flex flex-col gap-2">
                 {offered.map((option: PathwayOption) => {
