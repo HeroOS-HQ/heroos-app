@@ -58,6 +58,10 @@ def trust(execution: WorkflowExecution, message: str, *, stated=(), prior=None):
         ("Nope!", "no"),
         ("Not sure", "not_sure"),
         ("I don't know", "not_sure"),
+        # The canonical value itself: a reading of "I don't know", noted for the Case record.
+        ("not_sure", "not_sure"),
+        # Uncertainty with more words is still no bare answer (the reading may note it).
+        ("no idea, I'd have to check", None),
         ("I sort of spoke to him.", None),
         ("Yes, but only verbally.", None),
         ("Maybe", None),

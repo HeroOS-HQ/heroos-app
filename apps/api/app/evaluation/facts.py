@@ -49,6 +49,8 @@ _NO: Final = frozenset({"no", "nope", "nah"})
 _NOT_SURE: Final = (
     "not sure", "unsure", "don't know", "dont know", "do not know", "no idea", "not certain",
     "i'm not sure", "im not sure",
+    # The canonical value itself (a reading of "I don't know", noted for the Case record).
+    NOT_SURE,
 )  # fmt: skip
 # Words that make a short answer more than a plain yes or no.
 _QUALIFIERS: Final = re.compile(

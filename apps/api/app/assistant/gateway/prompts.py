@@ -80,7 +80,9 @@ allegation is not a finding.
 message. "explicit" only when the founder clearly said it; vague or approximate words ("all \
 week", "a few times") are "inferred" with "approximate_details". A short answer ("yes", "twice") \
 may answer what HeroOS last asked about. Never use HeroOS's own words, your assumptions or \
-general knowledge as a source. company_blueprint only for a value in company_context. When a \
+general knowledge as a source. When the founder says, in any words, that they don't know or \
+aren't sure about what HeroOS last asked about, propose that fact as "not_sure" (when it is one \
+of its options) with their words. company_blueprint only for a value in company_context. When a \
 catalog fact lists "options", proposed_value is exactly one of them. A date is YYYY-MM-DD, \
 only when the founder's words give the day (use "today" for words like "yesterday"). One \
 answer may establish several facts: propose each one it clearly states. Talking with the \

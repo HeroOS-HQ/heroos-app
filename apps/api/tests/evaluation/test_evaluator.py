@@ -519,6 +519,28 @@ def test_a_structurally_different_workflow_uses_the_same_core(artifacts: Artifac
     assert clear.provenance is not None and clear.provenance.workflow == PROBATION
 
 
+def test_what_the_founder_said_they_dont_know_is_never_asked_again(
+    snapshot: ExecutionSnapshot,
+) -> None:
+    """Found live: 'no idea, I'd have to check' (not a bare answer) was asked again turn after
+    turn. Said or answered, "not sure" means the founder must find out, not be asked again."""
+    policy = "employee_aware_of_relevant_policy"
+    asked = run(snapshot, topics=("workplace_reminder",))
+    assert [m.key for m in asked.missing] == [policy]
+    said = evaluate_conversation(
+        snapshot,
+        EvaluationRequest(
+            matter="supported",
+            workflow="disciplinary",
+            company_jurisdiction=FED,
+            facts=TrustedFactState(conversational={policy: "not_sure"}),
+            topics=("workplace_reminder",),
+        ),
+    )
+    assert said.missing == ()
+    assert condition(said, "EX-FED-POLICY").status == "unknown"
+
+
 # --- the definition's AskWhen premises ------------------------------------------------------
 
 

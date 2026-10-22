@@ -421,8 +421,8 @@ def _requirements(
         schema = execution.schemas.get(key)
         if key in seen or schema is None or schema.kind == "blueprint":
             continue
-        if request.facts.engine.get(key) == NOT_SURE:
-            continue  # answered "not sure": the founder must find out, not be asked again
+        if NOT_SURE in (request.facts.engine.get(key), request.facts.conversational.get(key)):
+            continue  # "not sure" (answered or said): the founder must find out, not be asked again
         if not _premise_holds(execution, schema.question, trusted):
             # The definition asks this only once another answer holds (e.g. the connection to
             # work only for conduct outside work): asking earlier is a question that may not apply.
