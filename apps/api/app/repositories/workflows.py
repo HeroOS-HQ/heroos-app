@@ -63,6 +63,20 @@ def create_workflow_case(
     case = Case(company_id=scope.company_id, case_type=definition.case_type, title=title)
     scope.session.add(case)
     scope.session.flush()
+    return attach_workflow(scope, case, definition, request_key=request_key, user_id=user_id)
+
+
+def attach_workflow(
+    scope: CompanyScope,
+    case: Case,
+    definition: WorkflowDefinition,
+    *,
+    request_key: UUID,
+    user_id: UUID,
+) -> WorkflowCase:
+    """The workflow instance of an existing Case without one (chat-first: its workflow is now
+    known). The Case takes the workflow's type. Raises IntegrityError if it already has one."""
+    case.case_type = definition.case_type
     instance = WorkflowInstance(
         company_id=scope.company_id,
         case_id=case.id,

@@ -148,6 +148,10 @@ class Checkpoint:
     # The Company Blueprint's confirmed employment jurisdiction it was written under.
     company_jurisdiction: str | None = None
     reviews: Reviews = field(default_factory=Reviews)
+    # Chat-first Case: what the founder said that the Case could hold (Case question key ->
+    # the server's canonical reading), shown for the employer to save to the Case with one
+    # explicit action. A reading, never a trusted fact: nothing is saved until they do.
+    noted: Mapping[str, Value] = field(default_factory=dict)
 
 
 def encode(checkpoint: Checkpoint) -> dict[str, object]:
@@ -177,6 +181,8 @@ def encode(checkpoint: Checkpoint) -> dict[str, object]:
             "matter": checkpoint.reviews.matter,
         },
     }
+    if checkpoint.noted:
+        data["noted"] = dict(sorted(checkpoint.noted.items())[:MAX_FACTS])
     if len(_json(data)) > MAX_CHECKPOINT_BYTES:  # pragma: no cover - bounded by the limits above
         raise ValueError("checkpoint exceeds its bound")
     return data
@@ -225,6 +231,7 @@ def decode(data: object) -> Checkpoint | None:
     asked, engine, two_state = data.get("asked"), data.get("engine"), data.get("two_state")
     actions, voided, revision = data.get("actions"), data.get("voided"), data.get("case_revision")
     company, reviews = data.get("company_jurisdiction"), _reviews(data.get("reviews"))
+    noted = data.get("noted", {})
     if (
         not isinstance(versions, str)
         or (workflow is not None and not _key(workflow))
@@ -246,6 +253,9 @@ def decode(data: object) -> Checkpoint | None:
         or len(voided) > MAX_VOIDED
         or not all(_key(k) for k in voided)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
+        or not isinstance(noted, dict)
+        or len(noted) > MAX_FACTS
+        or not all(_key(k) and _value(v) for k, v in noted.items())
     ):
         return None
     questions: list[Asked] = []
@@ -285,6 +295,7 @@ def decode(data: object) -> Checkpoint | None:
         case_revision=revision,
         company_jurisdiction=company,
         reviews=reviews,
+        noted=dict(noted),
     )
 
 

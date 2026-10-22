@@ -32,6 +32,8 @@ const MAX_TITLE = 200;
 const MAX_TEXT = 8000;
 const MAX_ITEMS = 100;
 const MAX_REVIEW_ACTIONS = 12;
+// Noted readings (one per Case question at most).
+const MAX_NOTED = 24;
 
 export type GatewayUnavailable = "disabled" | "not_configured" | "knowledge_unavailable";
 /**
@@ -82,7 +84,10 @@ export type ConversationStatus = {
   latestOutcome: OutcomeKind | "none";
   /** Null: no Case (or an API from before M2-NEW-08). */
   position: CasePosition | null;
+  /** What the founder said that the Case could hold, waiting for the employer to save it (labels only). */
+  noted: NotedFact[];
 };
+export type NotedFact = { label: string; answer: string };
 export type ConversationSummary = { id: string; title: string | null; case: CaseLink | null; createdAt: string; updatedAt: string };
 export type Conversation = ConversationSummary & { revision: number; status: ConversationStatus };
 export type GatewayTurn = { conversation: Conversation; messages: ConversationMessage[]; replayed: boolean };
@@ -181,7 +186,7 @@ function messagesOf(value: unknown, naming: Naming): ConversationMessage[] | nul
 }
 
 function statusOf(value: unknown, naming: Naming): ConversationStatus | null {
-  const s = read(value, ["lifecycle", "workflow", "attention", "checks", "latest_outcome", "position"], naming);
+  const s = read(value, ["lifecycle", "workflow", "attention", "checks", "latest_outcome", "position", "noted"], naming);
   if (s === null) return null;
   if (s.lifecycle !== null && (typeof s.lifecycle !== "string" || !LIFECYCLES.has(s.lifecycle))) return null;
   if (typeof s.checks !== "string" || !CHECKS.has(s.checks) || typeof s.latest_outcome !== "string" || !LATEST.has(s.latest_outcome)) return null;
@@ -216,6 +221,16 @@ function statusOf(value: unknown, naming: Naming): ConversationStatus | null {
       heldSteps: [...(p.held_steps as string[])],
     };
   }
+  // Absent from an API before the chat-first Case.
+  const noted: NotedFact[] = [];
+  if (s.noted !== undefined) {
+    if (!Array.isArray(s.noted) || s.noted.length > MAX_NOTED) return null;
+    for (const item of s.noted) {
+      const n = read(item, ["label", "answer"], naming);
+      if (n === null || !validText(n.label, MAX_TITLE) || !validText(n.answer, MAX_TITLE)) return null;
+      noted.push({ label: n.label, answer: n.answer });
+    }
+  }
   return {
     lifecycle: s.lifecycle as ConversationStatus["lifecycle"],
     workflow,
@@ -227,6 +242,7 @@ function statusOf(value: unknown, naming: Naming): ConversationStatus | null {
     checks: s.checks as ConversationStatus["checks"],
     latestOutcome: s.latest_outcome as ConversationStatus["latestOutcome"],
     position,
+    noted,
   };
 }
 
@@ -302,12 +318,21 @@ export const fromApiConversationList = (body: unknown) => listOf(body, "api");
 export const fromApiConversationDetail = (body: unknown) => detailOf(body, "api");
 /** `GET .../conversations/{conversationId}/messages`. */
 export const fromApiMessagePage = (body: unknown) => pageOf(body, "api");
+/** `POST .../conversations/{conversationId}/noted`: the conversation after the employer saved what was noted. */
+export const fromApiConversation = (body: unknown) => conversationOf(body, "api");
 
 /** The BFF's answers as the browser reads them (the same shapes, checked again). */
 export const parseGatewayTurn = (body: unknown) => turnOf(body, "bff");
 export const parseConversationList = (body: unknown) => listOf(body, "bff");
 export const parseConversationDetail = (body: unknown) => detailOf(body, "bff");
 export const parseMessagePage = (body: unknown) => pageOf(body, "bff");
+export const parseConversation = (body: unknown) => conversationOf(body, "bff");
+
+/** The browser's "save what HeroOS noted" request: the revision it saw, nothing else (never a value). */
+export function parseNotedRequest(body: unknown): { ok: true; expectedRevision: number } | { ok: false } {
+  if (!isRecord(body) || Object.keys(body).some((key) => key !== "expectedRevision")) return { ok: false };
+  return validInt(body.expectedRevision, 0, MAX_REVISION) ? { ok: true, expectedRevision: body.expectedRevision } : { ok: false };
+}
 
 /** The browser's request, re-validated and rebuilt by the BFF (unknown keys refused). */
 export function parseGatewayRequest(body: unknown): { ok: true; value: GatewayRequest } | { ok: false } {

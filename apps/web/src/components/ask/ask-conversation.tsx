@@ -5,13 +5,16 @@ import { createPortal } from "react-dom";
 
 import { AdviserMark, PersonAvatar } from "@/components/app/workspace-chrome";
 import { ClockIcon } from "@/components/site/icons";
+import { buttonPrimary } from "@/components/ui/styles";
 import {
   type Conversation,
   type ConversationDetail,
   type ConversationMessage,
   gatewayRequest,
   MAX_MESSAGE_CHARS,
+  type NotedFact,
   type Outcome,
+  parseConversation,
   parseConversationDetail,
   parseGatewayTurn,
   parseMessagePage,
@@ -20,7 +23,7 @@ import {
 
 import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
 import { CaseSteps } from "./case-steps";
-import { ConversationContext } from "./conversation-context";
+import { CaseHeader } from "./conversation-context";
 import { ConversationHistory } from "./conversation-history";
 import { AdviserTurn, type Outcome as Tone, OutcomeLabel } from "./response-tone";
 
@@ -51,10 +54,16 @@ import { AdviserTurn, type Outcome as Tone, OutcomeLabel } from "./response-tone
  * the unsent words in the box. "New conversation" only starts a new one here:
  * nothing is deleted, and nothing is stored until HeroOS answers.
  *
- * A conversation with a Case is that Case (M2-NEW-08): the Case's own formal
- * steps (choosing the pathway, starting and completing stages, a stage's
- * checklist, acknowledging a caution) appear inline after the latest message
- * (`CaseSteps`), one at a time, and only the founder's own click takes one.
+ * One chat is one Case (chat-first): the founder's first message starts both,
+ * whatever it says, and the Case header names it ("New case" until HeroOS
+ * knows what the matter is). The chat is the Case's page: as HeroOS
+ * understands the matter, its workflow attaches behind the conversation, and
+ * the Case's own formal steps (choosing the pathway, starting and completing
+ * stages, a stage's checklist, acknowledging a caution) appear inline after
+ * the latest message (`CaseSteps`), one at a time; only the founder's own
+ * click takes one. What the founder said in passing that the Case could hold
+ * is shown as noted, and saved to the Case only when they say so (one click).
+ * "Case details" (the structured record) is secondary.
  */
 
 type Failure =
@@ -166,6 +175,10 @@ export function AskConversation({
   const [failure, setFailure] = useState<Failure | null>(null);
   const [changed, setChanged] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Saving what HeroOS noted to the Case; then the Case's steps read the Case again.
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState<NotedFact[] | null>(null);
+  const [caseReads, setCaseReads] = useState(0);
   // The last unanswered message and its turn key: sending the same words again reuses the key.
   const retry = useRef<{ text: string; key: string } | null>(null);
   const inFlight = useRef(false);
@@ -249,6 +262,7 @@ export function AskConversation({
     const key = retry.current?.text === message ? retry.current.key : crypto.randomUUID();
     retry.current = { text: message, key };
     const at = new Date();
+    setSaved(null);
     inFlight.current = true;
     setFailure(null);
     setChanged(false);
@@ -316,9 +330,49 @@ export function AskConversation({
     }
   }
 
+  /** The employer saves what HeroOS noted to the Case (the API holds the values). */
+  async function saveNoted() {
+    if (current === null || saving) return;
+    const noted = current.status.noted;
+    setSaving(true);
+    setFailure(null);
+    try {
+      const response = await (fetcher ?? fetch)(
+        `/bff/companies/${encodeURIComponent(companyId)}/assistant/conversations/${encodeURIComponent(current.id)}/noted`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ expectedRevision: current.revision }),
+          cache: "no-store",
+          credentials: "same-origin",
+          redirect: "error",
+          signal: AbortSignal.timeout(30_000),
+        },
+      );
+      const body = response.status === 200 ? ((await response.json().catch(() => null)) as { conversation?: unknown } | null) : null;
+      const updated = body ? parseConversation(body.conversation) : null;
+      if (updated) {
+        setCurrent(updated);
+        setSaved(noted);
+        setCaseReads((n) => n + 1);
+        return;
+      }
+      if (response.status === 401) setFailure("session_expired");
+      // Moved on elsewhere, or nothing waits any more: show the conversation as it is now.
+      else if (response.status === 409 || response.status === 404) {
+        if (await open(current.id)) setChanged(response.status === 409);
+      } else setFailure("unavailable");
+    } catch {
+      setFailure("unavailable");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function startOver() {
-    // A new conversation here; the previous one stays stored. Nothing is stored until HeroOS answers.
+    // A new chat (a new Case once its first message is sent); the previous one stays stored.
     wanted.current = null;
+    setSaved(null);
     setHistoryOpen(false);
     setCurrent(null);
     setMessages([]);
@@ -333,6 +387,7 @@ export function AskConversation({
   function choose(id: string) {
     setHistoryOpen(false);
     if (id === current?.id) return;
+    setSaved(null);
     setFailure(null);
     setChanged(false);
     retry.current = null;
@@ -437,21 +492,7 @@ export function AskConversation({
 
   return (
     <div className="mx-auto flex w-full max-w-[46rem] flex-1 flex-col px-4 pb-4 pt-3 sm:px-6 sm:pt-7">
-      <div className="flex items-center justify-between gap-2">
-        <h1 className="text-[0.8125rem] font-bold uppercase tracking-[0.1em] text-hero-muted">Ask HeroOS</h1>
-        <div className="flex items-center gap-1">
-          {historyControl}
-          <button
-            className="min-h-10 rounded-full px-3 text-[0.8125rem] font-bold text-hero-blue-ink hover:bg-hero-navy/[0.05] disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={pending !== null}
-            onClick={startOver}
-            type="button"
-          >
-            New conversation
-          </button>
-        </div>
-      </div>
-      {current ? <ConversationContext companyId={companyId} conversation={current} /> : null}
+      <CaseHeader busy={pending !== null} companyId={companyId} conversation={current} history={historyControl} onNew={startOver} />
       {earlier !== null ? (
         <div className="mt-4 flex justify-center">
           <button
@@ -509,18 +550,27 @@ export function AskConversation({
           </>
         ) : null}
       </ol>
-      {current?.case && pending === null ? (
+      {current && pending === null && (current.status.noted.length > 0 || saved) ? (
+        <div className="mt-7">
+          <NotedFacts busy={saving} items={current.status.noted} onSave={() => void saveNoted()} saved={saved} />
+        </div>
+      ) : null}
+      {current?.case && current.status.workflow && pending === null ? (
         <div className="mt-7">
           <CaseSteps
             caseId={current.case.id}
             companyId={companyId}
             fetcher={fetcher}
+            onAsk={(words) => {
+              setText(words);
+              document.getElementById("ask-heroos")?.focus();
+            }}
             // The employer moved the Case here: the conversation's status reads it again.
             onChanged={() => {
               const id = current.id;
               void fetchDetail(id).then((result) => apply(id, result));
             }}
-            revision={current.revision}
+            revision={current.revision * 1000 + caseReads}
           />
         </div>
       ) : null}
@@ -550,6 +600,39 @@ export function FounderTurn({ text, at, by }: { text: string; at: Date; by: "you
         {text}
       </p>
     </div>
+  );
+}
+
+/**
+ * What the founder said that the Case could hold, as HeroOS's server read it:
+ * shown, never saved by itself. One click saves it all to the Case (the
+ * employer's own action); a correction is just said in the chat.
+ */
+function NotedFacts({ items, saved, busy, onSave }: { items: NotedFact[]; saved: NotedFact[] | null; busy: boolean; onSave: () => void }) {
+  if (items.length === 0 && saved) {
+    return (
+      <p className="rounded-2xl border border-hero-border bg-white px-4 py-3 text-[0.9375rem] text-hero-navy" role="status">
+        Saved to your case: {saved.map((item) => `${item.label} (${item.answer})`).join("; ")}.
+      </p>
+    );
+  }
+  return (
+    <AdviserTurn id="noted" outcome="guidance" title="For your case record">
+      <p>From what you&apos;ve told me, I can add this to your case:</p>
+      <ul aria-label="Noted for your case" className="space-y-1">
+        {items.map((item) => (
+          <li className="text-[0.9375rem]" key={item.label}>
+            <span className="font-semibold">{item.label}:</span> {item.answer}
+          </li>
+        ))}
+      </ul>
+      <div className="flex flex-wrap items-center gap-3">
+        <button className={buttonPrimary} disabled={busy} onClick={onSave} type="button">
+          {busy ? "Saving…" : "Add to case"}
+        </button>
+        <span className="text-[0.875rem] text-hero-muted">Not quite right? Just tell me in your own words.</span>
+      </div>
+    </AdviserTurn>
   );
 }
 

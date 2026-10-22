@@ -13,7 +13,9 @@ import { AdviserTurn, type Outcome as Tone } from "./response-tone";
  * The Case's own formal steps, inside the Ask HeroOS conversation (M2-NEW-08).
  *
  * The Case is one continuous conversation; the workflow engine stays behind
- * it. Ordinary facts come from the conversation itself. What only the
+ * it. Ordinary facts come from the conversation itself (HeroOS asks about
+ * what the case record still needs, in its own words): while any is open,
+ * nothing here asks for it or sends the founder to a form. What only the
  * employer can do (choose the pathway, start or complete a stage, answer a
  * stage's checklist, acknowledge a caution) and the few answers the
  * conversation never collects (whether the company's jurisdiction applies to
@@ -37,7 +39,6 @@ const READ = { headers: { Accept: "application/json" }, cache: "no-store", crede
 export type CaseStep =
   | { kind: "hold"; title: string; body: string }
   | { kind: "question"; stepKey: string; question: Question }
-  | { kind: "details"; open: number }
   | { kind: "gate"; title: string; body: string }
   | { kind: "pathway"; options: PathwayOption[] }
   | { kind: "checklist"; stepKey: string; stage: string; question: ChecklistQuestion }
@@ -57,7 +58,8 @@ export function nextCaseStep(view: WorkflowView): CaseStep | null {
     ({ step, question }) => question.kind === "choice" && (question.key === JURISDICTION_QUESTION || step.sensitive),
   );
   if (structured) return { kind: "question", stepKey: structured.step.key, question: structured.question };
-  if (open.length > 0) return { kind: "details", open: open.length };
+  // The conversation collects the rest: nothing to press yet.
+  if (open.length > 0) return null;
   const progression = view.progression;
   if (progression === null || progression.status.code === "unavailable") return null;
   if (progression.gate) return { kind: "gate", title: progression.gate.title, body: progression.gate.body };
@@ -110,14 +112,17 @@ export function CaseSteps({
   caseId,
   revision,
   onChanged,
+  onAsk,
   fetcher,
 }: {
   companyId: string;
   caseId: string;
-  /** The conversation's revision: a new turn may have changed the Case. */
+  /** Changes whenever the Case may have changed (a new turn, a saved note): it is read again. */
   revision: number;
   /** The employer changed the Case here (the conversation's status may read differently now). */
   onChanged?: () => void;
+  /** Words to put in the founder's box (never sent by themselves), e.g. "I'm not sure". */
+  onAsk?: (words: string) => void;
   fetcher?: typeof fetch;
 }) {
   const [view, setView] = useState<WorkflowView | null>(null);
@@ -205,19 +210,6 @@ export function CaseSteps({
         </>
       ),
     };
-  } else if (step?.kind === "details") {
-    card = {
-      tone: "guidance",
-      body: (
-        <p>
-          {step.open === 1 ? "One case detail is" : `${step.open} case details are`} still open. Tell me in your own words, or{" "}
-          <a className="font-bold text-hero-blue-ink underline underline-offset-2" href={caseHref}>
-            review the case details
-          </a>
-          .
-        </p>
-      ),
-    };
   } else if (step?.kind === "gate") {
     card = {
       tone: "block",
@@ -275,6 +267,17 @@ export function CaseSteps({
                   <span className="text-sm font-normal text-hero-navy/80">{item.description}</span>
                 </button>
               ))}
+              {onAsk ? (
+                <button
+                  className={choiceButton}
+                  disabled={busy}
+                  onClick={() => onAsk("I'm not sure which pathway fits this case. Can you help me think it through?")}
+                  type="button"
+                >
+                  <span>I&apos;m not sure</span>
+                  <span className="text-sm font-normal text-hero-navy/80">Talk it through with HeroOS first. Nothing is recorded.</span>
+                </button>
+              ) : null}
             </div>
           )}
         </>

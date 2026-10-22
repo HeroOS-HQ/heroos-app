@@ -63,6 +63,7 @@ import re
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Final, Literal
 
 from app.assistant.gateway.catalog import EMPTY_CATALOG, RoutingCatalog, routing_catalog
@@ -289,6 +290,9 @@ class CaseContext:
     # snapshot), and whether the matter as a whole does.
     reviews: tuple[str, ...] = ()
     matter_review: bool = False
+    # Chat-first: the Case's open intake questions the conversation can collect (definition
+    # question keys, in order). HeroOS may ask about them; it never has to.
+    open_questions: tuple[str, ...] = ()
 
     def model_view(self, knowledge: KnowledgeBundle) -> tuple[dict[str, object], tuple[str, ...]]:
         """The view the response phase reads, and its texts (for the grounding check)."""
@@ -483,6 +487,33 @@ def _signature(result: "_Turn") -> tuple[object, ...]:
     )
 
 
+MAX_CASE_TARGETS: Final = 2
+
+
+def _case_targets(
+    execution: WorkflowExecution,
+    case: CaseContext | None,
+    evaluation: ConversationEvaluation,
+    planned: Sequence[QuestionTarget],
+) -> tuple[QuestionTarget, ...]:
+    """Optional targets for the Case's open intake questions (never one the founder answered
+    or already said, and never twice): the reply may ask about one, in its own words."""
+    if case is None:
+        return ()
+    facts = evaluation.facts
+    known = {*facts.engine, *facts.conversational, *(t.fact_key for t in planned)}
+    targets: list[QuestionTarget] = []
+    for question in case.open_questions:
+        key = execution.question_facts.get(question, question)
+        schema = execution.schemas.get(key)
+        if schema is None or schema.kind == "blueprint" or key in known:
+            continue
+        targets.append(QuestionTarget(f"c{len(targets) + 1}", key, schema.label, "ask"))
+        if len(targets) == MAX_CASE_TARGETS:
+            break
+    return tuple(targets)
+
+
 def _strictness(result: "_Turn") -> int:
     return STRICTNESS[None if result.card is None else result.card.kind]
 
@@ -627,8 +658,20 @@ class AiGateway:
         view = self._views.get(snapshot.id)
         if view is None:
             bundle = snapshot.knowledge
+            schemas = [s for e in snapshot.workflows.values() for s in e.schemas.values()]
             view = _SnapshotView(
-                catalog=EMPTY_CATALOG if bundle is None else routing_catalog(bundle),
+                catalog=EMPTY_CATALOG
+                if bundle is None
+                else routing_catalog(
+                    bundle,
+                    # Chat-first: the Case's own intake questions are facts the founder may state.
+                    case_facts={s.key: s.label for s in schemas if s.key == s.question},
+                    options={
+                        s.key: tuple(o.value for o in s.options)
+                        for s in schemas
+                        if s.kind in ("yes_no", "choice")
+                    },
+                ),
                 labels=internal_labels(bundle) if bundle is not None else re.compile(r"(?!x)x"),
             )
             self._views = {snapshot.id: view}
@@ -842,12 +885,16 @@ class AiGateway:
         plan: TurnPlan,
         result: _Turn,
         company: CompanyBlueprintContext,
+        case: CaseContext | None = None,
     ) -> tuple[QuestionTarget, ...]:
-        """What to ask next: what the deterministic checks need first, else the methodology's."""
+        """What to ask next: what the deterministic checks need first, else what the Case record
+        still needs (chat-first) and the methodology's, for the reply to choose from."""
         evaluation = result.evaluation
         execution = None if evaluation.workflow is None else snapshot.execution(evaluation.workflow)
-        if execution is None or not evaluation.missing:
+        if execution is None:
             return plan.targets
+        if not evaluation.missing:
+            return (*_case_targets(execution, case, evaluation, plan.targets), *plan.targets)
         requirement = evaluation.missing[0]
         if (
             requirement.kind == "jurisdiction"
@@ -906,6 +953,9 @@ class AiGateway:
         )
         asked_before = () if read.state is None else read.state.asked
         facts = {f.key: f.label for f in bundle.facts}
+        # A Case question no knowledge fact holds is labelled by its own schema (chat-first).
+        for execution in snapshot.workflows.values():
+            facts.update({k: s.label for k, s in execution.schemas.items() if k not in facts})
         labels = [ASKED_LABELS.get(a.kind, facts.get(a.key, "")) for a in asked_before]
 
         if is_greeting(turn.message):
@@ -958,7 +1008,9 @@ class AiGateway:
                 plan, result, turn, fixed=True,
             )  # fmt: skip
 
-        plan = dataclasses.replace(plan, targets=self._targets(snapshot, plan, result, company))
+        plan = dataclasses.replace(
+            plan, targets=self._targets(snapshot, plan, result, company, turn.case)
+        )
         knowledge = knowledge_view(bundle, plan)
         decided, decided_texts = outcome_view(result.evaluation, result.card)
         case_view, case_texts = (
@@ -1096,7 +1148,9 @@ class AiGateway:
                 company, snapshot, reply.reply, None, reply.state, (), understanding, plan,
                 result, turn, fixed=True,
             ), reconciliation  # fmt: skip
-        plan = dataclasses.replace(plan, targets=self._targets(snapshot, plan, result, company))
+        plan = dataclasses.replace(
+            plan, targets=self._targets(snapshot, plan, result, company, turn.case)
+        )
         return (
             self._fallback(company, snapshot, "changed", understanding, plan, result, turn),
             reconciliation,
@@ -1114,6 +1168,8 @@ class AiGateway:
             "company_context": company_view(company),
             "previous_question_about": list(asked_labels),
             "founder_messages": [{"turn": i, "text": text} for i, text in enumerate(founder)],
+            # For a date the founder gives relatively ("yesterday"); a reading, never trusted.
+            "today": datetime.now(UTC).date().isoformat(),
         }
         current = len(founder) - 1
         result = self._phase(

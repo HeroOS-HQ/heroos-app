@@ -58,6 +58,8 @@ class RoutingCatalog:
     workflows: tuple[CatalogWorkflow, ...]
     # Facts a founder may state in conversation (key -> label).
     facts: Mapping[str, str]
+    # A choice fact's canonical option values (what a proposed value should be one of).
+    options: Mapping[str, tuple[str, ...]] = MappingProxyType({})
 
     def workflow(self, key: str) -> CatalogWorkflow | None:
         return next((w for w in self.workflows if w.key == key), None)
@@ -75,7 +77,11 @@ class RoutingCatalog:
                 }
                 for w in self.workflows
             ],
-            "facts": [{"key": key, "label": label} for key, label in self.facts.items()],
+            "facts": [
+                {"key": key, "label": label}
+                | ({"options": list(self.options[key])} if key in self.options else {})
+                for key, label in self.facts.items()
+            ],
         }
 
     def coverage(self) -> tuple[str, ...]:
@@ -89,7 +95,14 @@ def extractable(fact: Fact) -> bool:
     return not fact.sensitive and fact.blueprint is None
 
 
-def routing_catalog(bundle: KnowledgeBundle) -> RoutingCatalog:
+def routing_catalog(
+    bundle: KnowledgeBundle,
+    *,
+    case_facts: Mapping[str, str] | None = None,
+    options: Mapping[str, tuple[str, ...]] | None = None,
+) -> RoutingCatalog:
+    """``case_facts``: a workflow's own Case questions no knowledge fact holds (key -> label),
+    which the founder may state too (chat-first); ``options``: choice facts' option values."""
     workflows = tuple(
         CatalogWorkflow(
             key=w.key,
@@ -103,7 +116,12 @@ def routing_catalog(bundle: KnowledgeBundle) -> RoutingCatalog:
         for w in bundle.workflows
     )
     facts = {f.key: f.label for f in bundle.facts if extractable(f)}
-    return RoutingCatalog(workflows=workflows, facts=MappingProxyType(facts))
+    for key, label in (case_facts or {}).items():
+        facts.setdefault(key, label)
+    choices = {k: v for k, v in (options or {}).items() if k in facts}
+    return RoutingCatalog(
+        workflows=workflows, facts=MappingProxyType(facts), options=MappingProxyType(choices)
+    )
 
 
 EMPTY_CATALOG: Final = RoutingCatalog(workflows=(), facts=MappingProxyType({}))

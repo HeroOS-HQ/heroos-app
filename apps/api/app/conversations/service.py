@@ -29,13 +29,17 @@ conversation id and the revision it last saw; everything else is the server's.
    result, except a weaker one that rests only on lost or less certain state,
    which never relaxes the stricter reply that was prepared. Then the
    turn, the two visible messages and the evaluation record are appended; the
-   Case is created at the threshold (``bridge``); the founder's newly
-   established canonical facts go through the shared pipeline
-   (``app.cases.mutation``); the active reviews and the next checkpoint are
-   written.
+   conversation's Case is started (its first turn: one conversation is one
+   Case, chat-first) and takes its workflow at the threshold (``bridge``); the
+   founder's newly established canonical facts go through the shared pipeline
+   (``app.cases.mutation``); the active reviews, what the founder said that
+   the Case could hold (``noted``, for the employer to save) and the next
+   checkpoint are written.
 
 Reads (``list_conversations``, ``conversation``, ``messages``) page by stable
 keys and project the status (``status``) from the current authoritative state.
+``save_noted`` is the employer's one explicit action that saves the noted
+readings to the Case, through the same shared pipeline.
 
 Nothing here selects a pathway, starts or completes a stage, records an
 employer decision, creates a CaseSubject, closes a Case, deletes anything, or
@@ -61,7 +65,6 @@ from app.assistant.gateway.service import (
     CaseContext,
     FounderTurn,
     GatewayReply,
-    Handoff,
     Reconciliation,
 )
 from app.assistant.provider import ChatTurn
@@ -88,16 +91,17 @@ from app.conversations.checkpoint import (
     resume,
 )
 from app.conversations.progress import case_context, position
-from app.conversations.status import Checks, ConversationStatus, project
+from app.conversations.status import Checks, ConversationStatus, NotedFact, project
 from app.core.config import SensitiveScreening
 from app.db.models import AssistantConversation, AssistantMessage, AssistantTurn
 from app.db.models.assistant import MAX_EVALUATION_BYTES, MAX_FOUNDER_CHARS, MAX_TURNS
 from app.evaluation.continuation import ReadResult
-from app.evaluation.model import ConversationEvaluation
+from app.evaluation.model import ConversationEvaluation, Value
 from app.evaluation.snapshot import ExecutionSnapshot
 from app.repositories import assistant_conversations as conversations
-from app.repositories import workflows
+from app.repositories import cases, workflows
 from app.tenancy.scope import CompanyScope, open_company_scope
+from app.workflows.access import UNCLASSIFIED_CASE_TYPE
 from app.workflows.definition import WorkflowDefinition, current_definition
 from app.workflows.progression.bundle import RuleBundle
 
@@ -135,6 +139,10 @@ class ConversationNotFound(LookupError):
 
 class ConversationConflict(Exception):
     """A turn key reused for another request, or a revision another turn consumed."""
+
+
+class NothingNoted(LookupError):
+    """No reading is waiting to be saved to the conversation's Case (or it has no workflow)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +255,7 @@ class _Resume:
 class _Recorded:
     result: TurnResult
     case_created: bool = False
+    workflow_attached: bool = False
     facts: int = 0
     reconciliation: Reconciliation = "kept"
     checkpoint: str = "ok"
@@ -402,10 +411,11 @@ class AskConversations:
         # Counts and categories only: never a message, fact, value or title.
         logger.info(
             "Ask HeroOS turn recorded (company_id=%s, new_conversation=%s, case_created=%s, "
-            "facts=%d, checkpoint=%s, reconciliation=%s)",
+            "workflow_attached=%s, facts=%d, checkpoint=%s, reconciliation=%s)",
             scope.company_id,
             loaded.conversation_id is None,
             recorded.case_created,
+            recorded.workflow_attached,
             recorded.facts,
             recorded.checkpoint,
             recorded.reconciliation,
@@ -480,9 +490,12 @@ class AskConversations:
         )
         case = None
         context = None
-        if conversation.case_id is not None:
-            item = workflows.get_workflow_case(scope, conversation.case_id)
-            assert item is not None  # a conversation's Case can't be deleted (no cascade)
+        item = (
+            None
+            if conversation.case_id is None
+            else workflows.get_workflow_case(scope, conversation.case_id)
+        )
+        if item is not None:  # a Case whose workflow isn't known yet has no position
             case, state = self._case_view(scope, item)
             context = self._case_context(scope, conversation, state)
         return _Loaded(
@@ -530,12 +543,16 @@ class AskConversations:
                 # This reply answered a conversation another turn has since moved on.
                 raise ConversationConflict()
             conversation = locked
-        # The Case's instance, locked like every writer of it: from here to the commit only.
-        item = (
-            None
-            if conversation.case_id is None
-            else workflows.get_workflow_case(scope, conversation.case_id, for_update=True)
-        )
+        case_created = False
+        if conversation.case_id is None:
+            # One conversation is one Case: its first turn starts it, before its workflow is
+            # known. A conversation stored before chat-first Cases gets its Case here too.
+            self._start_case(scope, conversation)
+            case_created = True
+        # The Case's instance (None until its workflow is known), locked like every writer of
+        # it: from here to the commit only.
+        assert conversation.case_id is not None
+        item = workflows.get_workflow_case(scope, conversation.case_id, for_update=True)
         case_state = None
         fresh_case = None
         fresh_context = None
@@ -590,21 +607,35 @@ class AskConversations:
             # Separate matters: nothing this turn established is carried or saved.
             prior = resumed.read.state
             next_state = replace(next_state, engine={} if prior is None else dict(prior.engine))
-        case_created = False
+        attached = False
+        today = datetime.now(UTC).date()
         if item is None:
             definition = bridge.case_definition(
                 evaluation, handoff, conversation_workflow=conversation.workflow_key, has_case=False
             )
             if definition is not None:
-                item = self._create_case(scope, conversation, definition, handoff, context)
+                item = self._attach_workflow(scope, conversation, definition, context)
                 case_state = None
-                case_created = True
+                attached = True
+        if item is not None and not blended and evaluation.workflow == item.instance.workflow_key:
+            definition = current_definition(item.instance.workflow_key)
+            title = (
+                None
+                if definition is None
+                else bridge.better_title(item.case.title, handoff, definition, today)
+            )
+            if title is not None:
+                item.case.title = conversation.title = title
 
         case_answers: dict[str, object] | None = None
         case_revision: int | None = None
         facts = 0
+        earlier_checkpoint = decode(conversation.checkpoint)
+        noted: dict[str, Value] = (
+            {} if earlier_checkpoint is None else dict(earlier_checkpoint.noted)
+        )
         if item is not None:
-            case_answers, case_revision, facts = self._apply_facts(
+            case_answers, case_revision, facts, fresh_noted = self._apply_facts(
                 scope,
                 item,
                 case_state,
@@ -615,6 +646,14 @@ class AskConversations:
                 context,
                 first.from_case | resumed.from_case,
                 blended,
+                # The founder's own words that established the matter become its narrative.
+                narrative=request.message if attached else None,
+            )
+            # A turn about the Case's matter says what is noted now; any other keeps it.
+            noted = (
+                dict(fresh_noted)
+                if fresh_noted is not None
+                else {k: v for k, v in noted.items() if case_answers.get(k) != v}
             )
         earlier = resumed.reviews
         if earlier is None:
@@ -624,19 +663,22 @@ class AskConversations:
         workflow = conversation.workflow_key
         if workflow is not None and next_state.workflow not in (None, workflow):
             # Another workflow's state never replaces the conversation's own (reviews advance).
-            kept = decode(conversation.checkpoint) or Checkpoint(versions="")
+            kept = earlier_checkpoint or Checkpoint(versions="")
             stored = encode(replace(kept, reviews=reviews))
         else:
             stored = encode(
-                next_checkpoint(
-                    snapshot,
-                    next_state,
-                    resumed=resumed,
-                    workflow=workflow,
-                    case_answers=case_answers,
-                    case_revision=case_revision,
-                    company_jurisdiction=company_jurisdiction(company),
-                    reviews=reviews,
+                replace(
+                    next_checkpoint(
+                        snapshot,
+                        next_state,
+                        resumed=resumed,
+                        workflow=workflow,
+                        case_answers=case_answers,
+                        case_revision=case_revision,
+                        company_jurisdiction=company_jurisdiction(company),
+                        reviews=reviews,
+                    ),
+                    noted=noted,
                 )
             )
         conversation.checkpoint = stored
@@ -655,33 +697,39 @@ class AskConversations:
         return _Recorded(
             result,
             case_created=case_created,
+            workflow_attached=attached,
             facts=facts,
             reconciliation=reconciliation,
             checkpoint="rebuilt" if resumed.rebuilt else "ok",
         )
 
-    def _create_case(
+    def _start_case(self, scope: CompanyScope, conversation: AssistantConversation) -> None:
+        """The conversation's one Case, before anyone knows what the matter is."""
+        case = cases.create_case(
+            scope, case_type=UNCLASSIFIED_CASE_TYPE, title=bridge.NEW_CASE_TITLE
+        )
+        conversation.case_id = case.id
+        conversation.title = case.title
+
+    def _attach_workflow(
         self,
         scope: CompanyScope,
         conversation: AssistantConversation,
         definition: WorkflowDefinition,
-        handoff: Handoff,
         context: AuthenticatedCompanyContext,
     ) -> workflows.WorkflowCase:
-        """The conversation's one Case (the existing creation path, keyed by the conversation)."""
-        key = case_request_key(conversation.id)
-        item = workflows.find_by_request_key(scope, key)
-        if item is None:
-            item = workflows.create_workflow_case(
-                scope,
-                definition,
-                title=bridge.case_title(handoff, definition, datetime.now(UTC).date()),
-                request_key=key,
-                user_id=context.user_id,
-            )
-        conversation.case_id = item.case.id
+        """The conversation's Case takes its workflow (keyed by the conversation, once)."""
+        assert conversation.case_id is not None
+        case = cases.get_case(scope, conversation.case_id)
+        assert case is not None  # a conversation's Case can't be deleted (no cascade)
+        item = workflows.attach_workflow(
+            scope,
+            case,
+            definition,
+            request_key=case_request_key(conversation.id),
+            user_id=context.user_id,
+        )
         conversation.workflow_key = item.instance.workflow_key
-        conversation.title = item.case.title
         return item
 
     def _apply_facts(
@@ -696,26 +744,49 @@ class AskConversations:
         context: AuthenticatedCompanyContext,
         from_case: frozenset[str],
         blended: bool,
-    ) -> tuple[dict[str, object], int, int]:
-        """The founder's new canonical facts through the shared pipeline; the Case after it."""
+        *,
+        narrative: str | None = None,
+    ) -> tuple[dict[str, object], int, int, dict[str, str] | None]:
+        """The founder's new canonical facts through the shared pipeline; the Case after it,
+        and what the founder said that the Case could hold (None: this turn wasn't about it)."""
         if state is None:
             state = evaluate_case(scope, item, self._policy, self._rules)
         answers = dict(state.answers)
         revision = item.instance.revision
         execution = snapshot.execution(item.instance.workflow_key)
         if execution is None or blended or evaluation.workflow != item.instance.workflow_key:
-            return answers, revision, 0
+            return answers, revision, 0, None
+        today = datetime.now(UTC).date()
+        open_steps = state.intake.available_steps
         changes = bridge.fact_changes(
             evaluation,
             execution,
             state.definition,
             current=state.answers,
-            open_steps=state.intake.available_steps,
+            open_steps=open_steps,
             from_case=from_case,
-            today=datetime.now(UTC).date(),
+            today=today,
+        )
+        if narrative is not None:
+            changes.update(
+                bridge.narrative_change(
+                    state.definition,
+                    narrative,
+                    current={**state.answers, **changes},
+                    open_steps=open_steps,
+                    today=today,
+                )
+            )
+        noted = bridge.noted_facts(
+            evaluation,
+            execution,
+            state.definition,
+            current={**state.answers, **changes},
+            open_steps=open_steps,
+            today=today,
         )
         if not changes:
-            return answers, revision, 0
+            return answers, revision, 0, noted
         applied = apply_case_fact_changes(
             scope,
             item,
@@ -730,7 +801,82 @@ class AskConversations:
         )
         if applied is None:  # pragma: no cover - the instance is locked
             raise ConversationConflict()
-        return {**answers, **changes}, applied.revision, len(changes)
+        return {**answers, **changes}, applied.revision, len(changes), noted
+
+    # --- the employer saves what was noted ------------------------------------------------
+
+    def save_noted(
+        self,
+        session: Session,
+        context: AuthenticatedCompanyContext,
+        conversation_id: UUID,
+        *,
+        expected_revision: int,
+    ) -> tuple[ConversationSummary, ConversationStatus]:
+        """Saves what the founder said that the Case could hold: the employer's explicit action.
+
+        The values are the server's own (the checkpoint's canonical readings,
+        checked again against the Case now), never the browser's. They go
+        through the shared pipeline as an Ask HeroOS submission of the
+        conversation's latest founder message. Raises ``ConversationNotFound``,
+        ``ConversationConflict`` (the conversation moved on) and ``NothingNoted``.
+        """
+        scope = open_company_scope(session, context)
+        try:
+            conversation = conversations.get_conversation(scope, conversation_id, for_update=True)
+            if conversation is None:
+                raise ConversationNotFound()
+            if conversation.revision != expected_revision:
+                raise ConversationConflict()
+            checkpoint = decode(conversation.checkpoint)
+            item = (
+                None
+                if conversation.case_id is None
+                else workflows.get_workflow_case(scope, conversation.case_id, for_update=True)
+            )
+            founder = conversations.latest_message(scope, conversation.id, "founder")
+            if checkpoint is None or not checkpoint.noted or item is None or founder is None:
+                raise NothingNoted()
+            state = evaluate_case(scope, item, self._policy, self._rules)
+            changes = bridge.accepted_values(
+                checkpoint.noted,
+                state.definition,
+                current=state.answers,
+                open_steps=state.intake.available_steps,
+                today=datetime.now(UTC).date(),
+            )
+            if changes:
+                applied = apply_case_fact_changes(
+                    scope,
+                    item,
+                    state,
+                    origin=AssistantOrigin(founder.id),
+                    changes=changes,
+                    expected_revision=item.instance.revision,
+                    idempotency_key=uuid.uuid4(),
+                    user_id=context.user_id,
+                    policy=self._policy,
+                    bundle=self._rules,
+                )
+                if applied is None:  # pragma: no cover - the instance is locked
+                    raise ConversationConflict()
+            # Saved (or no longer applicable): nothing stays noted. Not a turn: no new revision.
+            conversation.checkpoint = encode(replace(checkpoint, noted={}))
+            scope.session.flush()
+            scope.commit()
+        except BaseException:
+            scope.rollback()
+            raise
+        logger.info(
+            "Ask HeroOS noted facts saved (company_id=%s, facts=%d)",
+            scope.company_id,
+            len(changes),
+        )
+        found = conversations.get_conversation(scope, conversation_id)
+        assert found is not None  # a conversation is never deleted
+        summary, status = self._summaries(scope, [found])[0], self._status(scope, found)
+        scope.session.rollback()
+        return summary, status
 
     # --- reads -----------------------------------------------------------------------
 
@@ -828,10 +974,31 @@ class AskConversations:
         title = None
         where = None
         jurisdiction = [None if latest is None else latest.record.get("jurisdiction_state")]
-        if conversation.case_id is not None:
-            item = workflows.get_workflow_case(scope, conversation.case_id)
-            assert item is not None  # a conversation's Case can't be deleted (no cascade)
+        item = (
+            None
+            if conversation.case_id is None
+            else workflows.get_workflow_case(scope, conversation.case_id)
+        )
+        noted: tuple[NotedFact, ...] = ()
+        if conversation.case_id is not None and item is None:
+            case_hold = False  # a Case whose workflow isn't known yet is in progress
+        if item is not None:
             state = evaluate_case(scope, item, self._policy, self._rules)
+            checkpoint = decode(conversation.checkpoint)
+            if checkpoint is not None and checkpoint.noted:
+                noted = tuple(
+                    NotedFact(label, answer)
+                    for label, answer in bridge.noted_view(
+                        bridge.accepted_values(
+                            checkpoint.noted,
+                            state.definition,
+                            current=state.answers,
+                            open_steps=state.intake.available_steps,
+                            today=datetime.now(UTC).date(),
+                        ),
+                        state.definition,
+                    )
+                )
             hold = state.intake.hold
             # Only a whole-matter hold pauses the Case; a jurisdiction pause is attention.
             case_hold = hold is not None and hold.kind == "specialist_review"
@@ -857,4 +1024,5 @@ class AskConversations:
             checks=self._checks(snapshot, workflow),
             action_titles={} if knowledge is None else {o.id: o.title for o in knowledge.options},
             position=where,
+            noted=noted,
         )

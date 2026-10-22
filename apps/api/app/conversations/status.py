@@ -11,8 +11,10 @@ status
 │   ├── jurisdiction        needs_confirmation: jurisdiction-specific guidance waits for it
 │   └── expert_review       active, its scope (a decision or the matter) and the decisions
 ├── checks           ready / unavailable / not_applicable (technical; never a lifecycle)
-└── latest_outcome   the last outcome shown (guidance, warning, block, expert_review,
-                     unavailable, none); never the Case's lifecycle
+├── latest_outcome   the last outcome shown (guidance, warning, block, expert_review,
+│                    unavailable, none); never the Case's lifecycle
+└── noted            what the founder said that the Case could hold (question and answer
+                     labels), waiting for the employer to save it: a reading, never a fact
 ```
 
 Each dimension comes from its own authoritative source: the Case's intake
@@ -83,6 +85,14 @@ class ExpertReview:
 
 
 @dataclass(frozen=True, slots=True)
+class NotedFact:
+    """A reading waiting for the employer to save it to the Case (labels only, never a key)."""
+
+    label: str
+    answer: str
+
+
+@dataclass(frozen=True, slots=True)
 class ConversationStatus:
     lifecycle: Lifecycle | None
     workflow: str | None
@@ -94,6 +104,7 @@ class ConversationStatus:
     latest_outcome: LatestOutcome
     # The Case's formal workflow position (None: no Case).
     position: Position | None = None
+    noted: tuple[NotedFact, ...] = ()
 
 
 def project(
@@ -108,6 +119,7 @@ def project(
     checks: Checks,
     action_titles: Mapping[str, str],
     position: Position | None = None,
+    noted: tuple[NotedFact, ...] = (),
 ) -> ConversationStatus:
     """``case_hold``: the attached Case's intake holds the whole matter (None: no Case).
 
@@ -144,4 +156,5 @@ def project(
         checks=checks,
         latest_outcome=outcome,
         position=position,
+        noted=noted,
     )

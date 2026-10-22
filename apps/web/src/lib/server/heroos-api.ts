@@ -44,9 +44,11 @@ import {
   fromApiAssistantStatus,
 } from "@/lib/assistant/model";
 import {
+  type Conversation,
   CONVERSATION_CURSOR,
   type ConversationDetail,
   type ConversationList,
+  fromApiConversation,
   fromApiConversationDetail,
   fromApiConversationList,
   fromApiGatewayStatus,
@@ -1115,4 +1117,29 @@ export async function getConversationMessages(
   if (path === null) return { ok: false, failure: "not_found" };
   const query = before === null ? "" : `?before=${before}`;
   return apiCall(config, accessToken, fetcher, `${path}/messages${query}`, fromApiMessagePage);
+}
+
+/**
+ * `POST .../conversations/{conversationId}/noted`: the employer saves what HeroOS
+ * noted from the conversation to its Case. Only the revision they saw is sent:
+ * the values are the API's own. 404 when nothing is waiting, 409 when the
+ * conversation moved on.
+ */
+export async function saveNotedFacts(
+  accessToken: string,
+  config: AuthConfig,
+  companyId: string,
+  conversationId: string,
+  expectedRevision: number,
+  fetcher: Fetch = fetch,
+): Promise<ApiResult<Conversation>> {
+  if (!UUID.test(companyId)) return { ok: false, failure: "forbidden" };
+  const path = conversationsPath(companyId, conversationId);
+  if (path === null) return { ok: false, failure: "not_found" };
+  const result = await apiCall(config, accessToken, fetcher, `${path}/noted`, fromApiConversation, {
+    method: "POST",
+    body: { expected_revision: expectedRevision },
+  });
+  if (result.ok && result.data.id !== conversationId) return { ok: false, failure: "unavailable" };
+  return result;
 }

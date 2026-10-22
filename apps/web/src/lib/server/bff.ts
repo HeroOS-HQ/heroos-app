@@ -1,7 +1,7 @@
 import "server-only";
 
 import { ASK_QUESTION, ASK_STEP, ASK_WORKFLOW, isGreeting } from "@/lib/ask/model";
-import { CONVERSATION_CURSOR, parseGatewayRequest, parseSequence } from "@/lib/ask/conversation";
+import { CONVERSATION_CURSOR, parseGatewayRequest, parseNotedRequest, parseSequence } from "@/lib/ask/conversation";
 import { parseAssistantRequest } from "@/lib/assistant/model";
 import { TEMPLATE_KEY } from "@/lib/documents/model";
 import { parsePreviewRequest } from "@/lib/documents/requests";
@@ -31,6 +31,7 @@ import {
   getCaseHistory,
   getConversation,
   getConversationMessages,
+  saveNotedFacts,
   getDocumentForm,
   listConversations,
   previewDocument,
@@ -770,4 +771,28 @@ export async function handleConversationMessages(
   const result = await getConversationMessages(guarded.accessToken, config, companyId, conversationId, before, deps.fetch);
   if (!result.ok) return workflowFailure(result.failure, []);
   return json(200, result.data);
+}
+
+/**
+ * POST /bff/companies/{id}/assistant/conversations/{conversationId}/noted →
+ * `POST .../noted`: the employer saves what HeroOS noted from the conversation
+ * to its Case (the chat-first Case). The browser sends only the revision it
+ * saw; the API holds the values. Answers the conversation as it is now.
+ */
+export async function handleNotedSave(
+  request: Request,
+  config: AuthConfig,
+  companyId: string,
+  conversationId: string,
+  deps: BffDeps,
+): Promise<Response> {
+  const guarded = await guard(request, config, deps);
+  if (!guarded.ok) return guarded.response;
+  if (!UUID.test(companyId)) return error(403, "refused");
+  if (!UUID.test(conversationId)) return error(404, "not_found");
+  const parsed = parseNotedRequest(guarded.body);
+  if (!parsed.ok) return error(422, "invalid", []);
+  const result = await saveNotedFacts(guarded.accessToken, config, companyId, conversationId, parsed.expectedRevision, deps.fetch);
+  if (!result.ok) return workflowFailure(result.failure, []);
+  return json(200, { conversation: result.data });
 }

@@ -31,6 +31,9 @@ Routes:
   conversation, its status and its latest messages.
 - ``GET .../conversations/{conversation_id}/messages``: older messages
   (``before`` a message sequence).
+- ``POST .../conversations/{conversation_id}/noted``: the employer saves what
+  the founder said that the Case could hold (the status's ``noted``) to the
+  Case. Only the revision they saw is sent: the values are the server's own.
 
 A message's author is relative to the viewer (``you``, ``another_administrator``,
 ``heroos``), never a person's id or identity. Nothing internal reaches the
@@ -95,6 +98,7 @@ from app.conversations.service import (
     ConversationNotFound,
     ConversationSummary,
     InvalidMessage,
+    NothingNoted,
     StoredMessage,
     TurnRequest,
     check_message,
@@ -187,6 +191,15 @@ class MessageIn(BaseModel):
         return self
 
 
+class NotedSaveIn(BaseModel):
+    """The employer saves what was noted. Never a value: the server holds those."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The conversation revision the browser saw the noted list at.
+    expected_revision: Annotated[StrictInt, Field(ge=0, le=MAX_REVISION)]
+
+
 class GatewayStatusOut(BaseModel):
     available: bool
     reason: GatewayReason | None
@@ -262,6 +275,13 @@ class PositionOut(BaseModel):
     held_steps: list[str]
 
 
+class NotedOut(BaseModel):
+    """What the founder said that the Case could hold, waiting to be saved (labels only)."""
+
+    label: str
+    answer: str
+
+
 class StatusOut(BaseModel):
     """Separate dimensions, never one enum: an action's review doesn't pause the Case."""
 
@@ -272,6 +292,8 @@ class StatusOut(BaseModel):
     latest_outcome: Literal["guidance", "warning", "block", "expert_review", "unavailable", "none"]
     # None: the conversation has no Case.
     position: PositionOut | None
+    # Readings waiting for the employer to save them to the Case (chat-first).
+    noted: list[NotedOut]
 
 
 class ConversationSummaryOut(BaseModel):
@@ -380,6 +402,7 @@ def _status_out(value: ConversationStatus) -> StatusOut:
             stage_in_progress=value.position.stage_in_progress,
             held_steps=list(value.position.held_steps),
         ),
+        noted=[NotedOut(label=n.label, answer=n.answer) for n in value.noted],
     )
 
 
@@ -528,6 +551,29 @@ def get_conversation(
         messages=[_message_out(m, context.user_id) for m in view.page.messages],
         next_before=view.page.next_before,
     )
+
+
+@router.post("/assistant/conversations/{conversation_id}/noted", response_model=ConversationOut)
+def save_noted_facts(
+    conversation_id: UUID,
+    body: NotedSaveIn,
+    scope: CompanyAdminDb,
+    context: CompanyAdminContext,
+    service: Conversations,
+    chat_only: ChatOnly,
+) -> ConversationOut:
+    """The employer saves what HeroOS noted from the conversation to its Case."""
+    if chat_only:
+        raise _not_found()
+    try:
+        summary, value = service.save_noted(
+            scope.session, context, conversation_id, expected_revision=body.expected_revision
+        )
+    except (ConversationNotFound, NothingNoted):
+        raise _not_found() from None
+    except ConversationConflict:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Conflict") from None
+    return _conversation_out(summary, value)
 
 
 @router.get("/assistant/conversations/{conversation_id}/messages", response_model=MessagePageOut)

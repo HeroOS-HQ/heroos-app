@@ -18,7 +18,12 @@ again, never the AI's earlier words about it:
   gateway adds the decisions whose Expert Review the conversation found, by
   title, from the turn's own snapshot). Never a stage key, a rule, a raw row,
   an answer value or the bundle itself;
-- ``Position`` is the status's workflow-position dimension (``status``).
+- ``Position`` is the status's workflow-position dimension (``status``);
+- the Case's open intake questions (chat-first): what the Case record still
+  needs that the conversation itself can collect (``open_questions``: the
+  gateway may ask about them, in its own words, one at a time), and the
+  checks the founder answers with the buttons HeroOS shows in the
+  conversation (the employee's jurisdiction, the safety screening).
 
 Nothing here writes. The employer chooses the pathway, starts and completes
 stages and answers checklists through the Case's own controls (the progression
@@ -46,9 +51,15 @@ MAX_ITEMS: Final = 12
 MAX_REASONS: Final = 3
 MAX_TEXT: Final = 160
 EMPLOYER_OWNS: Final = (
-    "Only the employer changes this, through the case's own controls (its Next steps). It "
-    "can't be changed from the chat."
+    "Only the employer changes this, by pressing the case's own buttons, which HeroOS shows in "
+    "this conversation (under the latest reply) when a step is available. Nothing said in the "
+    "chat changes it."
 )
+# The open intake checks the conversation never collects in words (answered with buttons).
+BUTTON_CHECKS: Final = {
+    "jurisdiction": "whether the employee works under the company's confirmed jurisdiction",
+    "screening": "a short safety screening",
+}
 PATHWAY_OWNER: Final = (
     "Recorded by the employer as their own judgement. HeroOS didn't classify the conduct."
 )
@@ -137,16 +148,47 @@ def position(state: CaseState) -> Position:
     )
 
 
+def _open_intake(state: CaseState) -> tuple[list[str], list[str], list[str]]:
+    """The Case's open intake questions: those the conversation can collect (keys, prompts),
+    and the checks answered with buttons."""
+    intake = state.intake
+    keys: list[str] = []
+    prompts: list[str] = []
+    buttons: list[str] = []
+    for step in state.definition.steps:
+        if step.key not in intake.available_steps:
+            continue
+        for question in step.questions:
+            if question.key not in intake.missing:
+                continue
+            if question.options_from is not None:
+                check = BUTTON_CHECKS["jurisdiction"]
+            elif question.sensitive:
+                check = BUTTON_CHECKS["screening"]
+            elif question.kind in ("choice", "date"):
+                keys.append(question.key)
+                prompts.append(_short(question.prompt))
+                continue
+            else:
+                continue  # free text (the narrative) is the founder's own words, never asked
+            if check not in buttons:
+                buttons.append(check)
+    return keys, prompts, buttons
+
+
 def case_context(state: CaseState, *, reviews: Reviews) -> CaseContext:
     """The Case's position for one turn: the evaluation's input and the model's view."""
     progress = _progress(state)
     progression, spec = state.progression, state.spec
     hold = state.intake.hold
+    open_keys, open_prompts, buttons = _open_intake(state)
     view: dict[str, object] = {
         "case_lifecycle": "paused: the whole matter is held for specialist review"
         if hold is not None and hold.kind == "specialist_review"
         else "in progress",
         "who_changes_it": EMPLOYER_OWNS,
+        "case_record_still_needs": open_prompts[:MAX_ITEMS],
+        "answered_with_buttons_in_this_conversation": buttons,
     }
     signature: tuple[object, ...] = ("none",)
     if progression is not None and spec is not None and progression.status != "unavailable":
@@ -212,6 +254,7 @@ def case_context(state: CaseState, *, reviews: Reviews) -> CaseContext:
         signature=(*signature, view["case_lifecycle"]),
         reviews=reviews.actions,
         matter_review=reviews.matter,
+        open_questions=tuple(open_keys),
     )
 
 
