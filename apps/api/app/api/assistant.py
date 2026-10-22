@@ -166,6 +166,74 @@ def _require_case(scope: CompanyAdminReadOnlyDb, case_id: UUID) -> None:
         raise _not_found()
 
 
+def converse(
+    demo: HannahDemo,
+    account: UUID,
+    body: MessageIn,
+    *,
+    notice: str = NOTICE,
+    label: str = "Hannah demo",
+) -> AssistantReplyOut:
+    """One provider request for ``body``, its reply checked; nothing read or written.
+
+    Shared by the Hannah demo and Ask HeroOS's staging chat-only demo
+    (``app.api.gateway``): the same instruction, history budget, limits and
+    reply check. ``label`` names the caller in the logs.
+    """
+    provider = demo.provider
+    if provider is None:
+        logger.warning("%s unavailable: no provider key configured", label)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Not configured"
+        )
+    exceeded = demo.limits.acquire(str(account))
+    if exceeded is not None:
+        logger.info("%s reply refused (outcome=%s_limit)", label, exceeded.scope)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests",
+            headers={"Retry-After": str(exceeded.retry_after)},
+        )
+    turns = recent_turns(body.history, body.message)
+    try:
+        reply = provider.reply(HANNAH_SYSTEM_INSTRUCTION, turns)
+    except AssistantError as exc:
+        logger.warning("%s reply failed (provider=%s, outcome=%s)", label, provider.name, exc.kind)
+        if exc.kind == "rate_limited":
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many requests",
+                headers={"Retry-After": str(exc.retry_after or 60)},
+            ) from None
+        if exc.kind == "timeout":
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Timed out"
+            ) from None
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unavailable") from None
+    # The model's text is checked before the browser sees it; an unsafe reply never leaves.
+    reviewed = review_reply(reply)
+    if reviewed.replaced_by is None:
+        logger.info(
+            "%s reply (provider=%s, model=%s, outcome=ok, turns=%d)",
+            label,
+            provider.name,
+            provider.model,
+            len(turns),
+        )
+    else:
+        logger.info(
+            "%s reply (provider=%s, model=%s, outcome=safety_fallback, check=%s, turns=%d)",
+            label,
+            provider.name,
+            provider.model,
+            reviewed.replaced_by,
+            len(turns),
+        )
+    return AssistantReplyOut(
+        reply=reviewed.text, provider=provider.name, model=provider.model, notice=notice
+    )
+
+
 # --- routes ---------------------------------------------------------------------------
 
 
@@ -199,56 +267,4 @@ def send_assistant_message(
     _require_case(scope, case_id)
     # Release the database connection before waiting on the provider.
     scope.session.rollback()
-    provider = demo.provider
-    if provider is None:
-        logger.warning("Hannah demo unavailable: no provider key configured")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Not configured"
-        )
-    exceeded = demo.limits.acquire(str(context.user_id))
-    if exceeded is not None:
-        logger.info("Hannah demo reply refused (outcome=%s_limit)", exceeded.scope)
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many requests",
-            headers={"Retry-After": str(exceeded.retry_after)},
-        )
-    turns = recent_turns(body.history, body.message)
-    try:
-        reply = provider.reply(HANNAH_SYSTEM_INSTRUCTION, turns)
-    except AssistantError as exc:
-        logger.warning(
-            "Hannah demo reply failed (provider=%s, outcome=%s)", provider.name, exc.kind
-        )
-        if exc.kind == "rate_limited":
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests",
-                headers={"Retry-After": str(exc.retry_after or 60)},
-            ) from None
-        if exc.kind == "timeout":
-            raise HTTPException(
-                status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail="Timed out"
-            ) from None
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unavailable") from None
-    # The model's text is checked before the browser sees it; an unsafe reply never leaves.
-    reviewed = review_reply(reply)
-    if reviewed.replaced_by is None:
-        logger.info(
-            "Hannah demo reply (provider=%s, model=%s, outcome=ok, turns=%d)",
-            provider.name,
-            provider.model,
-            len(turns),
-        )
-    else:
-        logger.info(
-            "Hannah demo reply (provider=%s, model=%s, outcome=safety_fallback, check=%s, "
-            "turns=%d)",
-            provider.name,
-            provider.model,
-            reviewed.replaced_by,
-            len(turns),
-        )
-    return AssistantReplyOut(
-        reply=reviewed.text, provider=provider.name, model=provider.model, notice=NOTICE
-    )
+    return converse(demo, context.user_id, body)

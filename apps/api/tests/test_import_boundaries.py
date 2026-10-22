@@ -34,6 +34,7 @@ from fastapi.dependencies.models import Dependant
 from fastapi.routing import APIRoute, RouteContext, iter_route_contexts
 
 from app.api.assistant import require_hannah_demo
+from app.api.gateway import chat_only_demo, require_chat_only
 from app.api.onboarding import require_self_registration
 from app.auth.dependencies import get_current_user, get_verified_identity, require_company_admin
 from app.core.config import Settings
@@ -109,6 +110,9 @@ GATEWAY_READS = {
     ("GET", "/companies/{company_id}/assistant/conversations/{conversation_id}/messages"),
 }
 GATEWAY_ROUTES = {*GATEWAY_READS, GATEWAY_MESSAGE}
+# Ask HeroOS's staging chat-only demo: a message POST that changes nothing, behind its own
+# switch (HEROOS_CHAT_ONLY_DEMO), through the Hannah demo's provider.
+CHAT_ONLY_MESSAGE = ("POST", "/companies/{company_id}/assistant/chat")
 
 
 def _imports(path: Path) -> set[str]:
@@ -177,7 +181,7 @@ def test_the_only_mutating_routes_are_admin_routes_and_founder_registration() ->
         for route in _app_routes()
         for method in route.methods or set()
         if method not in ("GET", "HEAD")
-        and (method, route.path) not in (DOCUMENT_PREVIEW, ASSISTANT_MESSAGE)
+        and (method, route.path) not in (DOCUMENT_PREVIEW, ASSISTANT_MESSAGE, CHAT_ONLY_MESSAGE)
     }
     assert set(mutating) == MUTATING_ROUTES
 
@@ -220,8 +224,8 @@ def test_assistant_routes_are_admin_only_switched_and_cannot_write() -> None:
         (method, route.path): route for route in _app_routes() for method in route.methods or set()
     }
     found = {key for key in routes if "/assistant" in key[1]}
-    assert found == ASSISTANT_ROUTES | GATEWAY_ROUTES
-    for key in ASSISTANT_ROUTES | GATEWAY_READS:
+    assert found == ASSISTANT_ROUTES | GATEWAY_ROUTES | {CHAT_ONLY_MESSAGE}
+    for key in ASSISTANT_ROUTES | GATEWAY_READS | {CHAT_ONLY_MESSAGE}:
         calls = _dependency_calls(routes[key].dependant)
         assert require_company_admin in calls, key
         assert get_company_admin_read_scope in calls, key
@@ -233,6 +237,10 @@ def test_assistant_routes_are_admin_only_switched_and_cannot_write() -> None:
     assert require_hannah_demo in _dependency_calls(routes[ASSISTANT_MESSAGE].dependant)
     # The gateway is not the demo: its own switch and prerequisites, never the demo's.
     assert require_hannah_demo not in _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
+    # The chat-only demo: its own switch, never the Hannah demo's; the turn obeys it too.
+    chat_only = _dependency_calls(routes[CHAT_ONLY_MESSAGE].dependant)
+    assert require_chat_only in chat_only and require_hannah_demo not in chat_only
+    assert chat_only_demo in _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
 
 
 def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
@@ -336,6 +344,7 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/cases/{case_id}/assistant/messages",
         "/companies/{company_id}/assistant",
         "/companies/{company_id}/assistant/messages",
+        "/companies/{company_id}/assistant/chat",
         "/companies/{company_id}/assistant/conversations",
         "/companies/{company_id}/assistant/conversations/{conversation_id}",
         "/companies/{company_id}/assistant/conversations/{conversation_id}/messages",

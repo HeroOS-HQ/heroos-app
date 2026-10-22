@@ -34,7 +34,11 @@ const MAX_ITEMS = 100;
 const MAX_REVIEW_ACTIONS = 12;
 
 export type GatewayUnavailable = "disabled" | "not_configured" | "knowledge_unavailable";
-export type GatewayStatus = { available: boolean; reason: GatewayUnavailable | null; notice: string | null };
+/**
+ * `chatOnly`: the API's staging chat-only demo (`HEROOS_CHAT_ONLY_DEMO`) is on, and Ask
+ * HeroOS is a plain conversation (`components/ask/ask-chat.tsx`). Absent otherwise.
+ */
+export type GatewayStatus = { available: boolean; reason: GatewayUnavailable | null; notice: string | null; chatOnly?: true };
 
 export type ConversationState = "responded" | "clarifying" | "outside_approved_guidance";
 /** The deterministic outcome HeroOS's checks decided; "unavailable" is technical, never an HR outcome. */
@@ -118,13 +122,15 @@ function read(value: unknown, keys: readonly string[], naming: Naming): Fields |
   return Object.fromEntries(keys.map((key, i) => [key, value[names[i]]]));
 }
 
-/** `GET /companies/{id}/assistant`, rebuilt field by field. */
+/** `GET /companies/{id}/assistant`, rebuilt field by field (the API sends `chat_only` only as true). */
 export function fromApiGatewayStatus(body: unknown): GatewayStatus | null {
   if (!isRecord(body) || typeof body.available !== "boolean") return null;
   const reason = body.reason;
   if (reason !== null && (typeof reason !== "string" || !REASONS.has(reason))) return null;
   if (!optionalText(body.notice)) return null;
-  return { available: body.available, reason: reason as GatewayUnavailable | null, notice: body.notice };
+  if (body.chat_only !== undefined && typeof body.chat_only !== "boolean") return null;
+  const status = { available: body.available, reason: reason as GatewayUnavailable | null, notice: body.notice };
+  return body.chat_only === true ? { ...status, chatOnly: true } : status;
 }
 
 /**

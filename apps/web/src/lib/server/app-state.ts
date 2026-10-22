@@ -235,9 +235,11 @@ export async function loadCase(companyId: string, workflowKey: string, caseId: s
  * configured, no approved knowledge, a member, an API from before the
  * gateway, an unreachable API) is `null`, and Ask keeps opening a case
  * through its seam exactly as before (docs/architecture/signed-in-workspace.md).
+ * The staging chat-only demo is kept even while it can't answer: Ask then
+ * says so, and never falls back to opening a case.
  */
 export function askGateway(status: ApiResult<GatewayStatus>): GatewayStatus | null {
-  return status.ok && status.data.available ? status.data : null;
+  return status.ok && (status.data.available || status.data.chatOnly) ? status.data : null;
 }
 
 export async function loadAskGateway(companyId: string): Promise<GatewayStatus | null> {

@@ -29,6 +29,7 @@ describe("browser/server boundary", () => {
       "components/app/back-forward-cache-guard.tsx",
       "components/app/cases-panel.tsx",
       "components/app/workspace-header.tsx",
+      "components/ask/ask-chat.tsx",
       "components/ask/ask-conversation.tsx",
       "components/ask/ask-parts.tsx",
       "components/ask/ask-workspace.tsx",
@@ -96,6 +97,7 @@ describe("browser/server boundary", () => {
     const routes = files.filter(({ path }) => path.startsWith("app/bff/") && !(path in reads));
     expect(routes.map(({ path }) => path).sort()).toEqual([
       "app/bff/companies/[companyId]/ask/route.ts",
+      "app/bff/companies/[companyId]/assistant/chat/route.ts",
       "app/bff/companies/[companyId]/assistant/messages/route.ts",
       "app/bff/companies/[companyId]/blueprint/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/assistant/messages/route.ts",
@@ -110,7 +112,7 @@ describe("browser/server boundary", () => {
     ]);
     for (const { path, text } of routes) {
       expect(text, path).toMatch(
-        /handle(Registration|BlueprintUpdate|AskStart|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview|AssistantMessage|GatewayMessage)\(request/,
+        /handle(Registration|BlueprintUpdate|AskStart|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview|AssistantMessage|GatewayMessage|AskChat)\(request/,
       );
       expect(text, path).not.toMatch(/export async function GET/);
     }

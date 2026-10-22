@@ -6,6 +6,7 @@ import { AdviserMark, PersonAvatar } from "@/components/app/workspace-chrome";
 import type { GatewayStatus } from "@/lib/ask/conversation";
 import { ASK_TEXT_MAX, GREETING_REPLY, isGreeting, parseAskStarted, provisionalCaseTitle } from "@/lib/ask/model";
 
+import { AskChat } from "./ask-chat";
 import { AskConversation } from "./ask-conversation";
 import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
 
@@ -27,6 +28,10 @@ import { AskAlert, AskLanding, Composer, SignInAgain } from "./ask-parts";
  *   (`/bff/companies/{id}/ask`, lib/ask/model.ts) and takes the founder there.
  *   Nothing pretends to be AI: the case follows HeroOS's guided Disciplinary
  *   workflow.
+ *
+ * Ahead of both, while the API's staging chat-only demo is on (its status says
+ * `chatOnly`): a plain conversation with HeroOS's model (`ask-chat.tsx`) that
+ * never opens a case, stores nothing and ignores `?conversation=`.
  */
 
 /** Who may ask: administrators open cases; for everyone else the box says why it can't. */
@@ -94,6 +99,17 @@ export function AskWorkspace({
   fetcher?: typeof fetch;
   navigate?: (href: string) => void;
 }) {
+  if (mode === "ready" && conversation?.chatOnly) {
+    return (
+      <AskChat
+        available={conversation.available}
+        companyId={companyId}
+        fetcher={fetcher}
+        notice={conversation.notice}
+        returning={returning}
+      />
+    );
+  }
   if (mode === "ready" && (conversation?.available || conversationId)) {
     return (
       <AskConversation
