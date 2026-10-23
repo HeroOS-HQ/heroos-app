@@ -166,11 +166,12 @@ INITIAL_FACTS: Final = Step(
             means=(
                 "Earlier occasions, before the matter now being handled. raised_before: on an "
                 "earlier occasion the employer or a manager raised this kind of issue with the "
-                "employee (spoke to them about it, warned them or otherwise took it up). new: "
-                "there was no earlier occasion, it is the first time it has happened or come up "
-                "with them. Neither when the words only say it happened before or keeps happening "
-                "(nobody taking it up is said; nor is it new), and neither from whether the "
-                "matter now being handled has been discussed with the employee yet."
+                "employee (spoke to them about it, warned them or otherwise took it up). new: it "
+                "was never raised with them before (the first time it has happened included). A "
+                "plain yes or no to whether it was raised with them before answers it. Neither "
+                "when the words only say it happened before or keeps happening (whether anyone "
+                "took it up isn't said), and neither from whether the matter now being handled "
+                "has been discussed with the employee yet."
             ),
             options=(
                 Option("new", "This is a new issue"),

@@ -132,18 +132,18 @@ fact the words state, not only the closest one. Read each fact by what its label
 that the conduct happened before or keeps happening; that it was raised, discussed or taken up \
 with the employee; that a warning or sanction was given; that an earlier action was in writing. \
 Words state only the ones they say: that it happened before, keeps happening or is a pattern never \
-states that anyone raised it, discussed it or warned them (it does mean it is not a new issue, \
-even when the latest incident is new); an earlier talk with the employee about the problem ("he \
-talked to him twice", "I had a word with her") states that it was raised with them (and discussed \
-with them when it was about the matter now being handled), implies that they had been told what \
-was expected ("inferred", "high"), and states that the earlier action was only verbal when the \
-founder says it was only talk ("it was raised with him" alone says nothing about writing); an \
-earlier action is documented in writing only when the founder says the action itself was written \
-(a warning letter, a note on file), while messages or emails about the problem are evidence; \
-arriving late for a shift or for work, or leaving before a shift ends, happens at work; people who \
-saw it ("in front of everyone", "others saw") are witnesses. Evidence the founder doubts ("the \
-CCTV doesn't really show anything", "I don't know if it counts") is "inferred". Talking with the \
-employee is never a warning, sanction or penalty unless the founder says one was given.
+states that anyone raised it, discussed it or warned them, nor that nobody did; an earlier talk \
+with the employee about the problem ("he talked to him twice", "I had a word with her") states \
+that it was raised with them (and discussed with them when it was about the matter now being \
+handled), implies that they had been told what was expected ("inferred", "high"), and states that \
+the earlier action was only verbal when the founder says it was only talk ("it was raised with \
+him" alone says nothing about writing); an earlier action is documented in writing only when the \
+founder says the action itself was written (a warning letter, a note on file), while messages or \
+emails about the problem are evidence; arriving late for a shift or for work, or leaving before a \
+shift ends, happens at work; people who saw it ("in front of everyone", "others saw") are \
+witnesses. Evidence the founder doubts ("the CCTV doesn't really show anything", "I don't know if \
+it counts") is "inferred". Talking with the employee is never a warning, sanction or penalty \
+unless the founder says one was given.
 - If the founder corrects an earlier statement, propose the corrected value from the newer turn. \
 If they now say they aren't sure of something they stated before, propose it again from the \
 current message as "not_sure" (when that is one of its options) or as "inferred".
