@@ -1090,3 +1090,105 @@ def test_happened_before_is_recorded_never_asked(artifacts: Artifacts) -> None:
     catalog = chat.provider.phase("understanding")[0].data["routing_catalog"]  # type: ignore[union-attr]
     means = {f["key"]: f.get("means", "") for f in catalog["facts"]}
     assert "whether anyone raised it" in means["history.previous_occurrence"]
+
+
+# --- final blocker pass: take-backs stay with their own fact; earlier replies stay put ---------
+
+
+def test_not_knowing_an_implied_fact_takes_back_nothing_the_founder_said(
+    artifacts: Artifacts,
+) -> None:
+    """Found in the certification run: "he already has a written warning for the same thing" said
+    it had been raised with him and implied he knew the standard; "no idea" about the standard
+    then dropped the warning itself, and HeroOS asked whether it had been raised with him."""
+    chat = Remembering(artifacts)
+    words = "He already has a written warning for the same thing and he's done it again."
+    chat.say(
+        words,
+        understood(
+            words,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[
+                fact("incident.history", "raised_before", "already has a written warning"),
+                fact(DISCUSSED, "yes", "already has a written warning"),
+                fact(POLICY, "yes", "already has a written warning", basis="inferred"),
+            ],
+        ),
+    )
+    assert chat.memory.said[POLICY].certainty == "implied"
+    unsure = "No idea whether anyone told him the standard, I'd have to check."
+    data = understood(
+        unsure,
+        pathway="less_serious",
+        topics=["workplace_reminder"],
+        facts=[fact(POLICY, "not_sure", unsure, turn=1)],
+    )
+    data["previous_question_answer"] = "does_not_know"
+    result = chat.say(unsure, data)
+    facts = evaluation(result).facts
+    assert facts.conversational[POLICY] == "not_sure"
+    assert facts.conversational["incident.history"] == "raised_before"
+    assert facts.conversational[DISCUSSED] == "yes"
+    assert {"incident.history", DISCUSSED} <= set(chat.memory.said)
+
+
+def test_not_knowing_a_fact_said_plainly_takes_back_only_that_fact(artifacts: Artifacts) -> None:
+    """ "Not sure" about one fact the founder stated doubts that fact only, never the other facts
+    their words gave; a correction to another value still takes them back (``superseded``)."""
+    chat = Remembering(artifacts)
+    words = "His manager spoke to him about it before, on Monday."
+    chat.say(
+        words,
+        understood(
+            words,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[
+                fact("incident.history", "raised_before", "His manager spoke to him about it"),
+                fact(DISCUSSED, "yes", "His manager spoke to him about it"),
+            ],
+        ),
+    )
+    unsure = "Actually I'm not sure his manager raised it with him before."
+    result = chat.say(
+        unsure,
+        understood(
+            unsure,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[fact("incident.history", "not_sure", unsure, turn=1)],
+        ),
+    )
+    facts = evaluation(result).facts
+    assert facts.conversational["incident.history"] == "not_sure"
+    assert facts.conversational[DISCUSSED] == "yes"
+
+
+def test_an_earlier_reply_never_answers_the_question_asked_after_it(artifacts: Artifacts) -> None:
+    """Found in the certification run: "no nothing for tuesday yet" answered whether a sanction had
+    been issued; when HeroOS then asked whether the concern had been put to her, the next turn's
+    understanding read that earlier reply as "no". A reading of the question just asked, from an
+    earlier message the conversation never read it from, is left out."""
+    chat = Remembering(artifacts)
+    first = warning(chat)
+    assert first.reply.endswith(EXPLAIN_QUESTION)
+    aside_words = "Different thing, sorry: the letter was about September."
+    data = understood(
+        aside_words,
+        topics=["formal_warning"],
+        actions=[("opt-warning", "a formal warning")],
+        facts=[
+            fact(
+                "given_opportunity_to_explain",
+                "no",
+                "Can I give him",
+                turn=0,
+                provenance="prior_user_message",
+            ),
+        ],  # fmt: skip
+    )
+    data["previous_question_answer"] = "not_answered"
+    result = chat.say(aside_words, data)
+    assert "given_opportunity_to_explain" not in evaluation(result).facts.conversational
+    assert "given_opportunity_to_explain" not in chat.memory.said

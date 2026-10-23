@@ -343,3 +343,27 @@ def test_a_reply_to_the_question_without_certainty_is_an_uncertain_answer(hesita
     in the coverage pass: recorded as no answer, and asked again later)."""
     memory = after(ASKED, (Asked("fact", KEY),), hesitant=hesitant)
     assert memory.asked[KEY].last == ("hedged" if hesitant else "unanswered")
+
+
+def test_only_a_plain_statement_corrected_to_another_value_takes_its_words_with_it() -> None:
+    """A reading HeroOS drew from the words (implied, rough, uncertain), or a fact the founder now
+    says they don't know, is taken back alone: the words still say what they said."""
+    words = {
+        "incident.history": Reading("raised_before", 0, 1),
+        "incident.discussed_with_employee": Reading("yes", 0, 1),
+        "employee_aware_of_relevant_policy": Reading("yes", 0, 1, "implied"),
+        "incident.date": Reading("2026-10-12", 0, 1, "rough"),
+    }
+    memory = ConversationMemory(said=words)
+    implied = superseded(memory, {"employee_aware_of_relevant_policy"}, read_now=())
+    assert implied == {"employee_aware_of_relevant_policy"}
+    assert superseded(memory, {"incident.date"}, read_now=()) == {"incident.date"}
+    unknown = superseded(memory, {"incident.history"}, read_now=(), unknown={"incident.history"})
+    assert unknown == {"incident.history"}
+    # A plain statement corrected to another value still takes what rested on its words.
+    assert superseded(memory, {"incident.history"}, read_now=()) == {
+        "incident.history",
+        "incident.discussed_with_employee",
+        "employee_aware_of_relevant_policy",
+        "incident.date",
+    }

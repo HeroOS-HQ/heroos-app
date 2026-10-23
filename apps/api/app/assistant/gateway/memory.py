@@ -253,7 +253,10 @@ def provenance(
 
 
 def superseded(
-    memory: ConversationMemory, affected: Collection[str], read_now: Collection[str]
+    memory: ConversationMemory,
+    affected: Collection[str],
+    read_now: Collection[str],
+    unknown: Collection[str] = (),
 ) -> frozenset[str]:
     """The earlier readings the current message no longer lets stand.
 
@@ -263,11 +266,23 @@ def superseded(
     corrected to "that was another operative", left "discussed with him", read from the same
     words). Every other reading stands (found in the final run: a correction of one fact
     dropped every other reading, and those facts were asked for again).
+
+    Only what the founder said plainly takes its words with it. A reading HeroOS drew from
+    their words (implied, rough or uncertain) is HeroOS's reading, not their statement, and
+    saying they don't know a fact (``unknown``: the affected facts now read as not sure) takes
+    back nothing else: found in the certification run, "no idea" about whether he had been told
+    the standard, implied from "he already has a written warning for the same thing", dropped
+    the warning itself, and the founder was asked about it again.
     """
     dropped = set(affected)
     for key in affected:
         source = memory.said.get(key)
-        if source is None or source.words == UNKNOWN_WORDS:
+        if (
+            source is None
+            or source.words == UNKNOWN_WORDS
+            or source.certainty != "stated"
+            or key in unknown
+        ):
             continue
         dropped |= {
             other

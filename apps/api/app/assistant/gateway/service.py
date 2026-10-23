@@ -1105,6 +1105,54 @@ def _corrected(
     return frozenset(corrected)
 
 
+def _without_late_answers(
+    understanding: UnderstandingProposal,
+    asked: Sequence[Asked],
+    memory: ConversationMemory,
+    current: int,
+) -> tuple[UnderstandingProposal, int]:
+    """An earlier founder message never answers the question HeroOS asked after it.
+
+    A reading of the fact HeroOS asked about last turn, taken from an earlier message, stands
+    only when the conversation already read that fact from that message. Otherwise an earlier
+    reply to another question is being read as the answer to this one (found in the
+    certification run: "no nothing for tuesday yet", the answer to whether a sanction had
+    already been issued, became "not discussed with her" once HeroOS asked about that next).
+    ``current``: the current message's number among the messages the understanding read.
+    """
+    if len(asked) != 1 or asked[0].kind != "fact":
+        return understanding, 0
+    key, earlier = asked[0].key, memory.said.get(asked[0].key)
+
+    def read_then(source: int) -> bool:
+        return earlier is not None and earlier.turn == max(0, memory.turns - (current - source))
+
+    kept = tuple(
+        f
+        for f in understanding.facts
+        if f.fact_key != key
+        or f.source_turn is None
+        or f.source_turn >= current
+        or read_then(f.source_turn)
+    )
+    if len(kept) == len(understanding.facts):
+        return understanding, 0
+    return dataclasses.replace(understanding, facts=kept), len(understanding.facts) - len(kept)
+
+
+def _not_known_now(
+    execution: WorkflowExecution, understanding: UnderstandingProposal, current: int
+) -> frozenset[str]:
+    """The facts the current message says the founder doesn't know."""
+    return frozenset(
+        f.fact_key
+        for f in understanding.facts
+        if f.source_turn == current
+        and (schema := execution.schemas.get(f.fact_key)) is not None
+        and canonical(schema, f.value) == NOT_SURE
+    )
+
+
 def _agrees(
     execution: WorkflowExecution, fact: FactProposal, earlier: str | None, founder: Sequence[str]
 ) -> bool:
@@ -1471,6 +1519,7 @@ class AiGateway:
                 turn.memory,
                 _corrected(execution, understanding, current, said_before) | hedged,
                 {f.fact_key for f in understanding.facts},
+                unknown=_not_known_now(execution, understanding, current),
             )
             carried = {
                 k: v
@@ -1740,6 +1789,10 @@ class AiGateway:
         understanding, dropped = check_evidence(
             understanding, view.catalog, founder, company_text(company), answering=answering
         )
+        understanding, late = _without_late_answers(
+            understanding, asked_before, turn.memory, len(founder) - 1
+        )
+        dropped += late
         # The understanding reads a date's words; the server puts them on the calendar.
         dates, today = _date_facts(snapshot), self.today()
         understanding = with_dates_placed(
