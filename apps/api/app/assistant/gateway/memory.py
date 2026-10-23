@@ -450,12 +450,15 @@ def conversation_view(
     memory: ConversationMemory,
     previous: Sequence[Asked],
     established: Sequence[tuple[str, str]] = (),
+    corrected: Collection[str] = (),
 ) -> dict[str, object]:
     """The compact, server-owned conversation state the response phase reads.
 
     What is known (confirmed, or said by the founder), what the founder doesn't know,
-    what HeroOS asked without an answer, and how the current message related to the last
-    question. Labels and display values only: never a key, an id or a raw record.
+    what HeroOS asked without an answer, how the current message related to the last
+    question, and what it corrected or took back (``corrected``: found in the final blocker pass,
+    "that was Kareem, not Musa", about an earlier talk, was acknowledged as Kareem being the
+    employee involved). Labels and display values only: never a key, an id or a raw record.
     """
     schemas = {} if execution is None else execution.schemas
 
@@ -518,6 +521,8 @@ def conversation_view(
             label, memory, seen, asked="approximate", certainty="rough"
         ),
     }
+    if corrected:
+        view["corrected_now"] = sorted({label(k) for k in corrected if label(k)})
     last = [q for q in previous if q.kind != "insistence"]
     if last:
         question = last[0]

@@ -583,6 +583,9 @@ class _Turn:
     pursued: frozenset[str] = frozenset()
     # The facts the founder's current message spoke about (stated, implied or hedged).
     said_now: frozenset[str] = frozenset()
+    # The facts it corrected (another value) or took back (nothing in their place): what the
+    # reply acknowledges as corrected, and nothing else.
+    corrected: frozenset[str] = frozenset()
 
     def coverage(self, key: str) -> Coverage:
         """Where the question about ``key`` stands in the conversation (trusted facts included)."""
@@ -1462,6 +1465,7 @@ class AiGateway:
         hedged: frozenset[str] = frozenset()
         uncertain: frozenset[str] = frozenset()
         dropped: frozenset[str] = frozenset()
+        corrected: frozenset[str] = frozenset()
         implied: frozenset[str] = frozenset()
         touched: dict[str, Value] = {}
         pursued: frozenset[str] = frozenset()
@@ -1541,6 +1545,11 @@ class AiGateway:
                 **{k: str(r.value) for k, r in turn.memory.said.items()},
                 **_noted_facts(execution, noted),
             }
+            # Against what was said and what was trusted: a trusted answer corrected is corrected.
+            trusted_before = {k: str(v) for k, v in prior.engine.items()}
+            corrected = retracted | _corrected(
+                execution, understanding, current, {**said_before, **trusted_before}
+            )
             # A correction, or a statement made uncertain, replaces what was said about that fact
             # and what rested on the same words; every other reading stands.
             dropped = superseded(
@@ -1650,8 +1659,9 @@ class AiGateway:
         taken_back = frozenset(k for k in dropped if k not in memory.said)
         said_now = frozenset(f.fact_key for f in understanding.facts if f.source_turn == current)
         return _Turn(
-            evaluation, card, trust, prior, reconfirm, case, memory, taken_back, pursued, said_now
-        )
+            evaluation, card, trust, prior, reconfirm, case, memory, taken_back, pursued, said_now,
+            corrected,
+        )  # fmt: skip
 
     def _targets(
         self,
@@ -1906,6 +1916,7 @@ class AiGateway:
                 result.memory,
                 result.prior.asked,
                 [(f.fact_key, f.value) for f in plan.established],
+                corrected=result.corrected,
             ),
             "jurisdiction_note": self._jurisdiction_note(plan),
             "conversation": _recent_conversation(turn),

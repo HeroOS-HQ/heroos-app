@@ -270,6 +270,10 @@ length.
 - Acknowledge only what the founder actually gave, with the certainty they gave it: "I think" \
 stays what they think ("you think the manager may have spoken to her"), "not sure" stays \
 unclear (never "that's clear"), and "thanks for confirming" only follows a confirmation.
+- conversation_state.corrected_now is what the founder's current message corrected or took \
+back: acknowledge exactly that. When they say something was about another person, only those \
+points were about the other person: the matter, the employee it concerns and everything else \
+stay as they described them, unless they say the matter itself concerns someone else.
 - conversation_state is authoritative about the conversation: reuse what is "known" and never \
 ask for it again; never ask again what the founder doesn't know, answered uncertainly or \
 roughly, or what HeroOS already asked without an answer, in any words. A question target about \

@@ -1225,8 +1225,11 @@ def test_a_fact_taken_back_with_nothing_in_its_place_is_no_longer_said(
     assert "incident.history" not in facts.conversational | facts.engine
     assert DISCUSSED not in facts.conversational  # rested on the same words
     assert "incident.history" not in chat.memory.said and DISCUSSED not in chat.memory.said
-    known = chat.shown()["conversation_state"]["known"]
-    assert not any("raised" in k["about"].lower() for k in known)
+    state = chat.shown()["conversation_state"]
+    assert not any("raised" in k["about"].lower() for k in state["known"])
+    # The reply is told what was taken back, so it acknowledges exactly that (found in the final
+    # blocker pass: "that was Kareem, not Musa" was acknowledged as Kareem being the employee).
+    assert any("raised" in label.lower() for label in state["corrected_now"])
 
 
 def test_the_understanding_reads_an_earlier_reply_with_the_question_it_answered(

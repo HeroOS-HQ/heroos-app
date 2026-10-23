@@ -367,3 +367,9 @@ def test_only_a_plain_statement_corrected_to_another_value_takes_its_words_with_
         "employee_aware_of_relevant_policy",
         "incident.date",
     }
+
+
+def test_the_reply_is_told_what_the_founders_message_corrected() -> None:
+    view = conversation_view(None, LABELS, facts(), ConversationMemory(), (), corrected={KEY})
+    assert view["corrected_now"] == ["Standard explained"]
+    assert "corrected_now" not in conversation_view(None, LABELS, facts(), ConversationMemory(), ())
