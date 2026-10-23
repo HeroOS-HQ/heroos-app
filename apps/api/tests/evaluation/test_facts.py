@@ -6,6 +6,8 @@ confirmation of its own canonical reading, or the Company Blueprint. The AI's
 reading of the founder's words, even of real words, never is.
 """
 
+from datetime import date
+
 import pytest
 
 from app.evaluation.facts import (
@@ -15,10 +17,12 @@ from app.evaluation.facts import (
     answer_in_words,
     canonical,
     contradicted,
+    dated,
     leading_answer,
     parse_count,
     parse_insistence,
     parse_yes_no,
+    proposition,
     says_not_known,
     trust_facts,
 )
@@ -442,6 +446,8 @@ def test_a_reply_may_open_with_a_plain_yes_or_no(text: str, expected: str | None
         # Doubt anywhere in the reply.
         ("Yes, I think so.", "yes", None),
         ("No. I was told he never got it.", "no", None),
+        # A doubt about another statement doesn't qualify the answer (hybrid certification).
+        ("No, she never got the handbook, and honestly I don't think she'd read it.", "no", "no"),
         ("No, but I'd need to check.", "no", None),
     ],
 )
@@ -489,3 +495,72 @@ def test_a_date_on_another_weekday_than_its_words_name_is_never_trusted(
     (never noted or trusted). It never computes a date itself."""
     assert contradicted(value, words, DATE) is wrong
     assert not contradicted(value, words)  # other kinds of fact: not a date question
+
+
+@pytest.mark.parametrize(
+    ("message", "excerpt", "value", "doubted"),
+    [
+        # The brief's examples: a doubt qualifies the statement it is part of.
+        ("He was late again, but I don't think I need his side.", "He was late again", "yes",
+         False),
+        ("She didn't come in Monday. I think her manager tried calling her.",
+         "She didn't come in Monday", "no", False),
+        ("She didn't come in Monday. I think her manager tried calling her.",
+         "her manager tried calling her", "yes", True),
+        # Found in the hybrid certification.
+        ("I haven't spoken to her about it, and honestly I don't think I need her side",
+         "I haven't spoken to her about it", "no", False),
+        ("I sat down with him on Monday and he told me his mother has been ill, which I think "
+         "has been weighing on him", "I sat down with him on Monday", "yes", False),
+        # A doubt about the whole sentence, or one opening it, qualifies all of it.
+        ("I think her manager gave her a verbal warning once, but I'd need to check",
+         "gave her a verbal warning once", "yes", True),
+        ("Her manager gave her a verbal warning, but I'd need to check with HR.",
+         "Her manager gave her a verbal warning", "yes", True),
+        ("I think he was told, but not in writing", "not in writing", "verbal_only", True),
+        ("Nobody saw it, at least I don't think so.", "Nobody saw it", "no", True),
+        ("There were messages, or so I was told.", "There were messages", "yes", True),
+        # Without a break between them, statements keep their doubt together.
+        ("I think he was late and his manager warned him", "his manager warned him", "yes", True),
+        # A doubt that names its own subject is its own statement.
+        ("Not sure about the date, but he definitely swore at her.",
+         "he definitely swore at her", "yes", False),
+        ("I spoke to her yesterday, not sure if she understood.", "I spoke to her yesterday",
+         "yes", False),
+    ],
+)  # fmt: skip
+def test_a_doubt_qualifies_the_statement_it_is_part_of_never_the_whole_message(
+    message: str, excerpt: str, value: str, doubted: bool
+) -> None:
+    assert contradicted(value, excerpt, context=proposition(message, excerpt)) is doubted
+
+
+THURSDAY = date(2026, 10, 22)
+
+
+@pytest.mark.parametrize(
+    ("value", "words", "placed"),
+    [
+        # Found in the hybrid certification: the 20th was a Tuesday in 2020 too.
+        ("2020-10-20", "since Tuesday 20 October", "2026-10-20"),
+        ("2026-10-20", "since Tuesday 20 October", "2026-10-20"),
+        ("2020-10-05", "the 5th of october", "2026-10-05"),
+        ("2026-10-08", "already warned for it 8 oct", "2026-10-08"),
+        ("2026-10-20", "Oct 20th", "2026-10-20"),
+        ("2026-10-14", "Wednesday, Thursday and Friday (14th to 16th October)", "2026-10-14"),
+        # The most recent such day not after today.
+        ("2026-11-20", "on 20 November", "2025-11-20"),
+        # A year the founder gives is theirs.
+        ("2024-10-05", "on 5 October 2024", "2024-10-05"),
+        # A day the words don't name, or one no recent year puts on the weekday they name.
+        ("2026-10-21", "since Tuesday 20 October", None),
+        ("2026-10-20", "since Wednesday 20 October", None),
+        # No day with its month: the other checks decide.
+        ("2026-10-19", "since Monday", "2026-10-19"),
+        ("not_sure", "not sure when", "not_sure"),
+    ],
+)
+def test_a_day_and_month_are_put_on_the_calendar_by_the_server(
+    value: str, words: str, placed: str | None
+) -> None:
+    assert dated(value, words, THURSDAY) == placed

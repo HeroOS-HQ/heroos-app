@@ -109,7 +109,8 @@ from app.assistant.gateway.proposals import (
     check_evidence,
     parse_response,
     parse_understanding,
-    sentence_of,
+    proposition_of,
+    with_dates_placed,
     without_contradicted,
 )
 from app.assistant.limits import UsageLimits
@@ -129,6 +130,7 @@ from app.evaluation.facts import (
     TrustOutcome,
     canonical,
     contradicted,
+    dated,
     doubtful,
     says_not_known,
     trust_facts,
@@ -1042,7 +1044,7 @@ def _agrees(
     """Whether a reading the current message doesn't state plainly gives the same answer as what
     the founder said plainly before, with no doubt in its words."""
     schema = execution.schemas.get(fact.fact_key)
-    if earlier is None or schema is None or doubtful(sentence_of(founder, fact)):
+    if earlier is None or schema is None or doubtful(proposition_of(founder, fact)):
         return False
     value = canonical(schema, fact.value)
     return value not in (None, NOT_SURE) and value == canonical(schema, earlier)
@@ -1055,6 +1057,12 @@ def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
         "policies_exist": company.policies_exist,
         "hr_support": company.hr_support,
     }
+
+
+def _date_facts(snapshot: ExecutionSnapshot) -> frozenset[str]:
+    return frozenset(
+        k for e in snapshot.workflows.values() for k, s in e.schemas.items() if s.kind == "date"
+    )
 
 
 PAST_DAYS: Final = 7
@@ -1137,9 +1145,9 @@ class AiGateway:
         if view is None:
             bundle = snapshot.knowledge
             schemas = [s for e in snapshot.workflows.values() for s in e.schemas.values()]
-            # A Case-backed fact's question, in the case's own words.
-            prompts = {
-                s.key: question.prompt
+            # A Case-backed fact's question, in the case's own words, and what it means exactly.
+            questions = {
+                s.key: question
                 for e in snapshot.workflows.values()
                 for s in e.schemas.values()
                 if s.question is not None
@@ -1157,7 +1165,8 @@ class AiGateway:
                         for s in schemas
                         if s.kind in ("yes_no", "choice")
                     },
-                    questions=prompts,
+                    questions={k: q.prompt for k, q in questions.items()},
+                    meanings={k: q.means for k, q in questions.items() if q.means},
                 ),
                 labels=internal_labels(bundle) if bundle is not None else re.compile(r"(?!x)x"),
             )
@@ -1358,7 +1367,7 @@ class AiGateway:
                 for f in understanding.facts
                 if f.source_turn == current
                 and f.fact_key in hedged
-                and doubtful(sentence_of(founder, f))
+                and doubtful(proposition_of(founder, f))
             )
             # What the message touched without saying it plainly still covers its question (never
             # as the founder's fact): clearly implied ("she says she counted it wrong": the
@@ -1380,7 +1389,7 @@ class AiGateway:
                     f.value,
                     f.excerpt,
                     execution.schemas.get(f.fact_key),
-                    context=sentence_of(founder, f),
+                    context=proposition_of(founder, f),
                 )
             )
             noted = turn.noted
@@ -1649,9 +1658,15 @@ class AiGateway:
         understanding, dropped = check_evidence(
             understanding, view.catalog, founder, company_text(company), answering=answering
         )
+        # The understanding reads a date's words; the server puts them on the calendar.
+        dates, today = _date_facts(snapshot), self.today()
+        understanding = with_dates_placed(
+            understanding,
+            lambda f: dated(f.value, f.excerpt, today) if f.fact_key in dates else f.value,
+        )
         understanding = without_contradicted(
             understanding,
-            lambda f: contradicted(f.value, f.excerpt, context=sentence_of(founder, f)),
+            lambda f: contradicted(f.value, f.excerpt, context=proposition_of(founder, f)),
         )
         telemetry.facts_rejected = dropped
         # Thanks, a reaction or a goodbye in the middle of a matter: answered, never asked a
@@ -1706,7 +1721,7 @@ class AiGateway:
             plan = dataclasses.replace(
                 plan, targets=tuple(t for t in plan.targets if t.question is None)
             )
-        knowledge = knowledge_view(bundle, plan)
+        knowledge = knowledge_view(bundle, plan, view.catalog.meanings)
         mentioned = [m.key for m in result.evaluation.missing if result.coverage(m.key) in COVERED]
         decided, decided_texts = outcome_view(
             result.evaluation, result.card, result.memory.told, mentioned

@@ -34,11 +34,17 @@ import json
 import re
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Final, Literal, cast
 
 from app.assistant.gateway.catalog import CatalogWorkflow, RoutingCatalog
-from app.evaluation.facts import NOT_SURE, only_not_known, parse_yes_no, says_not_known
+from app.evaluation.facts import (
+    NOT_SURE,
+    only_not_known,
+    parse_yes_no,
+    proposition,
+    says_not_known,
+)
 
 UNDERSTANDING_SCHEMA: Final = "heroos.understanding/1"
 RESPONSE_SCHEMA: Final = "heroos.response/1"
@@ -449,7 +455,7 @@ def check_evidence(
         if excerpt not in source:
             continue
         if normalized(fact.value).replace(" ", "_") == NOT_SURE and not says_not_known(
-            sentence_of(founder_messages, fact)
+            proposition_of(founder_messages, fact)
         ):
             continue  # "not sure" only from words that say so, never from another answer
         kept.append(fact)
@@ -506,22 +512,30 @@ def check_evidence(
     )
 
 
-_SENTENCE_BREAK: Final = re.compile(r"[.!?\n]")
-
-
-def sentence_of(founder_messages: Sequence[str], fact: FactProposal) -> str:
-    """The founder's sentence around a fact's excerpt (the excerpt itself when it isn't found)."""
+def proposition_of(founder_messages: Sequence[str], fact: FactProposal) -> str:
+    """The founder's words a fact's excerpt rests on, for weighing doubt: the clause of its
+    sentence that holds it, with what doubts the whole sentence (``facts.proposition``; the
+    excerpt itself when it isn't found)."""
     if fact.source_turn is None or not 0 <= fact.source_turn < len(founder_messages):
         return fact.excerpt
-    message = normalized(founder_messages[fact.source_turn])
-    excerpt = normalized(fact.excerpt)
-    at = message.find(excerpt)
-    if not excerpt or at < 0:
-        return fact.excerpt
-    starts = [m.end() for m in _SENTENCE_BREAK.finditer(message, 0, at)]
-    start = starts[-1] if starts else 0
-    found = _SENTENCE_BREAK.search(message, at + len(excerpt))
-    return message[start : found.start() if found else len(message)]
+    return proposition(founder_messages[fact.source_turn], fact.excerpt)
+
+
+def with_dates_placed(
+    proposal: UnderstandingProposal, place: Callable[[FactProposal], str | None]
+) -> UnderstandingProposal:
+    """Date readings put on the calendar by the server (``facts.dated``): ``place`` gives a date
+    fact's reading its date from the founder's words (None when no date fits them: the reading
+    establishes nothing), and returns other readings' values unchanged."""
+    facts: list[FactProposal] = []
+    for f in proposal.facts:
+        placed = place(f)
+        if placed is None:
+            f = replace(f, basis="inferred") if f.establishes else f
+        elif placed != f.value:
+            f = replace(f, value=placed)
+        facts.append(f)
+    return replace(proposal, facts=tuple(facts))
 
 
 def without_contradicted(

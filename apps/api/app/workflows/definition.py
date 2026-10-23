@@ -74,6 +74,9 @@ class Question:
     label: str
     help: str | None = None
     options: tuple[Option, ...] = ()
+    # For the understanding only, never shown to the founder: exactly what the fact means, where
+    # its question alone could be read more widely (the AI gateway's routing catalog).
+    means: str | None = None
     max_length: int | None = None
     # ``date`` only: NOT_SURE is an accepted answer.
     allow_not_sure: bool = False
@@ -160,6 +163,15 @@ INITIAL_FACTS: Final = Step(
             kind="choice",
             prompt="Is this a new issue, or has it been raised before?",
             label="New or previously raised",
+            means=(
+                "Earlier occasions, before the matter now being handled. raised_before: on an "
+                "earlier occasion the employer or a manager raised this kind of issue with the "
+                "employee (spoke to them about it, warned them or otherwise took it up). new: "
+                "there was no earlier occasion, it is the first time it has happened or come up "
+                "with them. Neither when the words only say it happened before or keeps happening "
+                "(nobody taking it up is said; nor is it new), and neither from whether the "
+                "matter now being handled has been discussed with the employee yet."
+            ),
             options=(
                 Option("new", "This is a new issue"),
                 Option("raised_before", "It has been raised before"),
@@ -171,6 +183,11 @@ INITIAL_FACTS: Final = Step(
             kind="choice",
             prompt="Has the matter already been discussed with the employee?",
             label="Discussed with the employee",
+            means=(
+                "The matter now being handled: whether it has been put to or talked through with "
+                "the employee (their own account of it or reaction to it counts). Earlier "
+                "occasions of the same kind of issue are its history, not this."
+            ),
             options=YES_NO_NOT_SURE,
         ),
         Question(
@@ -278,6 +295,12 @@ INCIDENT_CONTEXT: Final = Step(
             prompt="Was the earlier action on this issue documented in writing?",
             label="Earlier action documented",
             help="For example a written reminder or a written warning letter.",
+            means=(
+                "How the earlier action on this issue was recorded. yes: the action itself was "
+                "written (a warning letter, a written reminder, a note on file). verbal_only: it "
+                "was only spoken (a talk, a verbal warning) with nothing in writing, as the "
+                "founder says. That the issue happened before says nothing about this."
+            ),
             options=(
                 Option("yes", "Yes, in writing"),
                 Option("verbal_only", "No, it was only raised verbally"),
@@ -291,6 +314,10 @@ INCIDENT_CONTEXT: Final = Step(
             prompt="Has a disciplinary sanction already been issued for this same incident?",
             label="Earlier sanction for this incident",
             help="This is about this one incident, not earlier incidents of the same kind.",
+            means=(
+                "A warning or other sanction already issued for this one incident. Sanctions for "
+                "earlier incidents are the issue's history, not this."
+            ),
             options=YES_NO_NOT_SURE,
         ),
         Question(

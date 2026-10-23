@@ -249,6 +249,83 @@ def _another_weekday(value: str, words: str) -> bool:
     return bool(named) and day.weekday() not in named
 
 
+# A day the founder names with its month ("Tuesday 20 October", "the 18th of October", "Oct 5",
+# "14 to 16 October"), with a year only when they give one.
+_MONTH_NAMES: Final = (
+    ("jan", "january"), ("feb", "february"), ("mar", "march"), ("apr", "april"), ("may",),
+    ("jun", "june"), ("jul", "july"), ("aug", "august"), ("sep", "sept", "september"),
+    ("oct", "october"), ("nov", "november"), ("dec", "december"),
+)  # fmt: skip
+_MONTH: Final = "(" + "|".join(n for names in _MONTH_NAMES for n in names) + r")\.?"
+_DAY: Final = r"(\d{1,2})(?:st|nd|rd|th)?"
+_YEAR: Final = r"(?:,?\s+(\d{4}))?"
+_DAY_MONTH: Final = re.compile(
+    rf"\b{_DAY}(?:\s*(?:-|to|until|till|and|&)\s*{_DAY})?(?:\s+of)?\s+{_MONTH}(?![\w']){_YEAR}"
+)
+_MONTH_DAY: Final = re.compile(rf"\b{_MONTH}\s+(?:the\s+)?{_DAY}(?![\w']){_YEAR}")
+
+
+def _month(name: str) -> int:
+    return next(i for i, names in enumerate(_MONTH_NAMES, 1) if name in names)
+
+
+def named_days(words: str) -> tuple[tuple[int, int, int | None], ...]:
+    """(month, day, year or None) for each day the words name with its month."""
+    text = normalized(words)
+    days: list[tuple[int, int, int | None]] = []
+    for m in _DAY_MONTH.finditer(text):
+        first, last, month, year = m.groups()
+        for day in (first, last):
+            if day is not None:
+                days.append((_month(month), int(day), None if year is None else int(year)))
+    for m in _MONTH_DAY.finditer(text):
+        month, day, year = m.groups()
+        days.append((_month(month), int(day), None if year is None else int(year)))
+    return tuple(days)
+
+
+def _on(year: int, month: int, day: int) -> date | None:
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def dated(value: str, words: str, today: date) -> str | None:
+    """A date reading checked against the day and month the founder's own words name.
+
+    The understanding reads the expression; the server puts it on the calendar. When the words
+    name the reading's day and month without a year, the year is the one that makes it the most
+    recent such day not after ``today`` (an incident date): "Tuesday 20 October", read as
+    2020-10-20 because that day was a Tuesday then too, is 2026-10-20 against 22 October 2026
+    (found in the hybrid certification). Returns that date (the reading's own when it agrees);
+    the reading unchanged when the words name no day with its month; None when they name days
+    with their months but not the reading's, or one no year fits (a weekday it isn't on): the
+    reading stays non-authoritative, never a guessed year.
+    """
+    days = named_days(words)
+    if not days:
+        return value
+    try:
+        read = date.fromisoformat(value)
+    except ValueError:
+        return value
+    weekdays = {_WEEKDAYS.index(m) for m in _WEEKDAY.findall(normalized(words))}
+    for month, day, year in days:
+        if (month, day) != (read.month, read.day):
+            continue
+        if year is not None:
+            on = _on(year, month, day)
+        else:
+            on = _on(today.year, month, day)
+            if on is None or on > today:
+                on = _on(today.year - 1, month, day)
+        if on is None or (weekdays and on.weekday() not in weekdays):
+            return None
+        return on.isoformat()
+    return None
+
+
 # Doubt about what the founder knows, whatever the reading ("no" included): "not that I know of" is
 # not a definite no, and "I'd need to check" is not a fact.
 _DOUBT: Final = re.compile(
@@ -308,11 +385,108 @@ def doubtful(text: str) -> bool:
     )
 
 
+# --- hedge scope: a doubt qualifies the proposition it is part of ------------------------------
+
+_SENTENCE_BREAK: Final = re.compile(r"[.!?\n]")
+# Where a sentence divides into propositions: punctuation, or a contrast word ("He was late again,
+# but I don't think I need his side": the lateness is said plainly, only the opinion is doubtful).
+_CLAUSE_BREAK: Final = re.compile(r"[,;:()]|\s-\s|\s(?=(?:but|although|though|whereas|however)\b)")
+# Doubt about what was just said, wherever it stands in the sentence ("..., but I'd need to check
+# with HR"), unless it names its own subject ("not sure about the date", "I don't know if he was
+# told": a proposition of its own).
+_VERIFYING: Final = re.compile(
+    r"\b(?:(?:need|have|got)\s+to\s+(?:check|ask|find\s+out|verify|confirm)|check\s+with|verify"
+    r"|not\s+(?:100%|a\s+hundred\s+percent|certain|sure|aware)|unsure|as\s+far\s+as\s+i\s+know"
+    r"|not\s+that\s+i\s+know|(?:can'?t|cannot)\s+(?:confirm|remember|say)|don'?t\s+(?:know|remember)"
+    r"|no\s+idea|dunno|idk)(?![\w'])(?!\s+(?:about|if|whether|when|what|who|how|why|where|which)\b)"
+)
+# A hedge opening a sentence qualifies all of it ("I think he was told, but not in writing").
+_OPENING_HEDGE: Final = re.compile(
+    r"^\W*(?:(?:honestly|well|so|and|but|ok|okay|tbh|to\s+be\s+honest)\W+)*(?:i\s+think|i\s+believe"
+    r"|i\s+guess|i\s+suppose|i\s+reckon|maybe|perhaps|probably|possibly|apparently|supposedly"
+    r"|i\s+heard|(?:i|we)\s+(?:was|were)\s+told|i'?m\s+told|not\s+sure|i'?m\s+not\s+sure)\b"
+    r"(?!\s+(?:about|if|whether|when|what|who|how|why|where|which)\b)"
+)
+# What is left of a clause that only doubts ("I think", "or so I was told", "at least I don't
+# think so") once its doubt is taken out.
+_DOUBT_ONLY_REST: Final = re.compile(
+    r"\b(?:and|or|but|though|although|so|at\s+least|that|it|this|too|i\s+mean|anyway|yeah|yes|no"
+    r"|not|really|just|we|you)\b"
+)
+
+
+def _doubts_the_sentence(clause: str) -> bool:
+    """A clause that doubts what the sentence says rather than saying something of its own."""
+    if _VERIFYING.search(clause):
+        return True
+    if not doubtful(clause):
+        return False
+    rest = clause
+    for words in (_DOUBT, _HEDGES, _HEARSAY, _NOT_KNOWING, _QUALIFIERS):
+        rest = words.sub(" ", rest)
+    rest = _DOUBT_ONLY_REST.sub(" ", _FILLER.sub(" ", rest))
+    return not _WORD.findall(rest)
+
+
+def proposition(message: str, excerpt: str) -> str:
+    """The founder's words a reading of ``excerpt`` rests on, for weighing doubt (normalized; the
+    excerpt itself when it isn't found).
+
+    A hedge qualifies the proposition it is part of, never the whole message: the clause of the
+    sentence that holds the excerpt counts, with a doubt about the whole sentence (a clause that
+    only doubts: "..., but I'd need to check", "I think.") and a hedge opening the sentence.
+    "I haven't spoken to her about it, and honestly I don't think I need her side" states plainly
+    that it wasn't discussed (found in the hybrid certification: the opinion's "I don't think"
+    made the first statement doubtful). Words without such a break keep their doubt together:
+    "I think he was late and his manager warned him" stays doubtful throughout.
+    """
+    text, quoted = normalized(message), normalized(excerpt)
+    at = text.find(quoted)
+    if not quoted or at < 0:
+        return excerpt
+    start = max((m.end() for m in _SENTENCE_BREAK.finditer(text, 0, at)), default=0)
+    found = _SENTENCE_BREAK.search(text, at + len(quoted))
+    sentence = text[start : found.start() if found else len(text)]
+    at -= start
+    cuts = [0, *(m.start() for m in _CLAUSE_BREAK.finditer(sentence)), len(sentence)]
+    clauses = [(a, b) for a, b in zip(cuts, cuts[1:], strict=False) if a < b]
+    opening = _OPENING_HEDGE.search(sentence) is not None
+    kept = [
+        sentence[a:b].strip(" ,;:()-")
+        for i, (a, b) in enumerate(clauses)
+        if (a < at + len(quoted) and b > at)
+        or (i == 0 and opening)
+        or _doubts_the_sentence(sentence[a:b])
+    ]
+    return " ".join(k for k in kept if k)
+
+
 MAX_LEADING_CHARS: Final = 400
 # A plain yes or no opening a longer answer: it ends at punctuation, a dash, or the conjunction
 # that goes on ("No. The rule was never explained to her", "Yes, but only once", "No and we
 # don't have any evidence either").
 _LEADING: Final = re.compile(r"(\w+)\s*(?:[,.;:!?]+|\s-+|\s(?=(?:and|but|so)\b))")
+
+
+# Where the statement after an opening yes or no ends: a clause or a sentence.
+_ANSWER_BREAK: Final = re.compile(
+    r"[,;:()]|\s-\s|[.!?\n]|\s(?=(?:but|although|though|whereas|however)\b)"
+)
+
+
+def _answer_span(text: str) -> str:
+    """A reply's opening yes or no with the statement after it, which the answer rests on: "No. I
+    was told he never got it." is hearsay, "No, I haven't spoken to her, and honestly I don't
+    think I need her side" is a plain no ("Yes. Well, ...": a filler is not that statement)."""
+    words = normalized(text).lstrip(" \"'(")
+    opening = re.match(r"\S+\W*", words)
+    if opening is None:
+        return words
+    for m in _ANSWER_BREAK.finditer(words, opening.end()):
+        said = _DOUBT_ONLY_REST.sub(" ", _FILLER.sub(" ", words[opening.end() : m.start()]))
+        if _WORD.findall(said):
+            return words[: m.start()]
+    return words
 
 
 def leading_answer(text: str) -> str | None:
@@ -340,7 +514,9 @@ def answer_in_words(schema: FactSchema, message: str, read: str | None) -> Value
     was never explained to her ..." was asked the same question again, three times.
     """
     lead = leading_answer(message)
-    if lead is None or read is None or schema.kind not in ("yes_no", "choice") or doubtful(message):
+    if lead is None or read is None or schema.kind not in ("yes_no", "choice"):
+        return None
+    if doubtful(proposition(message, _answer_span(message))):
         return None
     answer = canonical(schema, lead)
     if answer is None or answer == NOT_SURE or canonical(schema, read) != answer:
@@ -357,8 +533,8 @@ def contradicted(
     him", "I sort of spoke to him"), any reading of hedged words, an exact
     number read from approximate words ("basically all week"), and a date on
     another weekday than the one its words name ("Saturday night" as a Sunday). ``context``: the
-    founder's whole sentence around the excerpt, where a hedge counts too (found
-    live: "i think her manager gave her a verbal warning ..., but honestly id need
+    founder's words the excerpt's proposition rests on (``proposition``), where a hedge counts
+    too (found live: "i think her manager gave her a verbal warning ..., but honestly id need
     to check" cited without its first and last words was noted as a fact).
     """
     reading = _bare(value)
@@ -490,7 +666,8 @@ def trust_facts(
                 answered = asked.key
         elif asked.kind == "confirm" and schema is not None:
             reply = parse_yes_no(message)
-            lead = None if read is None or doubtful(message) else leading_answer(message)
+            opening = proposition(message, _answer_span(message))
+            lead = None if read is None or doubtful(opening) else leading_answer(message)
             if reply is None and lead is not None and read is not None:
                 # "Yes, that's right ..." confirms the reading; "No, ..." declines it (the
                 # understanding read the reply's own value for the fact: it must agree).

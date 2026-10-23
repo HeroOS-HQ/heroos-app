@@ -339,8 +339,8 @@ def test_the_response_has_no_room_for_outcomes_or_references(
     assert error.value.code == expected
 
 
-def test_the_sentence_around_an_excerpt_is_the_founders_whole_sentence() -> None:
-    from app.assistant.gateway.proposals import FactProposal, sentence_of
+def test_an_excerpts_proposition_keeps_the_doubts_that_qualify_it() -> None:
+    from app.assistant.gateway.proposals import FactProposal, proposition_of
 
     messages = [
         "Hi. I think her manager gave her a verbal warning once, but I'd need to check! Thanks",
@@ -349,14 +349,28 @@ def test_the_sentence_around_an_excerpt_is_the_founders_whole_sentence() -> None
         "verbal_warnings_reported", "yes", "high", "current_user_message", 0,
         "gave her a verbal warning once", "explicit",
     )  # fmt: skip
-    assert sentence_of(messages, proposal) == (
-        " i think her manager gave her a verbal warning once, but i'd need to check"
+    assert proposition_of(messages, proposal) == (
+        "i think her manager gave her a verbal warning once but i'd need to check"
     )
     missing = FactProposal(
         "verbal_warnings_reported", "yes", "high", "current_user_message", 0, "not there",
         "explicit",
     )  # fmt: skip
-    assert sentence_of(messages, missing) == "not there"
+    assert proposition_of(messages, missing) == "not there"
+
+
+def test_a_doubt_about_another_statement_is_not_part_of_an_excerpts_proposition() -> None:
+    from app.assistant.gateway.proposals import FactProposal, proposition_of
+
+    messages = [
+        "I haven't spoken to her about it, and honestly I don't think I need her side, it's "
+        "pretty obvious what happened",
+    ]
+    proposal = FactProposal(
+        "incident_discussed_with_employee", "no", "high", "current_user_message", 0,
+        "I haven't spoken to her about it", "explicit",
+    )  # fmt: skip
+    assert proposition_of(messages, proposal) == "i haven't spoken to her about it"
 
 
 @pytest.mark.parametrize(

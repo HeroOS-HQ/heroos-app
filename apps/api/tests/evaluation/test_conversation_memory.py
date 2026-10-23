@@ -13,6 +13,7 @@ it across turns, the way a persisted conversation carries its memory:
   no matter gets a short reply in words (checked like any other), not a canned paragraph.
 """
 
+from datetime import date
 from typing import Any
 
 import pytest
@@ -23,6 +24,7 @@ from app.assistant.gateway.service import (
     OUTSIDE,
     OUTSIDE_AGAIN,
     UNCLEAR,
+    AiGateway,
     FounderTurn,
     GatewayReply,
     _with_question,
@@ -582,6 +584,86 @@ def test_a_reading_dropped_by_a_correction_never_comes_back(artifacts: Artifacts
     facts = evaluation(result).facts
     assert DISCUSSED not in facts.conversational and DISCUSSED not in chat.memory.said
     assert facts.conversational["incident.history"] == "new"
+
+
+# --- final semantics pass: dates on the calendar, doubt per statement, exact fact meanings ------
+
+
+class OnThursday(Remembering):
+    """The scenario day of the natural-conversation corpus: Thursday 22 October 2026."""
+
+    def gateway(self, provider: ScriptedProvider) -> AiGateway:
+        ai = super().gateway(provider)
+        ai.today = lambda: date(2026, 10, 22)
+        return ai
+
+
+ABSENT = "Our cleaner Lalaine has not reported for duty since Tuesday 20 October."
+
+
+def test_a_day_and_month_without_a_year_take_the_year_from_today(artifacts: Artifacts) -> None:
+    """Found in the hybrid certification: "since Tuesday 20 October" read as 2020-10-20 (the 20th
+    was a Tuesday then too) and noted. The understanding reads the words; the server puts them
+    on the calendar: the most recent such day, not after today."""
+    chat = OnThursday(artifacts)
+    result = chat.say(
+        ABSENT,
+        understood(ABSENT, facts=[fact("incident.date", "2020-10-20", "since Tuesday 20 October")]),
+    )
+    assert evaluation(result).facts.conversational["incident.date"] == "2026-10-20"
+    assert chat.memory.said["incident.date"].value == "2026-10-20"
+
+
+def test_a_day_and_month_no_year_fits_are_never_noted(artifacts: Artifacts) -> None:
+    """20 October 2026 is a Tuesday: "Wednesday 20 October" names a day no recent year has, so the
+    reading stays non-authoritative rather than a guessed year."""
+    words = "She has not come in since Wednesday 20 October."
+    chat = OnThursday(artifacts)
+    result = chat.say(
+        words,
+        understood(
+            words, facts=[fact("incident.date", "2026-10-20", "since Wednesday 20 October")]
+        ),
+    )
+    assert "incident.date" not in evaluation(result).facts.conversational
+
+
+def test_a_doubt_about_another_statement_leaves_the_plain_one_said(artifacts: Artifacts) -> None:
+    """Found in the hybrid certification: "I haven't spoken to her about it, and honestly I don't
+    think I need her side" lost its plain "no" to the opinion's "I don't think"."""
+    words = "She was late again on Monday. I haven't spoken to her about it, and honestly I don't "
+    words += "think I need her side."
+    chat = OnThursday(artifacts)
+    result = chat.say(
+        words,
+        understood(words, facts=[fact(DISCUSSED, "no", "I haven't spoken to her about it")]),
+    )
+    assert evaluation(result).facts.conversational[DISCUSSED] == "no"
+
+
+def test_a_doubt_still_qualifies_the_statement_it_is_part_of(artifacts: Artifacts) -> None:
+    """ "She didn't come in Monday. I think her manager tried calling her.": the absence is said,
+    the manager's contact is uncertain (never noted, even read as explicit)."""
+    words = "She didn't come in Monday. I think her manager tried calling her."
+    chat = OnThursday(artifacts)
+    result = chat.say(
+        words,
+        understood(words, facts=[fact(DISCUSSED, "yes", "her manager tried calling her")]),
+    )
+    assert DISCUSSED not in evaluation(result).facts.conversational
+    assert chat.memory.said[DISCUSSED].certainty == "uncertain"
+
+
+def test_the_understanding_sees_what_the_history_facts_mean_exactly(artifacts: Artifacts) -> None:
+    """Found in the hybrid certification: "repeated till errors" and "not a one-off" were read as
+    the issue having been raised before. A Case fact's exact meaning is in the catalog."""
+    chat = OnThursday(artifacts)
+    chat.say(LATE, understood(LATE, pathway="less_serious", topics=["workplace_reminder"]))
+    assert chat.provider is not None
+    catalog = chat.provider.phase("understanding")[0].data["routing_catalog"]
+    means = {f["key"]: f.get("means", "") for f in catalog["facts"]}
+    assert "keeps happening" in means["incident.history"]
+    assert "matter now being handled" in means["incident.discussed_with_employee"]
 
 
 # --- an answer in the founder's own words: bound only when it answers the question ---------------
