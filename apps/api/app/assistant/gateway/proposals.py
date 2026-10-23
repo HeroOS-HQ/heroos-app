@@ -103,6 +103,7 @@ _FACT_FIELDS: Final = frozenset(
      "explicit_or_inferred"}
 )  # fmt: skip
 _ACTION_FIELDS: Final = frozenset({"action", "source_turn", "support_excerpt"})
+_WITHDRAWN_FACT_FIELDS: Final = frozenset({"fact_key", "source_turn", "support_excerpt"})
 _RESPONSE_FIELDS: Final = frozenset({"schema_version", "reply"})
 _RESPONSE_OPTIONAL: Final = frozenset({"question_target_ids", "safe_next_step"})
 
@@ -145,6 +146,17 @@ class RequestedAction:
 
 
 @dataclass(frozen=True, slots=True)
+class WithdrawnFact:
+    """A fact an earlier message or answer gave that the founder takes back now without giving
+    its value for this employee ("sorry, that was Kareem, not Musa")."""
+
+    fact_key: str
+    source_turn: int
+    # Server-side only: never logged, never returned to the browser.
+    excerpt: str
+
+
+@dataclass(frozen=True, slots=True)
 class UnderstandingProposal:
     intent: Intent
     workflow: str | None
@@ -160,6 +172,10 @@ class UnderstandingProposal:
     # M2-NEW-08: decisions the founder asks about only hypothetically ("what if I dismissed
     # them?"). Evaluated so the answer is accurate, never the employer's intention.
     hypothetical: tuple[RequestedAction, ...] = ()
+    # Final blocker pass: facts the current message takes back with no value in their place
+    # (said about someone else, or wrong); kept only with the founder's own words. A take-back
+    # only ever removes: never a value, never trust.
+    withdrawn_facts: tuple[WithdrawnFact, ...] = ()
     # Whether the current message answers HeroOS's last question (orchestration only).
     previous_answer: PreviousAnswer = "no_question"
     # Server-set: a message with no matter of its own continued the conversation's matter
@@ -299,6 +315,7 @@ def parse_understanding(
                 "requested_actions",
                 "withdrawn_actions",
                 "hypothetical_actions",
+                "withdrawn_facts",
                 "previous_question_answer",
             }
         ),
@@ -357,8 +374,29 @@ def parse_understanding(
         actions=actions,
         withdrawn=withdrawn,
         hypothetical=hypothetical,
+        withdrawn_facts=_withdrawn_facts(data, current_turn),
         previous_answer=_code(previous, PREVIOUS_ANSWERS, "$.previous_question_answer"),
     )
+
+
+def _withdrawn_facts(data: dict[str, Any], current_turn: int) -> tuple[WithdrawnFact, ...]:
+    """Fact keys outside the catalog are kept here and dropped by ``check_evidence``."""
+    items: list[WithdrawnFact] = []
+    for i, raw in enumerate(_list(data.get("withdrawn_facts", []), MAX_FACTS, "$.withdrawn_facts")):
+        where = f"$.withdrawn_facts[{i}]"
+        if not isinstance(raw, dict):
+            raise ProposalError("expected_object", where)
+        _fields(raw, _WITHDRAWN_FACT_FIELDS, frozenset(), where)
+        key = raw["fact_key"]
+        if not isinstance(key, str):
+            raise ProposalError("expected_string", f"{where}.fact_key")
+        turn = raw["source_turn"]
+        if not isinstance(turn, int) or isinstance(turn, bool) or not 0 <= turn <= current_turn:
+            continue  # cites no founder message: left out (its words can't be checked)
+        excerpt = _text(raw["support_excerpt"], MAX_EXCERPT_CHARS, f"{where}.support_excerpt")
+        assert excerpt is not None
+        items.append(WithdrawnFact(key, turn, excerpt))
+    return tuple(items)
 
 
 def _actions(
@@ -490,9 +528,26 @@ def check_evidence(
         and normalized(a.excerpt) in messages[current]
         and _WITHDRAWAL.search(normalized(a.excerpt))
     )
+    # A fact taken back only from the current message, in the founder's own words, and never one
+    # the same message gives a value for (that is a correction, read as one). The earlier words
+    # that gave it are not read again this turn.
+    valued = {f.fact_key for f in kept if f.source_turn == current}
+    taken: dict[str, WithdrawnFact] = {}
+    for back in proposal.withdrawn_facts:
+        words = normalized(back.excerpt)
+        if (
+            back.source_turn == current
+            and back.fact_key in catalog.facts
+            and back.fact_key not in valued
+            and words
+            and words in messages[current]
+        ):
+            taken.setdefault(back.fact_key, back)
+    kept = [f for f in kept if f.fact_key not in taken]
     dropped = (
         len(proposal.facts) - len(kept) + len(proposal.actions) - len(supported)
         + len(proposal.withdrawn) - len(withdrawn)
+        + len(proposal.withdrawn_facts) - len(taken)
     )  # fmt: skip
     return (
         UnderstandingProposal(
@@ -506,6 +561,7 @@ def check_evidence(
             actions=actions,
             withdrawn=withdrawn,
             hypothetical=tuple(hypotheticals.values()),
+            withdrawn_facts=tuple(taken.values()),
             previous_answer=proposal.previous_answer,
         ),
         dropped,
@@ -571,6 +627,7 @@ def without_contradicted(
         actions=proposal.actions,
         withdrawn=proposal.withdrawn,
         hypothetical=proposal.hypothetical,
+        withdrawn_facts=proposal.withdrawn_facts,
         previous_answer=proposal.previous_answer,
     )
 

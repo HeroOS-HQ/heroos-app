@@ -33,7 +33,7 @@
 
 import re
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Final, Literal
@@ -661,6 +661,7 @@ def trust_facts(
     answered_in_words: bool = False,
     answers: Mapping[str, str] | None = None,
     bare_answers: bool = True,
+    withdrawn: Collection[str] = (),
 ) -> TrustOutcome:
     """This turn's facts by trust level, from what the founder said and the trusted prior state.
 
@@ -670,6 +671,8 @@ def trust_facts(
     the same answer for its fact from it (``answers``: its readings of the current message, by
     fact key, before any check; ``answer_in_words``). ``bare_answers``: HeroOS's last question
     asked one proposition (``one_proposition``); otherwise a yes or no answers no fact question.
+    ``withdrawn``: facts the current message takes back with no value in their place ("sorry,
+    that was Kareem, not Musa"): no longer trusted, and nothing is trusted instead.
     """
     schemas = execution.schemas
     engine: dict[str, Value] = {}
@@ -732,6 +735,14 @@ def trust_facts(
                 insists = {"insists": Tri.TRUE, "declines": Tri.FALSE}.get(answer, current.insists)
                 two_state[asked.key] = TwoState(current.rule, current.shown, True, insists)
                 replied = True
+
+    # Found in the final blocker pass: "yep" to "Was it raised with him before?", then "that was a
+    # different guy", left "raised before" trusted. A direct answer in the same message is the
+    # founder's newest word and stands.
+    for key in withdrawn:
+        if key != answered and key in engine and sources.get(key) != "blueprint":
+            engine.pop(key)
+            sources.pop(key, None)
 
     newest: dict[str, StatedFact] = {}
     for fact in stated:

@@ -628,3 +628,26 @@ def test_a_bare_answer_to_a_question_with_alternatives_binds_nothing(
     assert "incident.history" not in two_sided.facts.engine
     single = trust_facts(execution, **common)  # type: ignore[arg-type]
     assert single.facts.engine["incident.history"] == "raised_before"
+
+
+def test_a_fact_taken_back_is_no_longer_trusted_and_nothing_takes_its_place(
+    execution: WorkflowExecution,
+) -> None:
+    """Final blocker pass: "yep" to "Was it raised with him before?" was trusted; "sorry, that was
+    a different guy" takes it back with no value for this employee: untrusted, nothing instead.
+    Every other trusted fact stands, and a direct answer in the same message is the newest word."""
+    prior = PriorState(engine={"incident.history": "raised_before", "evidence.witnesses": "yes"})
+    words = "Sorry, that was a different guy, not him."
+    result = trust_facts(
+        execution, stated=[], message=words, prior=prior, blueprint=BLUEPRINT,
+        withdrawn={"incident.history"},
+    )  # fmt: skip
+    assert "incident.history" not in result.facts.engine
+    assert "incident.history" not in result.facts.conversational
+    assert result.facts.engine["evidence.witnesses"] == "yes"
+    asked = PriorState(engine=prior.engine, asked=(Asked("fact", "incident.history"),))
+    answered = trust_facts(
+        execution, stated=[], message="No", prior=asked, blueprint=BLUEPRINT,
+        withdrawn={"incident.history"},
+    )  # fmt: skip
+    assert answered.facts.engine["incident.history"] == "new"

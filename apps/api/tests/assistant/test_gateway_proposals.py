@@ -395,3 +395,61 @@ def test_not_sure_is_kept_only_from_words_that_say_so(
     asked, _ = check_evidence(proposal, catalog, [words], "", answering=key)
     unasked, _ = check_evidence(proposal, catalog, [words], "")
     assert (bool(asked.facts), bool(unasked.facts)) == (answering, otherwise)
+
+
+# --- final blocker pass: facts taken back with nothing in their place --------------------------
+
+
+def _taken_back(key: str, words: str, turn: int = 1) -> dict[str, Any]:
+    return {"fact_key": key, "source_turn": turn, "support_excerpt": words}
+
+
+@pytest.mark.parametrize(
+    ("item", "expected"),
+    [
+        ("employee_aware_of_relevant_policy", "expected_object"),
+        ({"fact_key": "employee_aware_of_relevant_policy", "source_turn": 1}, "missing_field"),
+        (_taken_back("employee_aware_of_relevant_policy", "x") | {"value": "no"}, "unknown_field"),
+        ({"fact_key": 3, "source_turn": 1, "support_excerpt": "x"}, "expected_string"),
+    ],
+)
+def test_a_fact_taken_back_has_the_exact_evidence_shape(
+    bundle: KnowledgeBundle, item: object, expected: str
+) -> None:
+    assert code(bundle, understanding() | {"withdrawn_facts": [item]}) == expected
+
+
+def test_a_fact_taken_back_needs_the_founders_words_in_the_current_message(
+    bundle: KnowledgeBundle,
+) -> None:
+    """ "Sorry, that was a different employee": a fact an earlier message gave is taken back with
+    no value in its place, only from the current message, in its own words, for a catalog fact
+    the same message gives no value for. The earlier words aren't read again that turn."""
+    messages = [
+        "His manager already explained the standard to him last month.",
+        "Sorry, that was a different employee, not him. He was late on Monday.",
+    ]
+    policy = "employee_aware_of_relevant_policy"
+    data = understanding(
+        facts=[
+            fact(
+                policy,
+                "yes",
+                "already explained the standard",
+                turn=0,
+                provenance="prior_user_message",
+            ),
+            fact("misconduct_level", "minor", "He was late on Monday", turn=1),
+        ]  # fmt: skip
+    )
+    data["withdrawn_facts"] = [
+        _taken_back(policy, "that was a different employee"),
+        _taken_back("misconduct_level", "that was a different employee"),  # a value now
+        _taken_back("investigation_completed", "words the founder never wrote"),
+        _taken_back("repeated_misconduct", "that was a different employee"),  # not in the catalog
+        _taken_back("given_opportunity_to_explain", "already explained", turn=0),  # earlier
+    ]
+    checked, dropped = check_evidence(parse(bundle, data), routing_catalog(bundle), messages, "")
+    assert [w.fact_key for w in checked.withdrawn_facts] == [policy]
+    assert [f.fact_key for f in checked.facts] == ["misconduct_level"]
+    assert dropped == 5  # four take-backs, and the earlier reading of the fact taken back

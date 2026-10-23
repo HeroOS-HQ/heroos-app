@@ -645,6 +645,32 @@ def test_a_contradiction_never_changes_the_case_and_corrections_append(
     assert record["facts"]["engine_trusted"][POLICY] == "yes"
 
 
+def test_an_answer_taken_back_is_voided_and_the_case_keeps_its_record(
+    db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
+) -> None:
+    """Final blocker pass: an answer the Case holds, taken back with nothing in its place ("sorry,
+    that was another employee"), stays out of the evaluation from then on (voided). The AI's
+    reading never changes the Case: its append-only record keeps the answer until the employer
+    records a newer one."""
+    founder = Founder(db, artifacts, alice_context)
+    first = founder.say(LATE, late())
+    founder.say("No.", late("No.", turn=1))
+    assert first.case_id is not None
+    assert case_answers(db, first.case_id)[POLICY_QUESTION] == "no"
+    back = "Sorry, that answer was about another employee."
+    data = late(back, turn=2)
+    data["withdrawn_facts"] = [
+        {"fact_key": POLICY, "source_turn": 2, "support_excerpt": "about another employee"}
+    ]
+    founder.say(back, data)
+    assert case_answers(db, first.case_id)[POLICY_QUESTION] == "no"
+    checkpoint = decode(rows(db, AssistantConversation)[0].checkpoint)
+    assert checkpoint is not None and checkpoint.voided == (POLICY,)
+    founder.say("What now?", late("What now?", turn=3))
+    record = rows(db, AssistantTurnEvaluation)[-1].record
+    assert POLICY not in record["facts"]["engine_trusted"]
+
+
 def test_no_turn_selects_a_pathway_moves_a_stage_or_records_a_decision(
     db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
 ) -> None:

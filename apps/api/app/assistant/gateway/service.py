@@ -877,6 +877,27 @@ def _recent_founder_messages(turn: FounderTurn) -> list[str]:
     return [*kept, turn.message]
 
 
+def _replying_to(turn: FounderTurn) -> list[str | None]:
+    """For each founder message the understanding reads (``_recent_founder_messages``), the
+    question HeroOS's reply just before it ended with: what a short reply in it answered. None
+    when there was none, and for the current message (``previous_heroos_question``).
+
+    Found in the final blocker pass: "yep" to "Has it been raised with him before?" was trusted,
+    and "that was a different guy" two messages later couldn't take it back: the understanding
+    saw a bare "yep" with nothing to say what it had answered.
+    """
+    questions: list[str | None] = []
+    before: str | None = None
+    for item in turn.history:
+        if item.role == "user":
+            questions.append(before)
+            before = None
+        else:
+            before = _trailing_question(item.content)
+    earlier = len(_recent_founder_messages(turn)) - 1
+    return [*(questions[len(questions) - earlier :] if earlier else []), None]
+
+
 def _recent_conversation(turn: FounderTurn) -> list[dict[str, str]]:
     kept: list[dict[str, str]] = []
     budget = MAX_CONVERSATION_CHARS
@@ -958,13 +979,16 @@ def _previous_question(turn: FounderTurn) -> str | None:
     something the understanding phase reads (it can't become the founder's fact).
     """
     reply = _previous_reply(turn)
-    if reply is None:
-        return None
+    return None if reply is None else _trailing_question(reply)
+
+
+def _trailing_question(reply: str) -> str | None:
+    """The question(s) a reply ended with (at most two sentences), bounded."""
     sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s]
     asked: list[str] = []
     while sentences and sentences[-1].rstrip().endswith("?") and len(asked) < 2:
         asked.insert(0, sentences.pop())
-    return " ".join(asked) or None
+    return " ".join(asked)[:MAX_PREVIOUS_REPLY_CHARS] or None
 
 
 def _continued(
@@ -1444,6 +1468,9 @@ class AiGateway:
         sources: dict[str, tuple[int, int]] | None = None
         stated: set[str] = set()
         current = len(_recent_founder_messages(turn)) - 1
+        # What the founder's message takes back with nothing in its place (said about someone
+        # else, or wrong): no longer trusted, said or noted, and asked again when needed.
+        retracted = frozenset(w.fact_key for w in understanding.withdrawn_facts)
         request = EvaluationRequest(matter=matter, workflow=workflow)
         if matter == "supported" and execution is not None:
             stated_facts = [
@@ -1462,6 +1489,7 @@ class AiGateway:
                     f.fact_key: f.value for f in understanding.facts if f.source_turn == current
                 },
                 bare_answers=one_proposition(_previous_question(turn)),
+                withdrawn=retracted,
             )
             # The current message touched these without stating them (hedged, inferred or
             # contradicted): what was said about them before no longer stands.
@@ -1517,7 +1545,7 @@ class AiGateway:
             # and what rested on the same words; every other reading stands.
             dropped = superseded(
                 turn.memory,
-                _corrected(execution, understanding, current, said_before) | hedged,
+                _corrected(execution, understanding, current, said_before) | hedged | retracted,
                 {f.fact_key for f in understanding.facts},
                 unknown=_not_known_now(execution, understanding, current),
             )
@@ -1775,7 +1803,7 @@ class AiGateway:
         assert self.understanding is not None
         understanding = self._understand(
             self.understanding, company, founder, [lbl for lbl in labels if lbl], telemetry,
-            deadline, view.catalog, _previous_question(turn),
+            deadline, view.catalog, _previous_question(turn), _replying_to(turn),
         )  # fmt: skip
         # A bare answer can only answer the one question HeroOS just asked, and only when that
         # question asked one thing (never "new, or raised before?" or "was that the case?").
@@ -2106,7 +2134,9 @@ class AiGateway:
         self, provider: StructuredChatProvider, company: CompanyBlueprintContext,
         founder: Sequence[str], asked_labels: Sequence[str], telemetry: Telemetry,
         deadline: _Deadline, catalog: RoutingCatalog, previous: str | None = None,
+        replying_to: Sequence[str | None] = (),
     ) -> UnderstandingProposal:  # fmt: skip
+        questions = [*replying_to, *([None] * len(founder))][: len(founder)]
         sections = {
             "routing_catalog": catalog.model_view(),
             "company_context": company_view(company),
@@ -2114,7 +2144,11 @@ class AiGateway:
             # The question HeroOS's last reply ended with, so an answer is read against what was
             # actually asked (context only: never a source for a fact).
             **({"previous_heroos_question": previous} if previous else {}),
-            "founder_messages": [{"turn": i, "text": text} for i, text in enumerate(founder)],
+            # An earlier message's "replying_to": the question it replied to (context only).
+            "founder_messages": [
+                {"turn": i, "text": text, **({"replying_to": q} if q else {})}
+                for i, (text, q) in enumerate(zip(founder, questions, strict=True))
+            ],
             # For a date the founder gives relatively ("yesterday", "on Saturday"); a reading,
             # never trusted. The weekday and the past week's dates are given, never left to the
             # model's arithmetic (found in the acceptance run: "Saturday night" read a day late).

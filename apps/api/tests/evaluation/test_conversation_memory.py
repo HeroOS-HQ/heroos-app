@@ -1192,3 +1192,55 @@ def test_an_earlier_reply_never_answers_the_question_asked_after_it(artifacts: A
     result = chat.say(aside_words, data)
     assert "given_opportunity_to_explain" not in evaluation(result).facts.conversational
     assert "given_opportunity_to_explain" not in chat.memory.said
+
+
+def test_a_fact_taken_back_with_nothing_in_its_place_is_no_longer_said(
+    artifacts: Artifacts,
+) -> None:
+    """ "His manager already spoke to him", then "Sorry, that was Kareem, not Musa": what those
+    words gave about Musa is taken back, with no value in its place (found in the final blocker
+    pass: nothing could be proposed for Musa, so "raised before" stayed noted)."""
+    chat = Remembering(artifacts)
+    words = "His manager already spoke to him about rushing last month."
+    chat.say(
+        words,
+        understood(
+            words,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[
+                fact("incident.history", "raised_before", "His manager already spoke to him"),
+                fact(DISCUSSED, "yes", "His manager already spoke to him"),
+            ],
+        ),
+    )
+    assert chat.memory.said["incident.history"].value == "raised_before"
+    back = "Sorry, that was Kareem, not Musa."
+    data = understood(back, pathway="less_serious", topics=["workplace_reminder"])
+    data["withdrawn_facts"] = [
+        {"fact_key": "incident.history", "source_turn": 1, "support_excerpt": "that was Kareem"}
+    ]
+    result = chat.say(back, data)
+    facts = evaluation(result).facts
+    assert "incident.history" not in facts.conversational | facts.engine
+    assert DISCUSSED not in facts.conversational  # rested on the same words
+    assert "incident.history" not in chat.memory.said and DISCUSSED not in chat.memory.said
+    known = chat.shown()["conversation_state"]["known"]
+    assert not any("raised" in k["about"].lower() for k in known)
+
+
+def test_the_understanding_reads_an_earlier_reply_with_the_question_it_answered(
+    artifacts: Artifacts,
+) -> None:
+    """An earlier message carries the question HeroOS asked just before it (context only), so a
+    short reply in it can be read, and taken back, for what it answered."""
+    chat = Remembering(artifacts)
+    first = warning(chat)
+    assert first.reply.endswith(EXPLAIN_QUESTION)
+    aside(chat, "Not yet.")
+    aside(chat, "Sorry, that was about someone else.")
+    assert chat.provider is not None
+    messages = chat.provider.phase("understanding")[0].data["founder_messages"]
+    assert "replying_to" not in messages[0]  # nothing was asked before the first message
+    assert EXPLAIN_QUESTION in messages[1]["replying_to"]
+    assert "replying_to" not in messages[-1]  # the current one: previous_heroos_question
