@@ -482,6 +482,12 @@ class Telemetry:
     understanding_calls: int = 0
     understanding_prompt_tokens: int = 0
     understanding_completion_tokens: int = 0
+    # Of the input tokens: read from and written to the provider's prompt cache (both phases, and
+    # the understanding's alone).
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    understanding_cache_read_tokens: int = 0
+    understanding_cache_write_tokens: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1052,6 +1058,8 @@ def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
 
 
 PAST_DAYS: Final = 7
+# The understanding's reference data that is the same across requests (a provider may cache it).
+CATALOG: Final = ("routing_catalog",)
 
 
 def reference_days(today: date) -> dict[str, object]:
@@ -1964,7 +1972,8 @@ class AiGateway:
         }
         current = len(founder) - 1
         result = self._phase(
-            provider, UNDERSTANDING_INSTRUCTION, [data_message(sections)],
+            # The routing catalog is the same on every turn: first, apart, cacheable.
+            provider, UNDERSTANDING_INSTRUCTION, [data_message(sections, stable=CATALOG)],
             UNDERSTANDING_TEMPERATURE, UNDERSTANDING_TOKENS,
             lambda text: parse_understanding(text, catalog, current_turn=current), "a",
             telemetry, deadline, fail_soft=False,
@@ -2019,10 +2028,14 @@ class AiGateway:
             raise GatewayFailure(exc.kind, retry_after=exc.retry_after) from None
         telemetry.prompt_tokens += completion.prompt_tokens or 0
         telemetry.completion_tokens += completion.completion_tokens or 0
+        telemetry.cache_read_tokens += completion.cache_read_tokens or 0
+        telemetry.cache_write_tokens += completion.cache_write_tokens or 0
         if understanding:
             telemetry.understanding_calls += 1
             telemetry.understanding_prompt_tokens += completion.prompt_tokens or 0
             telemetry.understanding_completion_tokens += completion.completion_tokens or 0
+            telemetry.understanding_cache_read_tokens += completion.cache_read_tokens or 0
+            telemetry.understanding_cache_write_tokens += completion.cache_write_tokens or 0
         return completion
 
     # --- replies the server composes ---------------------------------------------------
@@ -2214,7 +2227,9 @@ class AiGateway:
             "workflow=%s, evaluation=%s, presentation=%s, dispositions=%s, engine_trusted=%d, "
             "conversational_untrusted=%d, profile=%s, rule_bundle=%s, continuation=%s, "
             "evaluation_us=%d, wording=%s, understanding_model=%s, understanding_calls=%d, "
-            "understanding_prompt_tokens=%d, understanding_completion_tokens=%d)",
+            "understanding_prompt_tokens=%d, understanding_completion_tokens=%d, "
+            "cache_read_tokens=%d, cache_write_tokens=%d, understanding_cache_read_tokens=%d, "
+            "understanding_cache_write_tokens=%d)",
             telemetry.provider,
             telemetry.model,
             telemetry.outcome,
@@ -2243,4 +2258,8 @@ class AiGateway:
             telemetry.understanding_calls,
             telemetry.understanding_prompt_tokens,
             telemetry.understanding_completion_tokens,
+            telemetry.cache_read_tokens,
+            telemetry.cache_write_tokens,
+            telemetry.understanding_cache_read_tokens,
+            telemetry.understanding_cache_write_tokens,
         )

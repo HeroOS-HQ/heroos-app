@@ -89,7 +89,7 @@ class GroqChatProvider:
             "model": self._model,
             "messages": [
                 {"role": "system", "content": system},
-                *({"role": turn.role, "content": turn.content} for turn in turns),
+                *({"role": turn.role, "content": turn.text} for turn in turns),
             ],
             "temperature": TEMPERATURE,
             "max_completion_tokens": MAX_COMPLETION_TOKENS,

@@ -380,8 +380,14 @@ def test_the_understanding_and_the_response_each_use_their_own_model(
     assert "prompt_tokens=200, completion_tokens=40" in logged  # both phases
     assert (
         "understanding_model=reader-model, understanding_calls=1, "
-        "understanding_prompt_tokens=100, understanding_completion_tokens=20)" in logged
+        "understanding_prompt_tokens=100, understanding_completion_tokens=20, "
+        "cache_read_tokens=0, cache_write_tokens=0" in logged
     )
+    # The routing catalog is the same on every turn: sent first, apart (cacheable).
+    first = reader.calls[0].turns[0]
+    assert json.loads(first.stable).keys() == {"routing_catalog"}
+    assert "routing_catalog" not in json.loads(first.content)
+    assert "founder_messages" in json.loads(first.content)
 
 
 def test_one_model_serves_both_phases_unless_configured_apart(bundle: KnowledgeBundle) -> None:

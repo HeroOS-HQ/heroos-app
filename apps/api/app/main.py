@@ -169,7 +169,7 @@ PROVIDER_KEYS: dict[AiProvider, str] = {
 
 
 def external_provider(
-    config: Settings, provider: AiProvider, model: str
+    config: Settings, provider: AiProvider, model: str, *, cache: bool = False
 ) -> StructuredChatProvider | None:
     """The configured provider's chat model, or an offline stand-in where real calls aren't allowed.
 
@@ -190,7 +190,7 @@ def external_provider(
     if not permitted:
         return OfflineProvider(model)
     if provider == "anthropic":
-        return AnthropicChatProvider(key, model)
+        return AnthropicChatProvider(key, model, cache=cache)
     return GroqChatProvider(key, model)
 
 
@@ -265,12 +265,13 @@ def load_ai_gateway(
     provider: StructuredChatProvider | None = None
     understanding: StructuredChatProvider | None = None
     if name is not None and model is not None and understanding_model is not None:
-        provider = external_provider(config, name, model)
+        cache = config.heroos_ai_gateway_prompt_cache
+        provider = external_provider(config, name, model, cache=cache)
         # The same provider for both phases; another instance only when the model differs.
         understanding = (
             provider
             if understanding_model == model
-            else external_provider(config, name, understanding_model)
+            else external_provider(config, name, understanding_model, cache=cache)
         )
         if provider is None and config.heroos_ai_gateway_enabled:
             logger.warning(
@@ -299,11 +300,13 @@ def load_ai_gateway(
     elif ai.reason is None:
         assert ai.provider is not None
         logger.info(
-            "AI gateway enabled (provider=%s, model=%s, understanding_model=%s, approval=%s, "
-            "development_knowledge=%s, account_limit=%d/5min, global_limit=%d/min %d/day)",
+            "AI gateway enabled (provider=%s, model=%s, understanding_model=%s, prompt_cache=%s, "
+            "approval=%s, development_knowledge=%s, account_limit=%d/5min, "
+            "global_limit=%d/min %d/day)",
             ai.provider.name,
             model,
             understanding_model,
+            config.heroos_ai_gateway_prompt_cache,
             config.heroos_ai_gateway_approval,
             ai.development_knowledge,
             config.heroos_ai_gateway_account_limit,

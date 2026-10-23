@@ -907,3 +907,15 @@ def test_the_model_never_asks_last_turns_unanswered_question_again(artifacts: Ar
     data["previous_question_answer"] = "not_answered"
     result = chat.say(message, data, response(f"{SAFE} {EXPLAIN_QUESTION}", []))
     assert result.reply == SAFE
+
+
+def test_an_approximate_answer_covers_its_question_only_as_rough(artifacts: Artifacts) -> None:
+    """ "Approximate" is about the value's precision, not how directly it was said: the question is
+    covered (never asked as if unanswered), the value is never noted or trusted."""
+    chat = Remembering(artifacts)
+    result = narrated(chat, basis="approximate")
+    assert chat.memory.said[EXPLAIN].certainty == "rough"
+    assert chat.memory.coverage(EXPLAIN) == "answered_uncertain"
+    facts = evaluation(result).facts
+    assert EXPLAIN not in facts.conversational and EXPLAIN not in facts.engine
+    assert "opportunity to explain" not in result.reply

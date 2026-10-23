@@ -255,6 +255,10 @@ class Settings(DatabaseSettings):
     # to HEROOS_AI_GATEWAY_MODEL; same provider for both.
     heroos_ai_gateway_understanding_model: str | None = None
     heroos_ai_gateway_response_model: str | None = None
+    # Provider prompt caching for the gateway's stable instructions and reference data (Anthropic;
+    # the founder's words and per-request state are never in a cached part). A switch, not a
+    # dependency: the gateway works the same with it off.
+    heroos_ai_gateway_prompt_cache: bool = True
     heroos_ai_gateway_approval: str | None = None
     heroos_ai_gateway_allow_development_knowledge: bool = False
     # Founder turns (each up to four provider requests) in this API process's

@@ -115,5 +115,5 @@ def exchange(
         logger.warning(
             "%s request refused (status=%d, code=%s)", provider, status, error_code(response_body)
         )
-        raise AssistantError("unavailable")
+        raise AssistantError("unavailable", status=status)
     return response_body

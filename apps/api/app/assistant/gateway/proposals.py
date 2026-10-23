@@ -63,8 +63,11 @@ Provenance = Literal["current_user_message", "prior_user_message", "company_blue
 PROVENANCES: Final[tuple[Provenance, ...]] = (
     "current_user_message", "prior_user_message", "company_blueprint",
 )  # fmt: skip
-Basis = Literal["explicit", "inferred"]
-BASES: Final[tuple[Basis, ...]] = ("explicit", "inferred")
+# How directly the founder said it: "explicit" (the proposition itself, in any words),
+# "approximate" (said, with an imprecise value: "last week"), "inferred" (a conclusion the founder
+# didn't state). Only an explicit, confident reading establishes a fact (``establishes``).
+Basis = Literal["explicit", "approximate", "inferred"]
+BASES: Final[tuple[Basis, ...]] = ("explicit", "approximate", "inferred")
 Uncertainty = Literal[
     "jurisdiction_conflict", "conflicting_statements", "approximate_details", "multiple_matters",
     "unclear_request",

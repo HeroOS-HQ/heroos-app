@@ -285,6 +285,8 @@ def test_a_blueprint_fact_must_be_in_the_blueprint_view(bundle: KnowledgeBundle)
 @pytest.mark.parametrize(
     ("basis", "confidence", "establishes"),
     [("explicit", "high", True), ("explicit", "medium", True), ("explicit", "low", False),
+     # Said, but imprecise ("last week"): never a known value, however confident.
+     ("approximate", "high", False), ("approximate", "medium", False),
      ("inferred", "high", False)],
 )  # fmt: skip
 def test_only_an_explicit_confident_statement_establishes_a_fact(

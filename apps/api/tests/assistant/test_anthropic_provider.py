@@ -7,6 +7,7 @@ text; the gateway's JSON is bounded and passed on unvalidated; and the
 configured provider (never whichever key exists) decides which key is used.
 """
 
+import json
 import logging
 import urllib.error
 from typing import Any
@@ -202,6 +203,105 @@ def test_a_json_request_is_one_bounded_request_to_the_fixed_endpoint() -> None:
                    "mcp_servers", "container", "fallbacks", "response_format"):  # fmt: skip
         assert absent not in payload
     assert payload["stream"] is False
+
+
+STABLE = [ChatTurn("user", '{"founder_messages": []}', stable='{"routing_catalog": {}}')]
+
+
+def _cached(send: FakeSend) -> AnthropicChatProvider:
+    return AnthropicChatProvider(SecretStr(KEY), MODEL, send=send, cache=True)
+
+
+def test_a_cached_json_request_marks_only_the_instruction_and_the_stable_part() -> None:
+    usage = {"input_tokens": 300, "cache_creation_input_tokens": 0,
+             "cache_read_input_tokens": 4700, "output_tokens": 500}  # fmt: skip
+    send = FakeSend(body=message(text("{}"), usage=usage))
+    options = {"temperature": 0.0, "max_completion_tokens": 10, "timeout": 5.0}
+    result = _cached(send).complete_json("SYSTEM", STABLE, **options)
+    payload = send.calls[0][2]
+    assert payload["system"] == [
+        {"type": "text", "text": "SYSTEM", "cache_control": {"type": "ephemeral"}}
+    ]
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": '{"routing_catalog": {}}',
+                 "cache_control": {"type": "ephemeral"}},
+                # The founder's words and per-request state: never in a cached part.
+                {"type": "text", "text": '{"founder_messages": []}'},
+            ],
+        }
+    ]  # fmt: skip
+    assert (result.prompt_tokens, result.cache_read_tokens, result.cache_write_tokens) == (
+        5000,
+        4700,
+        0,
+    )
+
+
+def test_without_caching_the_request_carries_no_cache_marker() -> None:
+    send = FakeSend(body=message(text("{}")))
+    options = {"temperature": 0.0, "max_completion_tokens": 10, "timeout": 5.0}
+    _provider(send).complete_json("SYSTEM", STABLE, **options)
+    payload = send.calls[0][2]
+    assert payload["system"] == "SYSTEM"
+    assert "cache_control" not in json.dumps(payload)
+    # The stable part still comes first, as its own block: the same request otherwise.
+    assert [b["text"] for b in payload["messages"][0]["content"]] == [
+        '{"routing_catalog": {}}',
+        '{"founder_messages": []}',
+    ]
+
+
+def test_the_hannah_reply_is_never_cached() -> None:
+    send = FakeSend(body=message(text("Hello.")))
+    _cached(send).reply("PERSONA", TURNS)
+    assert send.calls[0][2]["system"] == "PERSONA"
+    assert "cache_control" not in json.dumps(send.calls[0][2])
+
+
+class RefusedOnce(FakeSend):
+    """Refuses the first request with a 400 (as if the cache markers were refused)."""
+
+    def __call__(self, url: str, headers: Any, body: bytes, timeout: float) -> Any:
+        if not self.calls:
+            self.calls.append((url, headers, json.loads(body), timeout))
+            return 400, {}, b'{"type": "error", "error": {"type": "invalid_request_error"}}'
+        return super().__call__(url, headers, body, timeout)
+
+
+def test_a_refused_cached_request_is_sent_once_without_caching_and_caching_stays_off(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    send = RefusedOnce(body=message(text('{"a": 1}')))
+    provider = _cached(send)
+    options = {"temperature": 0.0, "max_completion_tokens": 10, "timeout": 5.0}
+    assert provider.complete_json("SYSTEM", STABLE, **options).text == '{"a": 1}'
+    assert len(send.calls) == 2
+    assert "cache_control" in json.dumps(send.calls[0][2])
+    assert "cache_control" not in json.dumps(send.calls[1][2])
+    provider.complete_json("SYSTEM", STABLE, **options)
+    assert "cache_control" not in json.dumps(send.calls[2][2])  # off for the process
+    assert "Anthropic prompt caching turned off" in caplog.text
+
+
+def test_any_other_refusal_is_never_sent_again() -> None:
+    send = FakeSend(status=500, body={"type": "error"})
+    with pytest.raises(AssistantError):
+        _cached(send).complete_json(
+            "SYSTEM", STABLE, temperature=0.0, max_completion_tokens=10, timeout=5.0
+        )
+    assert len(send.calls) == 1  # no hidden retry
+
+
+def test_groq_sends_the_stable_part_first_in_the_same_message() -> None:
+    send = FakeSend(body={"choices": [{"message": {"content": "{}"}}]})
+    GroqChatProvider(SecretStr(KEY), "openai/gpt-oss-120b", send=send).complete_json(
+        "SYSTEM", STABLE, temperature=0.0, max_completion_tokens=10, timeout=5.0
+    )
+    sent = send.calls[0][2]["messages"][1]["content"]
+    assert sent == '{"routing_catalog": {}}\n{"founder_messages": []}'
 
 
 def test_the_callers_smaller_budget_and_timeout_are_kept() -> None:

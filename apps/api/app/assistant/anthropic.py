@@ -64,6 +64,10 @@ COMPLETE: Final = frozenset({"end_turn", "stop_sequence", "max_tokens"})
 # Blocks the reply may carry besides its text (never read).
 THINKING_BLOCKS: Final = frozenset({"thinking", "redacted_thinking"})
 CACHE_INPUT_TOKENS: Final = ("cache_creation_input_tokens", "cache_read_input_tokens")
+# Prompt caching (gateway requests only): the system instruction and a turn's stable part are
+# marked, so a later request with the same prefix reads them from the cache (5-minute entries,
+# kept warm by each read). A prefix too short to cache is simply not cached.
+CACHE_CONTROL: Final = {"type": "ephemeral"}
 
 
 def _shown(value: object) -> str:
@@ -113,24 +117,45 @@ def _count(usage: Mapping[str, Any], name: str) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
-def _usage(data: Any) -> tuple[int | None, int | None]:
-    """Input tokens (cached or not) and output tokens, as reported; None where absent."""
+def _usage(data: Any) -> tuple[int | None, int | None, int | None, int | None]:
+    """Input tokens (cached or not), output tokens, and the input read from and written to the
+    prompt cache, as reported; None where absent."""
     usage = data.get("usage") if isinstance(data, dict) else None
     if not isinstance(usage, dict):
-        return None, None
+        return None, None, None, None
     prompt = _count(usage, "input_tokens")
     if prompt is not None:
         prompt += sum(_count(usage, name) or 0 for name in CACHE_INPUT_TOKENS)
-    return prompt, _count(usage, "output_tokens")
+    return (
+        prompt,
+        _count(usage, "output_tokens"),
+        _count(usage, "cache_read_input_tokens"),
+        _count(usage, "cache_creation_input_tokens"),
+    )
+
+
+def _content(turn: ChatTurn, cache: bool) -> str | list[dict[str, Any]]:
+    """A turn's content: its stable part first, as its own block (marked for the cache)."""
+    if not turn.stable:
+        return turn.content
+    stable: dict[str, Any] = {"type": "text", "text": turn.stable}
+    if cache:
+        stable["cache_control"] = CACHE_CONTROL
+    return [stable, {"type": "text", "text": turn.content}]
 
 
 class AnthropicChatProvider:
     """A Claude model on Anthropic's API (the Hannah demo and the Ask HeroOS gateway)."""
 
-    def __init__(self, api_key: SecretStr, model: str, *, send: Send = transport.send) -> None:
+    def __init__(
+        self, api_key: SecretStr, model: str, *, send: Send = transport.send, cache: bool = False
+    ) -> None:
         self._api_key = api_key
         self._model = model
         self._send = send
+        # Prompt caching for structured (gateway) requests; turned off for the process if a
+        # cached request is ever refused.
+        self._cache = cache
 
     @property
     def name(self) -> str:
@@ -141,12 +166,21 @@ class AnthropicChatProvider:
         return self._model
 
     def payload(
-        self, system: str, turns: Sequence[ChatTurn], *, max_tokens: int = MAX_TOKENS
+        self,
+        system: str,
+        turns: Sequence[ChatTurn],
+        *,
+        max_tokens: int = MAX_TOKENS,
+        cache: bool = False,
     ) -> dict[str, Any]:
         return {
             "model": self._model,
-            "system": system,
-            "messages": [{"role": turn.role, "content": turn.content} for turn in turns],
+            "system": (
+                [{"type": "text", "text": system, "cache_control": CACHE_CONTROL}]
+                if cache
+                else system
+            ),
+            "messages": [{"role": t.role, "content": _content(t, cache)} for t in turns],
             "max_tokens": max_tokens,
             "output_config": {"effort": EFFORT},
             "stream": False,
@@ -167,16 +201,28 @@ class AnthropicChatProvider:
     ) -> Completion:
         # No temperature: current Claude models refuse one (see the module docstring).
         tokens = min(max(max_completion_tokens, 1) + JSON_THINKING_TOKENS, MAX_JSON_TOKENS)
-        payload = self.payload(system, turns, max_tokens=tokens)
-        body = self._post(payload, min(max(timeout, 1.0), MAX_JSON_TIMEOUT_SECONDS))
+        wait = min(max(timeout, 1.0), MAX_JSON_TIMEOUT_SECONDS)
+        cache = self._cache
+        try:
+            body = self._post(self.payload(system, turns, max_tokens=tokens, cache=cache), wait)
+        except AssistantError as refused:
+            if not (cache and refused.status == 400):
+                raise
+            # The cache markers may be what was refused: the same request once more without them,
+            # and none from now on (the provider never depends on caching).
+            self._cache = False
+            logger.warning("Anthropic prompt caching turned off (a cached request was refused)")
+            body = self._post(self.payload(system, turns, max_tokens=tokens), wait)
         text, data = _message(body)
         if len(text) > MAX_JSON_CHARS:
             raise AssistantError("unavailable")
-        prompt_tokens, completion_tokens = _usage(data)
+        prompt_tokens, completion_tokens, cache_read, cache_write = _usage(data)
         return Completion(
             text=_without_fence(text),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            cache_read_tokens=cache_read,
+            cache_write_tokens=cache_write,
         )
 
     def _post(self, payload: dict[str, Any], timeout: float) -> bytes:
