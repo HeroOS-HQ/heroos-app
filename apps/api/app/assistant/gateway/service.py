@@ -284,13 +284,15 @@ FALLBACK_LEADS: Final[dict[str, str]] = {
         "documents, arrange a specialist review or track deadlines."
     ),
     "outcome": (
-        "I can't recommend or authorize a disciplinary outcome: that decision stays with you, "
-        "after a fair process and any review HeroOS's approved guidance requires."
+        "To be clear, any outcome is your decision, after a fair process and any review the "
+        "approved guidance requires: I can't recommend or authorize one."
     ),
-    "legal": "I can't state legal specifics here beyond HeroOS's approved guidance.",
-    "invalid": (
-        "I couldn't put together a reliable answer from HeroOS's approved guidance just now."
+    # Found in the final pass: "I can't state legal specifics here beyond HeroOS's approved
+    # guidance" twice in a row, unrelated to what the founder said.
+    "legal": (
+        "I'll keep to what the approved guidance supports here, so this is where things stand."
     ),
+    "invalid": "Sorry, I couldn't put together a full answer just now. This is where things stand.",
     "provider": "",
     # M2-NEW-07: the case changed while this answer was prepared (commit-time reconciliation).
     "changed": "This case changed while I was answering, so here is HeroOS's current result.",
@@ -866,6 +868,12 @@ def _with_question(reply: str, question: str) -> str:
     are left out: the server's wording is what the founder's answer is read against)."""
     sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s and not _ANNOUNCES.search(s)]
     while sentences and sentences[-1].rstrip().endswith("?"):
+        sentences.pop()
+    lead, colon, _ = question.partition(":")
+    if colon and len(lead) <= 60 and sentences and sentences[-1].rstrip().endswith(":"):
+        # The question has its own lead-in: the reply's is left out (found in the final pass:
+        # "one thing I still need to know: one thing I still need to know: ...", "to be sure I've
+        # got it right: just to be sure I've understood: ...").
         sentences.pop()
     kept = " ".join(sentences).rstrip()
     if not kept:

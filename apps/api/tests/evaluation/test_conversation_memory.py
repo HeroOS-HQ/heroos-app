@@ -25,6 +25,7 @@ from app.assistant.gateway.service import (
     UNCLEAR,
     FounderTurn,
     GatewayReply,
+    _with_question,
 )
 from app.assistant.provider import ChatTurn
 from tests.evaluation.test_golden import SAFE, Conversation, evaluation, kind, understood
@@ -692,3 +693,20 @@ def test_a_question_the_founder_says_doesnt_fit_is_not_asked_again(artifacts: Ar
     assert disposition(result) == "block"  # the safeguard still holds the step
     for later in ("What else should I do?", "OK."):
         assert EXPLAIN_QUESTION.lower()[6:] not in aside(chat, later).reply.lower()
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "Thanks. One thing I still need to know:",
+        "Thanks. one thing I still need to know:",
+        "Thanks. To be sure I've got it right:",
+    ],
+)
+def test_a_lead_in_the_reply_already_ends_with_is_not_said_twice(words: str) -> None:
+    """Found in the final pass: "one thing I still need to know: one thing I still need to know:
+    did the incident happen at work ...?" (the reply ended with the lead-in it had seen before)."""
+    question = "One thing I still need to know: had the employee been told what was expected?"
+    assert _with_question(words, question) == (
+        "Thanks. One thing I still need to know: had the employee been told what was expected?"
+    )
