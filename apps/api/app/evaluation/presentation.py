@@ -143,6 +143,8 @@ def display(schema: FactSchema | None, value: Value) -> str:
 
 
 QUESTION_WORDS: Final = frozenset({"whether", "what", "which", "how", "when", "who", "where", "if"})
+# How a confirmation of something the founder said opens (the definition's own question follows).
+CONFIRM_LEAD: Final = "Just to be sure I've understood:"
 
 
 def requirement_question(
@@ -177,7 +179,7 @@ def requirement_question(
     if prompt is not None:
         if requirement.kind == "confirmation":
             # Found in the final run: "So I can rely on it for this step: ..." read as mechanical.
-            return f"Just to be sure I've understood: {prompt[:1].lower() + prompt[1:]}"
+            return f"{CONFIRM_LEAD} {prompt[:1].lower() + prompt[1:]}"
         return prompt
     label = requirement.label.rstrip(".")
     lowered = label[:1].lower() + label[1:]

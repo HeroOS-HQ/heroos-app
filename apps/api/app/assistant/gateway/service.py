@@ -135,6 +135,7 @@ from app.evaluation.model import (
     TrustedFactState,
 )
 from app.evaluation.presentation import (
+    CONFIRM_LEAD,
     Outcome,
     fallback_reply,
     next_step_text,
@@ -606,6 +607,17 @@ def _case_targets(
         targets.append(QuestionTarget("c1", key, schema.label, "ask", prompt=prompt))
     targets.sort(key=lambda t: execution.schemas[t.fact_key].kind == "date")
     return tuple(targets[:MAX_CASE_TARGETS])
+
+
+def asked_again(question: str, earlier: str, jurisdiction: bool = False) -> str:
+    """A required question asked a second time, opening with how the founder replied the first
+    time (``AGAIN``), with one lead-in only: a confirmation's own gives way (found in the final
+    pass: "One thing I still need to know: just to be sure I've understood: has a ...?")."""
+    lead = AGAIN[earlier]
+    if jurisdiction and earlier == "hedged":
+        lead = "To settle it for the case, a plain yes or no helps:"
+    question = question.removeprefix(f"{CONFIRM_LEAD} ")
+    return f"{lead} {question[:1].lower()}{question[1:]}"
 
 
 def _asked_again(result: "_Turn", requirement: MissingRequirement) -> bool:
@@ -1367,10 +1379,7 @@ class AiGateway:
             # Asked again (after an uncertain, rough or no answer; for the jurisdiction, an
             # answer in the founder's own words): said so, never the bare question repeated
             # (found in the final run: the same question again, word for word).
-            lead = AGAIN[earlier.last]
-            if requirement.kind == "jurisdiction" and earlier.last == "hedged":
-                lead = "To settle it for the case, a plain yes or no helps:"
-            question = f"{lead} {question[:1].lower()}{question[1:]}"
+            question = asked_again(question, earlier.last, requirement.kind == "jurisdiction")
         kind = {"fact": "fact", "confirmation": "confirm"}.get(requirement.kind, requirement.kind)
         candidate = requirement.candidate
         if requirement.kind == "confirmation" and definition_question is not None:

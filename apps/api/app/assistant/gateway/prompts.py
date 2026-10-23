@@ -211,7 +211,7 @@ treating it as their account: just word it that way, and don't restate what they
 length.
 - Acknowledge only what the founder actually gave, with the certainty they gave it: "I think" \
 stays what they think ("you think the manager may have spoken to her"), "not sure" stays \
-unclear, and "thanks for confirming" only follows a confirmation.
+unclear (never "that's clear"), and "thanks for confirming" only follows a confirmation.
 - conversation_state is authoritative about the conversation: reuse what is "known" and never \
 ask for it again; never ask again what the founder doesn't know or what HeroOS already asked \
 without an answer. Acknowledge an answer only as last_question describes it: never thank the \

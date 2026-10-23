@@ -26,6 +26,7 @@ from app.assistant.gateway.service import (
     FounderTurn,
     GatewayReply,
     _with_question,
+    asked_again,
 )
 from app.assistant.provider import ChatTurn
 from tests.evaluation.test_golden import SAFE, Conversation, evaluation, kind, understood
@@ -710,3 +711,25 @@ def test_a_lead_in_the_reply_already_ends_with_is_not_said_twice(words: str) -> 
     assert _with_question(words, question) == (
         "Thanks. One thing I still need to know: had the employee been told what was expected?"
     )
+
+
+@pytest.mark.parametrize(
+    ("question", "earlier", "expected"),
+    [
+        (
+            f"Just to be sure I've understood: {POLICY_QUESTION[:1].lower()}{POLICY_QUESTION[1:]}",
+            "unanswered",
+            "One thing I still need to know: had the employee been told what was expected of them?",
+        ),
+        (
+            POLICY_QUESTION,
+            "hedged",
+            "You weren't certain earlier, so just to check: had the employee been told what was "
+            "expected of them?",
+        ),
+    ],
+)
+def test_a_question_asked_again_has_one_lead_in(question: str, earlier: str, expected: str) -> None:
+    """Found in the final pass: "One thing I still need to know: just to be sure I've understood:
+    has a disciplinary sanction ...?" (a confirmation asked a second time)."""
+    assert asked_again(question, earlier) == expected
