@@ -10,6 +10,14 @@ A persisted conversation keeps, between turns (in its checkpoint):
   related to it the last time (answered it, said they don't know, or didn't answer);
 - ``turns``: how many founder messages came before the current one (the messages' numbers).
 
+From these, each question's **coverage** (``coverage``): whether the founder already answered it
+in the conversation, plainly, in their own story, without certainty, or said they don't know.
+Coverage is about asking, never about trust: a question the founder answered in their story is
+not asked again as if they hadn't (found in the final pass: "nobody ever explained the rule to
+her", then "had the employee been told what was expected of them?"), while the fact stays as
+trusted as it was (a reading the engine can rely on still needs a direct answer or a
+confirmation, asked only when a step the founder wants to take needs it).
+
 It is never trusted state: no rule reads it, nothing is saved to the Case from it, and it
 only ever makes HeroOS ask less (and acknowledge accurately). The founder's newest
 statement still controls: a fact they hedge or correct in the current message replaces
@@ -18,7 +26,7 @@ the one they corrected (``superseded``); every other reading stands.
 """
 
 import re
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final, Literal
 
@@ -38,6 +46,32 @@ JURISDICTION: Final = "jurisdiction"
 # A reading whose words aren't known (kept from before readings recorded their source): never
 # taken as resting on another reading's words.
 UNKNOWN_WORDS: Final = -1
+
+# How a reading covers its question: "stated" (said plainly: an ESTABLISHED_CONVERSATIONAL
+# reading, noted and carried), "implied" (the founder's words clearly imply it without saying it in
+# those terms: "she says she just counted it wrong" implies the concern was put to her), "uncertain"
+# (with words of doubt: "I think someone may have spoken to her") or "rough" (only roughly or in
+# part: "last week"). Only a stated reading is ever said again as the founder's fact: the others
+# only keep the question from being asked as if the founder hadn't spoken about it.
+Certainty = Literal["stated", "implied", "uncertain", "rough"]
+CERTAINTIES: Final[tuple[Certainty, ...]] = ("stated", "implied", "uncertain", "rough")
+# Where a question stands in the conversation (``ConversationMemory.coverage``).
+Coverage = Literal[
+    "unanswered",
+    # Trusted: a direct answer, a confirmation, the Blueprint or the continuation.
+    "answered_explicitly",
+    # Said plainly or clearly implied in the founder's own words, or answered in words the server
+    # can't read as the answer: not asked again, confirmed only when a step needs it.
+    "answered_from_narrative",
+    # Said without certainty, or only roughly: not asked again as if never mentioned.
+    "answered_uncertain",
+    "unknown_to_founder",
+    # The founder said the question doesn't fit their situation.
+    "not_applicable",
+    # The current message withdrew what was said about it, with nothing in its place.
+    "superseded",
+]
+COVERED: Final[frozenset[Coverage]] = frozenset({"answered_from_narrative", "answered_uncertain"})
 
 # "hedged": the founder answered, but not with certainty ("I think so", "sort of");
 # "approximate": they answered only roughly or in part ("last week"), with no doubt in it;
@@ -70,6 +104,7 @@ class Reading:
     value: Value
     turn: int
     words: int = UNKNOWN_WORDS
+    certainty: Certainty = "stated"
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +128,32 @@ class ConversationMemory:
             or (record.last in _ONCE_MORE and record.times >= MAX_UNANSWERED)
         }
         return frozenset({*self.said, *done})
+
+    def coverage(
+        self,
+        key: str,
+        trusted: Mapping[str, Value] | None = None,
+        withdrawn: Collection[str] = (),
+    ) -> Coverage:
+        """Where the question about ``key`` stands: ``trusted`` holds the turn's ENGINE_TRUSTED
+        values, ``withdrawn`` the readings the current message took back (``superseded``)."""
+        if trusted is not None and key in trusted:
+            return "unknown_to_founder" if trusted[key] == NOT_SURE else "answered_explicitly"
+        reading = self.said.get(key)
+        record = self.asked.get(key)
+        last = None if record is None else record.last
+        if (reading is not None and reading.value == NOT_SURE) or last == "not_sure":
+            return "unknown_to_founder"
+        if last == "not_applicable":
+            return "not_applicable"
+        if reading is not None:
+            stated = reading.certainty in ("stated", "implied")
+            return "answered_from_narrative" if stated else "answered_uncertain"
+        if last == "answered":
+            return "answered_from_narrative"
+        if last in ("hedged", "approximate"):
+            return "answered_uncertain"
+        return "superseded" if key in withdrawn else "unanswered"
 
     def not_known(self) -> frozenset[str]:
         said = {k for k, r in self.said.items() if r.value == NOT_SURE}
@@ -142,6 +203,8 @@ def carry(
     for key, reading in memory.said.items():
         if key in facts.conversational or key in facts.engine or key in hedged:
             continue
+        if reading.certainty != "stated":
+            continue  # it only covers the question: never the founder's fact
         if reading.value != STATED and key in execution.schemas:
             carried[key] = str(reading.value)
     return carried
@@ -230,6 +293,8 @@ def resolve(
     uncertain: Collection[str] = (),
     dropped: Collection[str] = (),
     does_not_apply: bool = False,
+    touched: Mapping[str, Value] | None = None,
+    implied: Collection[str] = (),
 ) -> ConversationMemory:
     """The memory after the founder's message: how it related to what HeroOS asked last turn.
 
@@ -240,7 +305,9 @@ def resolve(
     facts the current message touched without stating them, ``uncertain`` the ones among them
     with words of doubt (the others it gave only roughly); ``dropped``: earlier readings it no
     longer lets stand (``superseded``); ``does_not_apply``: the founder said the question doesn't
-    fit their situation.
+    fit their situation; ``touched``: this turn's readings of the ``hedged`` facts (canonical, or
+    ``STATED``), kept as covering their question only (``implied`` the ones the founder's words
+    clearly imply, ``uncertain`` the doubtful ones, the others rough).
     """
     asked = dict(memory.asked)
     single = len(previous) == 1
@@ -267,17 +334,30 @@ def resolve(
         elif does_not_apply and single:
             outcome = "not_applicable"
         elif key in hedged:
-            outcome = "hedged" if key in uncertain else "approximate"
+            # Clearly implied in their words: answered (never asked again as if it weren't).
+            outcome = (
+                "hedged" if key in uncertain else "answered" if key in implied else "approximate"
+            )
         else:
             outcome = "unanswered"
         asked[key] = AskRecord(record.times, outcome)
     kept = {k: r for k, r in memory.said.items() if k not in hedged and k not in dropped}
+    for key, value in (touched or {}).items():
+        if key not in hedged or key in said:
+            continue
+        certainty: Certainty = (
+            "uncertain" if key in uncertain else "implied" if key in implied else "rough"
+        )
+        source = (sources or {}).get(key)
+        turn, words = source if source is not None else (memory.turns, UNKNOWN_WORDS)
+        kept[key] = Reading(value, turn, words, certainty)
     for key, value in said.items():
         source = (sources or {}).get(key)
         before = kept.get(key)
         if source is not None:
             kept[key] = Reading(value, *source)
-        elif before is not None:  # carried or noted: still where it came from
+        elif before is not None and before.certainty == "stated":
+            # Carried or noted: still where it came from.
             kept[key] = Reading(value, before.turn, before.words)
         else:
             kept[key] = Reading(value, memory.turns)
@@ -325,6 +405,20 @@ REPLIES: Final[Mapping[Outcome, str]] = {
 }
 
 
+def _labels(
+    label: Callable[[str], str],
+    memory: ConversationMemory,
+    seen: Collection[str],
+    *,
+    asked: Outcome,
+    certainty: Certainty,
+) -> list[str]:
+    """The questions answered one way: in reply to HeroOS's question, or in the founder's story."""
+    keys = [k for k, r in memory.asked.items() if r.last == asked]
+    keys += [k for k, r in memory.said.items() if r.certainty == certainty and k not in keys]
+    return [label(k) for k in keys if k not in seen and label(k)]
+
+
 def conversation_view(
     execution: WorkflowExecution | None,
     labels: Mapping[str, str],
@@ -359,12 +453,23 @@ def conversation_view(
         known.append({"about": label(key), "value": display(schemas.get(key), value),
                       "status": "confirmed by the founder"})  # fmt: skip
         seen.add(key)
-    said = {k: r.value for k, r in memory.said.items()}
+    said = {k: r.value for k, r in memory.said.items() if r.certainty == "stated"}
     for key, value in {**said, **conversational}.items():
         if key in seen or key in engine or value in (NOT_SURE, "not sure") or not label(key):
             continue
         shown = "see the conversation" if value == STATED else display(schemas.get(key), value)
         known.append({"about": label(key), "value": shown, "status": "said by the founder"})
+        seen.add(key)
+    for key, reading in memory.said.items():
+        if key in seen or key in engine or reading.certainty != "implied" or not label(key):
+            continue
+        shown = (
+            "see the conversation"
+            if reading.value == STATED
+            else display(schemas.get(key), reading.value)
+        )
+        known.append({"about": label(key), "value": shown,
+                      "status": "clear from what the founder said"})  # fmt: skip
         seen.add(key)
     for key, value in established:
         # This turn's explicit statements, as the founder put them (no execution profile needed).
@@ -382,12 +487,12 @@ def conversation_view(
         "known": known,
         "founder_does_not_know": sorted(label(k) for k in not_known if label(k)),
         "asked_before_without_an_answer": unanswered,
-        "answered_without_certainty": [
-            label(k) for k, r in memory.asked.items() if r.last == "hedged" and label(k)
-        ],
-        "answered_only_roughly": [
-            label(k) for k, r in memory.asked.items() if r.last == "approximate" and label(k)
-        ],
+        "answered_without_certainty": _labels(
+            label, memory, seen, asked="hedged", certainty="uncertain"
+        ),
+        "answered_only_roughly": _labels(
+            label, memory, seen, asked="approximate", certainty="rough"
+        ),
     }
     last = [q for q in previous if q.kind != "insistence"]
     if last:

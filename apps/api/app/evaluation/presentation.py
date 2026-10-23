@@ -89,8 +89,9 @@ SPOKEN_RESULTS: Final[dict[str, str]] = {
     "escalate": "needs a specialist's review before the employer takes it",
     "block": "can't be taken yet",
     "unknown": (
-        "can't be relied on yet: it depends on facts still missing (still_needed); say what is "
-        "still needed, never that it may go ahead"
+        "can't be relied on yet: it depends on facts still missing (still_needed) or on what the "
+        "founder already mentioned, which they confirm before the step is taken "
+        "(mentioned_by_the_founder); say what is still needed, never that it may go ahead"
     ),
     "warn": "a caution applies; the employer may still decide to go ahead",
     "allow": (
@@ -154,6 +155,7 @@ def requirement_question(
     action_titles: dict[str, str],
     jurisdiction: str | None,
     prompt: str | None = None,
+    lead: str | None = None,
 ) -> str:
     """A plain, server-owned question for one missing requirement.
 
@@ -162,7 +164,8 @@ def requirement_question(
     read as a form). A confirmation is then the same direct question again, saying why, and
     the founder's answer is parsed against the question itself (``app.evaluation.facts``): a
     "yes" means yes to what was asked, never "yes, that's right" to a reading. A fact with no
-    question of its own is confirmed as before ("is it <value>?").
+    question of its own is confirmed as before ("is it <value>?"). ``lead``: the lead-in that
+    says why it is asked now, in place of a confirmation's own (one lead-in only).
     """
     if requirement.kind == "insistence":
         held = [action_titles[a] for a in requirement.actions if a in action_titles]
@@ -177,20 +180,22 @@ def requirement_question(
             else "Which legal entity employs this person?"
         )
     if prompt is not None:
-        if requirement.kind == "confirmation":
+        if requirement.kind == "confirmation" and lead is None:
             # Found in the final run: "So I can rely on it for this step: ..." read as mechanical.
-            return f"{CONFIRM_LEAD} {prompt[:1].lower() + prompt[1:]}"
-        return prompt
+            lead = CONFIRM_LEAD
+        return prompt if lead is None else f"{lead} {prompt[:1].lower() + prompt[1:]}"
     label = requirement.label.rstrip(".")
     lowered = label[:1].lower() + label[1:]
     if requirement.kind == "confirmation" and requirement.candidate is not None:
         # No question of its own: "yes" confirms the server's canonical reading.
         value = display(schema, requirement.candidate)
         value = value[:1].lower() + value[1:]
+        if lead is not None:
+            return f"{lead} for {lowered}, is it {value}?"
         return f"Just to be sure I've understood, for {lowered}: is it {value}?"
-    if label.split(" ", 1)[0].lower() in QUESTION_WORDS:
-        return f"Could you tell me {lowered}?"
-    return f"Could you tell me about {lowered}?"
+    words = "" if label.split(" ", 1)[0].lower() in QUESTION_WORDS else "about "
+    question = f"Could you tell me {words}{lowered}?"
+    return question if lead is None else f"{lead} {question[:1].lower()}{question[1:]}"
 
 
 def _note_text(note: Note) -> str:
@@ -314,12 +319,19 @@ OUTCOME_RULES: Final = (
 
 
 def outcome_view(
-    evaluation: ConversationEvaluation, card: Outcome | None, told: Collection[str] = ()
+    evaluation: ConversationEvaluation,
+    card: Outcome | None,
+    told: Collection[str] = (),
+    mentioned: Collection[str] = (),
 ) -> tuple[dict[str, object] | None, tuple[str, ...]]:
     """The minimized result the response phase may phrase, and its texts (for grounding).
 
     ``told``: the step results earlier replies already explained ("<action>:<disposition>"):
-    such a step is marked, so the reply doesn't explain it again.
+    such a step is marked, so the reply doesn't explain it again. ``mentioned``: the facts a
+    step still needs that the founder already spoke about in the conversation (the gateway's
+    question coverage): listed apart, so the reply never says they are unknown (found in the
+    final pass: "whether she was told what was expected still needs to be established", after
+    the founder said nobody had explained the rule to her).
     """
     if card is None:
         return None, ()
@@ -353,7 +365,9 @@ def outcome_view(
         }
         for c in evaluation.cautions
     ]
-    needed = [m.label for m in evaluation.missing if m.kind in ("fact", "confirmation")]
+    facts = [m for m in evaluation.missing if m.kind in ("fact", "confirmation")]
+    needed = [m.label for m in facts if m.key not in mentioned]
+    said = [m.label for m in facts if m.key in mentioned]
     step = next_step_text(evaluation)
     view = {
         "state": presentation,
@@ -362,6 +376,20 @@ def outcome_view(
         "steps": steps,
         "cautions": cautions,
         "still_needed": needed,
+        **(
+            {
+                "mentioned_by_the_founder": {
+                    "about": said,
+                    "meaning": (
+                        "the founder already spoke about these: never say they are unknown, "
+                        "still open or still to be established, and never ask about them; "
+                        "before the step is taken they confirm them plainly"
+                    ),
+                }
+            }
+            if said
+            else {}
+        ),
         "safe_next_step": step,
         "rules": list(OUTCOME_RULES),
     }
@@ -370,6 +398,7 @@ def outcome_view(
         *(a.title for a in evaluation.actions),
         *(t for c in evaluation.cautions for t in (c.note.title, *c.note.text)),
         *needed,
+        *said,
         *([step] if step else []),
     )
     return view, texts

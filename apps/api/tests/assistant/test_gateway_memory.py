@@ -218,3 +218,120 @@ def test_the_step_results_already_explained_are_remembered_once() -> None:
     memory = record(memory, [], told=["opt-warning:unknown", "opt-dismissal:block"])
     assert memory.told == ("opt-warning:unknown", "opt-dismissal:block")
     assert after(memory, ()).told == memory.told  # the founder's message keeps it
+
+
+# --- question coverage: answered conversationally is not the same as trusted -----------------
+
+
+OTHER = "incident_discussed_with_employee"
+
+
+@pytest.mark.parametrize(
+    ("memory", "trusted", "coverage"),
+    [
+        (ConversationMemory(), {}, "unanswered"),
+        (ConversationMemory(), {KEY: "no"}, "answered_explicitly"),
+        (ConversationMemory(), {KEY: NOT_SURE}, "unknown_to_founder"),
+        # "Nobody ever explained the rule to her": said plainly in the founder's story.
+        (ConversationMemory(said={KEY: Reading("no", 0, 0)}), {}, "answered_from_narrative"),
+        # "She says she just counted it wrong": clearly implied (the concern was put to her).
+        (
+            ConversationMemory(said={KEY: Reading("yes", 0, 0, "implied")}),
+            {},
+            "answered_from_narrative",
+        ),
+        # "I think somebody might have spoken to her": relevant, not clearly answered.
+        (
+            ConversationMemory(said={KEY: Reading("yes", 0, 0, "uncertain")}),
+            {},
+            "answered_uncertain",
+        ),
+        (ConversationMemory(said={KEY: Reading(STATED, 0, 0, "rough")}), {}, "answered_uncertain"),
+        # "Not that I know of" is not knowing, never an authoritative "no".
+        (ConversationMemory(said={KEY: Reading(NOT_SURE, 0, 0)}), {}, "unknown_to_founder"),
+        (ConversationMemory(asked={KEY: AskRecord(1, "not_sure")}), {}, "unknown_to_founder"),
+        # Answered HeroOS's question in words the server can't read as the answer.
+        (ConversationMemory(asked={KEY: AskRecord(1, "answered")}), {}, "answered_from_narrative"),
+        (ConversationMemory(asked={KEY: AskRecord(1, "hedged")}), {}, "answered_uncertain"),
+        (ConversationMemory(asked={KEY: AskRecord(1, "not_applicable")}), {}, "not_applicable"),
+        (ConversationMemory(asked={KEY: AskRecord(1, "unanswered")}), {}, "unanswered"),
+    ],
+)
+def test_coverage_says_where_a_question_stands(
+    memory: ConversationMemory, trusted: dict[str, str], coverage: str
+) -> None:
+    assert memory.coverage(KEY, trusted) == coverage
+
+
+def test_a_question_whose_reading_was_taken_back_is_superseded() -> None:
+    assert ConversationMemory().coverage(KEY, {}, withdrawn={KEY}) == "superseded"
+    stated = ConversationMemory(said={KEY: Reading("no", 1, 0)})
+    assert stated.coverage(KEY, {}, withdrawn={KEY}) == "answered_from_narrative"  # restated
+
+
+def test_a_reading_that_only_covers_its_question_is_never_said_again_as_the_founders_fact() -> None:
+    memory = ConversationMemory(
+        said={
+            KEY: Reading("yes", 0, 0, "implied"),
+            OTHER: Reading("yes", 0, 1, "uncertain"),
+            "misconduct_level": Reading("less_serious", 0, 2),
+        }
+    )
+    view = conversation_view(None, {**LABELS, OTHER: "Discussed"}, None, memory, ())
+    assert view["known"] == [
+        {"about": "How serious it is", "value": "less serious", "status": "said by the founder"},
+        {
+            "about": "Standard explained",
+            "value": "yes",
+            "status": "clear from what the founder said",
+        },
+    ]
+    assert view["answered_without_certainty"] == ["Discussed"]
+    assert memory.settled() >= {KEY, OTHER}  # never asked as if the founder hadn't spoken
+
+
+@pytest.mark.parametrize(
+    ("uncertain", "implied", "certainty"),
+    [({KEY}, set(), "uncertain"), (set(), {KEY}, "implied"), (set(), set(), "rough")],
+)
+def test_what_a_message_touches_without_stating_it_is_kept_as_covering_its_question(
+    uncertain: set[str], implied: set[str], certainty: str
+) -> None:
+    memory = after(
+        ConversationMemory(turns=1),
+        (),
+        hedged={KEY},
+        uncertain=uncertain,
+        implied=implied,
+        touched={KEY: "yes"},
+        sources={KEY: (1, 0)},
+    )
+    assert memory.said[KEY] == Reading("yes", 1, 0, certainty)  # type: ignore[arg-type]
+
+
+def test_an_implied_answer_to_the_question_asked_is_an_answer() -> None:
+    memory = after(ASKED, (Asked("fact", KEY),), hedged={KEY}, implied={KEY}, touched={KEY: "yes"})
+    assert memory.asked[KEY].last == "answered"
+    assert memory.coverage(KEY) == "answered_from_narrative"
+
+
+def test_a_correction_to_uncertainty_reduces_that_question_only() -> None:
+    """ "The manager warned him" then "actually, I don't know whether the manager spoke to him":
+    that question is now uncertain; an unrelated reading stands."""
+    earlier = ConversationMemory(
+        said={OTHER: Reading("yes", 0, 0), "misconduct_level": Reading("less_serious", 0, 1)},
+        turns=1,
+    )
+    dropped = superseded(earlier, {OTHER}, {OTHER})
+    memory = after(
+        earlier,
+        (),
+        hedged={OTHER},
+        uncertain={OTHER},
+        dropped=dropped,
+        touched={OTHER: "yes"},
+        sources={OTHER: (1, 0)},
+    )
+    assert memory.coverage(OTHER) == "answered_uncertain"
+    assert memory.said["misconduct_level"] == Reading("less_serious", 0, 1)
+    assert memory.coverage("misconduct_level") == "answered_from_narrative"

@@ -71,7 +71,14 @@ def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
     snapshot: ExecutionSnapshot,
 ) -> None:
     memory = ConversationMemory(
-        said={POLICY: Reading("yes", 3, 0), "misconduct_level": Reading("stated", 1)},
+        said={
+            POLICY: Reading("yes", 3, 0),
+            "misconduct_level": Reading("stated", 1),
+            # Readings that only cover their question keep how.
+            "incident_discussed_with_employee": Reading("yes", 2, 1, "implied"),
+            "evidence_available": Reading("yes", 4, 0, "uncertain"),
+            "incident.date": Reading("2026-10-12", 4, 1, "rough"),
+        },
         asked={POLICY: AskRecord(2, "unanswered"), "jurisdiction": AskRecord(1, "approximate")},
         turns=5,
         told=("opt-warning:unknown",),
@@ -108,6 +115,8 @@ def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
         {"memory": {"said": {"x": "a value with spaces"}, "asked": {}}},
         {"memory": {"said": {}, "asked": {"x": [0, "answered"]}}},
         {"memory": {"said": {}, "asked": {"x": [1, "maybe"]}}},
+        {"memory": {"said": {"x": ["yes", 0, 0, "probably"]}, "asked": {}, "turns": 1}},
+        {"memory": {"said": {"x": ["yes", 0, 0, "stated", 1]}, "asked": {}, "turns": 1}},
         {"memory": {"said": {}, "asked": {"x": [True, "answered"]}}},
         {"memory": {"said": {"x": "yes"}, "asked": {}, "turns": 2}},  # a source is required
         {"memory": {"said": {"x": ["yes", -1, 0]}, "asked": {}, "turns": 2}},

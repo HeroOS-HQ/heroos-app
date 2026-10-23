@@ -36,6 +36,7 @@ from dataclasses import dataclass, field, replace
 from typing import Final
 
 from app.assistant.gateway.memory import (
+    CERTAINTIES,
     MAX_REMEMBERED,
     MAX_TURNS,
     OUTCOMES,
@@ -199,7 +200,9 @@ def encode(checkpoint: Checkpoint) -> dict[str, object]:
     if memory.said or memory.asked or memory.turns or memory.told:
         data["memory"] = {
             "said": {
-                k: [r.value, r.turn, r.words]
+                # A reading that only covers its question keeps how ("implied", "uncertain" or
+                # "rough").
+                k: [r.value, r.turn, r.words, *([] if r.certainty == "stated" else [r.certainty])]
                 for k, r in list(memory.said.items())[-MAX_REMEMBERED:]
             },
             "asked": {
@@ -251,19 +254,21 @@ def _count(value: object, low: int, high: int) -> bool:
 
 
 def _reading(entry: object, *, sourced: bool) -> Reading | None:
-    """One remembered reading: [value, message, words] (before readings had a source, the value
-    alone: its message and words unknown)."""
+    """One remembered reading: [value, message, words], and how it covers its question when it
+    only covers it ([..., "implied"]); before readings had a source, the value alone (its message
+    and words unknown)."""
     if not sourced:
         return Reading(entry, 0) if isinstance(entry, (str, int)) and _value(entry) else None
     if (
         not isinstance(entry, list)
-        or len(entry) != 3
+        or len(entry) not in (3, 4)
         or not _value(entry[0])
         or not _count(entry[1], 0, MAX_TURNS)
         or not _count(entry[2], UNKNOWN_WORDS, MAX_FACTS)
+        or (len(entry) == 4 and entry[3] not in CERTAINTIES[1:])
     ):
         return None
-    return Reading(entry[0], entry[1], entry[2])
+    return Reading(entry[0], entry[1], entry[2], *entry[3:])
 
 
 def _memory(data: object) -> ConversationMemory | None:

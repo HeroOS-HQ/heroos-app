@@ -175,8 +175,10 @@ def test_a_correction_that_reduces_certainty_reduces_it(
     )
     facts = evaluation(result).facts
     assert facts.conversational.get(POLICY) in (None, "not_sure")
-    said = chat.memory.said.get(POLICY)
-    assert said is None or said.value == "not_sure"
+    said = chat.memory.said[POLICY]
+    # Never the founder's fact again; the question stays covered as they now put it.
+    assert said.value == "not_sure" or said.certainty == "uncertain"
+    assert chat.memory.coverage(POLICY) in ("answered_uncertain", "unknown_to_founder")
     assert POLICY not in facts.engine
 
 
@@ -358,7 +360,12 @@ def test_the_jurisdiction_question_is_not_asked_twice_in_a_row(artifacts: Artifa
     assert disposition(result) == "block"
 
 
-def test_a_question_asked_again_after_an_uncertain_answer_says_so(artifacts: Artifacts) -> None:
+def test_an_uncertain_answer_is_asked_again_only_when_the_step_needs_it(
+    artifacts: Artifacts,
+) -> None:
+    """Found in the final pass: "You weren't certain earlier, so just to check: ..." on a turn
+    about something else read as asking again. An uncertain answer covers the question; it is
+    asked once more only when the founder pursues the step it holds."""
     chat = Remembering(artifacts)
     warning(chat)
     unsure = "I think so?"
@@ -370,10 +377,20 @@ def test_a_question_asked_again_after_an_uncertain_answer_says_so(artifacts: Art
     )
     chat.say(unsure, data)  # hedged: not asked again at once
     later = aside(chat, "What else do I need?")
-    assert later.reply.endswith(
-        "You weren't certain earlier, so just to check: could you tell me about given "
-        "opportunity to explain?"
+    assert "opportunity to explain" not in later.reply
+    assert chat.memory.coverage("given_opportunity_to_explain") == "answered_uncertain"
+    pursued = chat.say(
+        WARN,
+        understood(
+            WARN, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")], turn=3
+        ),
     )
+    assert pursued.reply.endswith(
+        "Before you go ahead, I need to check something you weren't sure about: could you tell "
+        "me about given opportunity to explain?"
+    )
+    assert disposition(pursued) == "block"  # the uncertain answer never cleared the step
+    assert "given_opportunity_to_explain" not in evaluation(pursued).facts.engine
 
 
 @pytest.mark.parametrize(
@@ -733,3 +750,132 @@ def test_a_question_asked_again_has_one_lead_in(question: str, earlier: str, exp
     """Found in the final pass: "One thing I still need to know: just to be sure I've understood:
     has a disciplinary sanction ...?" (a confirmation asked a second time)."""
     assert asked_again(question, earlier) == expected
+
+
+# --- question coverage: answered in the founder's story is not the same as trusted ----------
+
+EXPLAIN = "given_opportunity_to_explain"
+STORY = "Can I give him a formal warning? He already had his chance to explain himself."
+STORY_WORDS = "He already had his chance to explain himself"
+BEFORE_ACTING = "Before you go ahead, I need a plain answer on something you mentioned earlier:"
+
+
+def narrated(chat: Remembering, *, basis: str = "explicit") -> GatewayReply:
+    return chat.say(
+        STORY,
+        understood(
+            STORY,
+            topics=["formal_warning"],
+            actions=[("opt-warning", "a formal warning")],
+            facts=[fact(EXPLAIN, "yes", STORY_WORDS, basis=basis)],
+        ),
+        response(SAFE, []),
+    )
+
+
+@pytest.mark.parametrize("basis", ["explicit", "inferred"])
+def test_a_question_answered_in_the_founders_story_is_not_asked_and_not_trusted(
+    artifacts: Artifacts, basis: str
+) -> None:
+    """Found in the final pass: "nobody ever explained the rule to her", then at once "had the
+    employee been told what was expected of them?". Said plainly or clearly implied ("inferred"
+    with high confidence), the question is covered; the fact stays as untrusted as it was."""
+    chat = Remembering(artifacts)
+    result = narrated(chat, basis=basis)
+    assert "opportunity to explain" not in result.reply
+    assert EXPLAIN not in chat.memory.asked
+    assert chat.memory.coverage(EXPLAIN) == "answered_from_narrative"
+    facts = evaluation(result).facts
+    assert EXPLAIN not in facts.engine  # never authoritative from the story
+    assert disposition(result) == "block"  # the step it holds stays held
+    label = next(m.label for m in evaluation(result).missing if m.key == EXPLAIN)
+    outcome = chat.shown()["heroos_outcome"]
+    assert outcome["mentioned_by_the_founder"]["about"] == [label]
+    assert label not in outcome["still_needed"]
+    if basis == "inferred":
+        # Clearly implied: covers the question, never noted as the founder's fact.
+        assert EXPLAIN not in facts.conversational
+        assert chat.memory.said[EXPLAIN].certainty == "implied"
+        known = chat.shown()["conversation_state"]["known"]
+        assert {"status": "clear from what the founder said"} | {"about": label} in [
+            {"status": k["status"], "about": k["about"]} for k in known
+        ]
+
+
+def test_a_narrative_answer_is_confirmed_once_when_the_founder_pursues_the_step(
+    artifacts: Artifacts,
+) -> None:
+    """Confirmed only when HeroOS needs a fact it can rely on for the decision the founder is
+    making, never merely because the question exists, and through the existing trust path."""
+    chat = Remembering(artifacts)
+    narrated(chat)
+    later = aside(chat, "What should I prepare for the meeting?")  # not pursuing the step now
+    assert "opportunity to explain" not in later.reply
+    pursued = chat.say(
+        WARN,
+        understood(
+            WARN, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")], turn=2
+        ),
+    )
+    assert pursued.reply.endswith(f"{BEFORE_ACTING} for given opportunity to explain, is it yes?")
+    assert EXPLAIN not in evaluation(pursued).facts.engine
+    confirmed = chat.say("Yes.", understood("Yes.", topics=["formal_warning"]), response(SAFE, []))
+    facts = evaluation(confirmed).facts
+    assert facts.engine[EXPLAIN] == "yes" and facts.sources[EXPLAIN] == "confirmation"
+
+
+def test_a_hypothetical_step_never_asks_for_a_confirmation(artifacts: Artifacts) -> None:
+    chat = Remembering(artifacts)
+    narrated(chat)
+    what_if = "Hypothetically, what if I gave him a formal warning?"
+    data = understood(what_if, topics=["formal_warning"])
+    data["hypothetical_actions"] = [
+        {"action": "opt-warning", "source_turn": 1, "support_excerpt": "what if I gave him"}
+    ]
+    result = chat.say(what_if, data, response(SAFE, []))
+    assert BEFORE_ACTING not in result.reply
+    assert EXPLAIN not in chat.memory.asked
+
+
+def test_implying_again_what_was_said_plainly_takes_nothing_back(artifacts: Artifacts) -> None:
+    chat = Remembering(artifacts)
+    narrated(chat)
+    again = "He explained his side when we spoke."
+    result = chat.say(
+        again,
+        understood(
+            again,
+            topics=["formal_warning"],
+            facts=[fact(EXPLAIN, "yes", "He explained his side", turn=1, basis="inferred")],
+        ),
+        response(SAFE, []),
+    )
+    assert chat.memory.said[EXPLAIN].certainty == "stated"
+    assert evaluation(result).facts.conversational[EXPLAIN] == "yes"
+    assert EXPLAIN not in evaluation(result).facts.engine
+
+
+def test_a_narrative_answer_made_uncertain_is_never_confirmed_as_said(
+    artifacts: Artifacts,
+) -> None:
+    """ "Actually, I'm not sure he did": that question only is reduced to uncertain."""
+    chat = Remembering(artifacts)
+    narrated(chat)
+    unsure = "Actually, I'm not sure he really got to explain."
+    result = chat.say(
+        unsure,
+        understood(
+            unsure,
+            topics=["formal_warning"],
+            facts=[
+                fact(
+                    EXPLAIN, "yes", "not sure he really got to explain", turn=1,
+                    basis="inferred", confidence="low",
+                )
+            ],
+        ),
+        response(SAFE, []),
+    )  # fmt: skip
+    assert chat.memory.coverage(EXPLAIN) == "answered_uncertain"
+    assert EXPLAIN not in evaluation(result).facts.conversational
+    assert "opportunity to explain" not in result.reply
