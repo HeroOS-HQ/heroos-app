@@ -475,7 +475,7 @@ def evaluate_intake(
         for step in definition.steps
         if step.key in available
         for q in step.questions
-        if is_asked(q, answers)
+        if is_asked(q, answers) and not q.record_only
     )
     missing = tuple(key for key in asked if answers.get(key) is None)
     uncertain = tuple(key for key in asked if answers.get(key) == NOT_SURE)

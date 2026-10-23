@@ -19,6 +19,7 @@ from app.evaluation.facts import (
     contradicted,
     dated,
     leading_answer,
+    one_proposition,
     parse_count,
     parse_insistence,
     parse_yes_no,
@@ -564,3 +565,66 @@ def test_a_day_and_month_are_put_on_the_calendar_by_the_server(
     value: str, words: str, placed: str | None
 ) -> None:
     assert dated(value, words, THURSDAY) == placed
+
+
+@pytest.mark.parametrize(
+    ("question", "single"),
+    [
+        ("Had this been raised with the employee before?", True),
+        ("Has this happened before?", True),
+        # One proposition in two forms: a "yes" means at work either way.
+        ("Did the incident happen at work, or while the employee was carrying out work duties?",
+         True),
+        ("Has a manager ever raised it with him, for example by speaking to him or warning him?",
+         True),
+        # Final ontology pass: alternatives, or a question that points back.
+        ("Is this a new issue, or has it been raised before?", False),
+        ("Did it happen before or was this the first time?", False),
+        ("Has it come up with Venkatesh before, or is it new?", False),
+        ("Was that the case?", False),
+        ("Is that right?", False),
+        ("Had she been told? And has a sanction been issued?", False),
+        (None, True),
+    ],
+)  # fmt: skip
+def test_a_bare_yes_or_no_answers_only_a_question_with_one_proposition(
+    question: str | None, single: bool
+) -> None:
+    assert one_proposition(question) is single
+
+
+@pytest.mark.parametrize(
+    ("value", "excerpt", "wrong"),
+    [
+        # A contrast word clarifies; it never makes a statement doubtful (final ontology pass).
+        ("verbal_only", "spoken to him twice, but only verbally", False),
+        ("raised_before", "I've spoken to him twice, but only verbally", False),
+        ("yes", "spoke to him twice, but never in writing", False),
+        ("yes", "he was told, though nothing was written down", False),
+        # Negation in the statement itself still contradicts a "yes".
+        ("yes", "I did not speak to him, but I left a note", True),
+        ("yes", "nobody saw it", True),
+        # Partial words still qualify it.
+        ("yes", "he was sort of told", True),
+        ("raised_before", "it was raised with him sometimes", True),
+    ],
+)
+def test_a_contrast_word_never_downgrades_a_statement(
+    value: str, excerpt: str, wrong: bool
+) -> None:
+    assert contradicted(value, excerpt) is wrong
+
+
+def test_a_bare_answer_to_a_question_with_alternatives_binds_nothing(
+    artifacts: Artifacts,
+) -> None:
+    """Final ontology pass: "Is this new, or has it been raised before?" then "Yes": which one is
+    yes? Nothing is bound; with one proposition, the same "Yes" is a direct answer."""
+    execution = artifacts.snapshot().execution("disciplinary")
+    assert execution is not None
+    prior = PriorState(asked=(Asked("fact", "incident.history"),))
+    common = {"stated": (), "message": "Yes", "prior": prior, "blueprint": {}}
+    two_sided = trust_facts(execution, bare_answers=False, **common)  # type: ignore[arg-type]
+    assert "incident.history" not in two_sided.facts.engine
+    single = trust_facts(execution, **common)  # type: ignore[arg-type]
+    assert single.facts.engine["incident.history"] == "raised_before"

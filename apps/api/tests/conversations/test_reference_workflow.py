@@ -889,7 +889,7 @@ def test_an_optional_case_question_is_offered_once(journey: Journey) -> None:
         return [t["about"] for t in targets]
 
     journey.ask(ABSENT, absent(topics=("workplace_reminder",)))
-    history = "New or previously raised"
+    history = "Raised with the employee before"
     # HeroOS asks whether it came up before (an optional Case question, one at a time; a date
     # comes last)...
     journey.ask(
@@ -923,6 +923,6 @@ def test_when_the_required_question_cant_be_asked_the_case_record_questions_can(
     reply = journey.ask(unknown, data)
     assert required not in last_heroos(reply)["text"]
     offered = [t["about"] for t in journey.sections()["approved_knowledge"]["question_targets"]]
-    assert offered == ["New or previously raised"]
+    assert offered == ["Raised with the employee before"]
     state = journey.sections()["conversation_state"]
     assert state["founder_does_not_know"]

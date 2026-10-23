@@ -489,14 +489,52 @@ def test_a_reply_claiming_actions_records_no_workflow_action(
     assert stored["workflow_submissions"] == 0
 
 
-def test_an_outside_request_gets_the_fixed_reply_and_a_bare_case(
+OUTSIDE_WORDS = (
+    "That's outside what HeroOS covers today. It helps with workplace conduct and disciplinary "
+    "matters, so tell me if one of those comes up."
+)
+
+
+def test_an_outside_request_gets_a_short_reply_in_words_and_a_bare_case(
     stored_sessions: sessionmaker[Session],  # noqa: F811
     cognito_provider: CognitoAccessTokenProvider,
     bundle: KnowledgeBundle,  # noqa: F811
     seed: SeedData,
     admin_alice: dict[str, str],  # noqa: F811
 ) -> None:
-    chat = ScriptedProvider(understanding(intent="other_hr"))
+    """An HR matter outside HeroOS's approved guidance gets a short reply in words, checked like
+    any other, that knows it is outside (final pass, batch 1: the same fixed refusal came back
+    three times, whatever was asked). No approved guidance reaches it, and no workflow attaches
+    to the bare Case."""
+    chat = ScriptedProvider(understanding(intent="other_hr"), response(OUTSIDE_WORDS))
+    client = gateway_client(stored_sessions, cognito_provider, bundle, chat)
+    body = send(
+        client, admin_alice, seed.company_a, "My probation hire's review went badly."
+    ).json()
+    heroos = body["messages"][1]
+    assert heroos["text"] == OUTSIDE_WORDS
+    assert heroos["conversation_state"] == "outside_approved_guidance"
+    assert [c.phase for c in chat.calls] == ["understanding", "response"]
+    light = chat.calls[1].data
+    assert "outside_heroos_guidance" in light and "approved_knowledge" not in light
+    # Chat-first Case: the first completed turn starts a bare Case, whatever it is about;
+    # no workflow attaches to it outside HeroOS's approved guidance.
+    case = body["conversation"]["case"]
+    assert case is not None and case["title"] == body["conversation"]["title"] == "New case"
+    stored = counts(stored_sessions)
+    assert stored["cases"] == 1 and stored["workflow_instances"] == 0
+
+
+def test_an_outside_request_whose_words_fail_gets_the_fixed_reply(
+    stored_sessions: sessionmaker[Session],  # noqa: F811
+    cognito_provider: CognitoAccessTokenProvider,
+    bundle: KnowledgeBundle,  # noqa: F811
+    seed: SeedData,
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    """When the short reply can't be used (output that isn't a reply), the fixed text says the
+    matter is outside the approved guidance and what HeroOS covers."""
+    chat = ScriptedProvider(understanding(intent="other_hr"), "not a reply")
     client = gateway_client(stored_sessions, cognito_provider, bundle, chat)
     body = send(
         client, admin_alice, seed.company_a, "My probation hire's review went badly."
@@ -504,13 +542,7 @@ def test_an_outside_request_gets_the_fixed_reply_and_a_bare_case(
     heroos = body["messages"][1]
     assert heroos["text"] == OUTSIDE_HR.format(coverage="Example discipline")
     assert heroos["conversation_state"] == "outside_approved_guidance"
-    assert len(chat.calls) == 1
-    # Chat-first Case: the first completed turn starts a bare Case, whatever it is about;
-    # no workflow attaches to it outside HeroOS's approved guidance.
-    case = body["conversation"]["case"]
-    assert case is not None and case["title"] == body["conversation"]["title"] == "New case"
-    stored = counts(stored_sessions)
-    assert stored["cases"] == 1 and stored["workflow_instances"] == 0
+    assert counts(stored_sessions)["workflow_instances"] == 0
 
 
 def test_nothing_the_founder_or_heroos_said_is_logged(

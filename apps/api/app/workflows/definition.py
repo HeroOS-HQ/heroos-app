@@ -77,6 +77,9 @@ class Question:
     # For the understanding only, never shown to the founder: exactly what the fact means, where
     # its question alone could be read more widely (the AI gateway's routing catalog).
     means: str | None = None
+    # Recorded when the founder says it (the conversation notes it, the employer may save it),
+    # never asked by HeroOS nor required for its step: no rule reads it yet.
+    record_only: bool = False
     max_length: int | None = None
     # ``date`` only: NOT_SURE is an accepted answer.
     allow_not_sure: bool = False
@@ -161,21 +164,22 @@ INITIAL_FACTS: Final = Step(
         Question(
             key="incident.history",
             kind="choice",
-            prompt="Is this a new issue, or has it been raised before?",
-            label="New or previously raised",
+            # One proposition, so a plain yes or no answers it (final ontology pass).
+            prompt="Had this been raised with the employee before?",
+            label="Raised with the employee before",
             means=(
-                "Earlier occasions, before the matter now being handled. raised_before: on an "
-                "earlier occasion the employer or a manager raised this kind of issue with the "
-                "employee (spoke to them about it, warned them or otherwise took it up). new: it "
-                "was never raised with them before (the first time it has happened included). A "
-                "plain yes or no to whether it was raised with them before answers it. Neither "
-                "when the words only say it happened before or keeps happening (whether anyone "
-                "took it up isn't said), and neither from whether the matter now being handled "
-                "has been discussed with the employee yet."
+                "Earlier management action, before the matter now being handled. raised_before: "
+                "on an earlier occasion the employer or a manager raised this kind of issue with "
+                "the employee (spoke to them about it, warned them or otherwise took it up). new: "
+                "it was never raised with them before (the first time it has happened included). "
+                "A plain yes or no to whether it was raised with them before answers it. Neither "
+                "when the words only say it happened before or keeps happening (that is whether "
+                "it happened before, its own fact), and neither from whether the matter now being "
+                "handled has been discussed with the employee yet."
             ),
             options=(
-                Option("new", "This is a new issue"),
-                Option("raised_before", "It has been raised before"),
+                Option("new", "No, it hadn't been raised with them before"),
+                Option("raised_before", "Yes, it was raised with them before"),
                 Option(NOT_SURE, "Not sure"),
             ),
         ),
@@ -199,6 +203,10 @@ INITIAL_FACTS: Final = Step(
             help=(
                 "For example emails, messages, records or witness accounts. You can't upload "
                 "anything yet; just tell us whether it exists."
+            ),
+            means=(
+                "Whether anything supports what was reported: records, messages or emails, CCTV "
+                "or system logs, or people who saw or heard it (a witness account is evidence)."
             ),
             options=YES_NO_NOT_SURE,
         ),
@@ -289,6 +297,19 @@ INCIDENT_CONTEXT: Final = Step(
             ),
             options=YES_NO_NOT_SURE,
             ask_when=AskWhen("context.location", ("outside_work",)),
+        ),
+        Question(
+            key="history.previous_occurrence",
+            kind="choice",
+            prompt="Has this happened before?",
+            label="Happened before",
+            means=(
+                "Whether this kind of conduct happened before the matter now being handled (it "
+                "recurred, or it is a pattern), whoever knew about it. It says nothing about "
+                "whether anyone raised it with the employee: that is whether it was raised before."
+            ),
+            options=YES_NO_NOT_SURE,
+            record_only=True,
         ),
         Question(
             key="history.documented_action",

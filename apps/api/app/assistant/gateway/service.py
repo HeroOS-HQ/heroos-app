@@ -132,6 +132,7 @@ from app.evaluation.facts import (
     contradicted,
     dated,
     doubtful,
+    one_proposition,
     says_not_known,
     trust_facts,
 )
@@ -338,6 +339,17 @@ BEFORE_ACTING: Final[Mapping[Coverage, str]] = {
         "Before you go ahead, I need a plain answer on something you mentioned earlier:"
     ),
     "answered_uncertain": "Before you go ahead, I need to check something you weren't sure about:",
+}
+# A fact the founder only implied, gave without certainty or roughly covers its question in the
+# conversation (never asked as if they hadn't spoken about it) but never satisfies what the
+# deterministic checks or the Case record need: once it is needed, one focused question settles it.
+CLARIFY: Final[Mapping[Coverage, str]] = {
+    "answered_from_narrative": (
+        "One thing you mentioned needs a plain answer before I can rely on it:"
+    ),
+    "answered_uncertain": (
+        "One thing you weren't sure about needs a plain answer before I can rely on it:"
+    ),
 }
 QUESTION_WORDS: Final = frozenset({"whether", "what", "which", "how", "when", "who", "where", "if"})
 ASKED_LABELS: Final[Mapping[str, str]] = {
@@ -620,6 +632,7 @@ def _case_targets(
     evaluation: ConversationEvaluation,
     planned: Sequence[QuestionTarget],
     unanswered: Collection[str] = (),
+    memory: ConversationMemory | None = None,
 ) -> tuple[QuestionTarget, ...]:
     """The Case's open intake question to offer next, if any: the reply may ask about it, in its
     own words, as its one question.
@@ -628,7 +641,9 @@ def _case_targets(
     question asking for more precision reads as asking again), never one asked last turn that
     the reply didn't answer, never one asked often enough, and never twice. One at a time (found
     in the final run: two offered became one double question), a date last: what changes the
-    approved steps comes before the precision of a day.
+    approved steps comes before the precision of a day. When nothing else is open, a question the
+    conversation covers only with an implied, uncertain or rough reading is asked once, in the
+    Case's own words (the record needs a plain answer: ``_covered_only``).
     """
     if case is None:
         return ()
@@ -647,7 +662,29 @@ def _case_targets(
         prompt = None if asked is None else asked.prompt
         targets.append(QuestionTarget("c1", key, schema.label, "ask", prompt=prompt))
     targets.sort(key=lambda t: execution.schemas[t.fact_key].kind == "date")
-    return tuple(targets[:MAX_CASE_TARGETS])
+    if targets or memory is None:
+        return tuple(targets[:MAX_CASE_TARGETS])
+    for question in case.open_questions:
+        key = execution.question_facts.get(question, question)
+        schema = execution.schemas.get(key)
+        reading = memory.said.get(key)
+        if schema is None or schema.question is None or reading is None or key in memory.asked:
+            continue
+        if reading.certainty == "stated" or reading.value == NOT_SURE:
+            continue
+        if key in facts.engine or key in facts.conversational:
+            continue
+        asked = execution.definition.question(schema.question)
+        if asked is None:
+            continue
+        lead = CLARIFY.get(memory.coverage(key))
+        if lead is None:
+            continue
+        wording = f"{lead} {asked.prompt[:1].lower()}{asked.prompt[1:]}"
+        return (
+            QuestionTarget("c1", key, schema.label, "ask", question=wording, prompt=asked.prompt),
+        )
+    return ()
 
 
 def asked_again(question: str, earlier: str, jurisdiction: bool = False) -> str:
@@ -740,6 +777,29 @@ def _before_acting(result: "_Turn", requirement: MissingRequirement) -> bool:
     return record is None or (
         record.last in ("hedged", "approximate") and record.times < MAX_UNANSWERED
     )
+
+
+def _covered_only(result: "_Turn", key: str) -> bool:
+    """Whether the conversation covers this fact only with an implied, uncertain or rough reading:
+    covered conversationally (its question isn't repeated as if unanswered), never satisfied for
+    what the deterministic checks or the Case record need."""
+    reading = result.memory.said.get(key)
+    return reading is not None and reading.certainty != "stated" and reading.value != NOT_SURE
+
+
+def _clarify(result: "_Turn", requirement: MissingRequirement) -> bool:
+    """Whether a fact the deterministic checks need, covered only by an implied, uncertain or rough
+    reading, is asked now: once (never asked before), never right after the founder said it, and
+    only once nothing they haven't spoken about is left to ask (found in the semantics pass: "the
+    supervisor talked to him twice" left the earlier action roughly verbal, and its question was
+    never asked, so "nothing on paper" never came)."""
+    if requirement.kind not in ("fact", "confirmation"):
+        return False
+    if not _covered_only(result, requirement.key):
+        return False
+    if requirement.key in result.said_now:
+        return False
+    return requirement.key not in result.memory.asked
 
 
 def _strictness(result: "_Turn") -> int:
@@ -1346,6 +1406,7 @@ class AiGateway:
                 answers={
                     f.fact_key: f.value for f in understanding.facts if f.source_turn == current
                 },
+                bare_answers=one_proposition(_previous_question(turn)),
             )
             # The current message touched these without stating them (hedged, inferred or
             # contradicted): what was said about them before no longer stands.
@@ -1534,7 +1595,9 @@ class AiGateway:
                 if result.trust is not None and not result.trust.answered
                 else set()
             )
-            optional = _case_targets(execution, case, evaluation, planned, unanswered | settled)
+            optional = _case_targets(
+                execution, case, evaluation, planned, unanswered | settled, result.memory
+            )
             return (*optional, *planned)
         # The founder answered this exact question with something else (or with what they don't
         # know), or left it unanswered too often: never the same question again at once (found
@@ -1549,10 +1612,17 @@ class AiGateway:
         confirming = requirement is None
         if requirement is None:
             requirement = next((r for r in askable if _before_acting(result, r)), None)
+        leads = BEFORE_ACTING
+        if requirement is None:
+            # What the checks need that the conversation covers only by implication or roughly.
+            requirement = next((r for r in askable if _clarify(result, r)), None)
+            leads = CLARIFY
         if requirement is None:
             # Nothing the checks need can be asked now: what the Case record still needs can.
             unanswered = {a.key for a in result.prior.asked if a.kind == "fact"}
-            optional = _case_targets(execution, case, evaluation, planned, unanswered | settled)
+            optional = _case_targets(
+                execution, case, evaluation, planned, unanswered | settled, result.memory
+            )
             return (*optional, *planned)
         if (
             requirement.kind == "jurisdiction"
@@ -1572,7 +1642,7 @@ class AiGateway:
             action_titles=titles,
             jurisdiction=company.jurisdiction.employment_jurisdiction,
             prompt=None if definition_question is None else definition_question.prompt,
-            lead=BEFORE_ACTING[result.coverage(requirement.key)] if confirming else None,
+            lead=leads[result.coverage(requirement.key)] if confirming else None,
         )
         earlier = result.memory.asked.get(
             MEMORY_JURISDICTION if requirement.kind == "jurisdiction" else requirement.key
@@ -1649,10 +1719,13 @@ class AiGateway:
             self.understanding, company, founder, [lbl for lbl in labels if lbl], telemetry,
             deadline, view.catalog, _previous_question(turn),
         )  # fmt: skip
-        # A bare answer can only answer the one question HeroOS just asked.
+        # A bare answer can only answer the one question HeroOS just asked, and only when that
+        # question asked one thing (never "new, or raised before?" or "was that the case?").
+        single = one_proposition(_previous_question(turn))
         answering = (
             asked_before[0].key
-            if len(asked_before) == 1 and asked_before[0].kind in ("fact", "confirm")
+            if len(asked_before) == 1
+            and (asked_before[0].kind == "confirm" or (asked_before[0].kind == "fact" and single))
             else None
         )
         understanding, dropped = check_evidence(

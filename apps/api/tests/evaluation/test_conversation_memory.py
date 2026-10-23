@@ -1001,3 +1001,85 @@ def test_an_approximate_answer_covers_its_question_only_as_rough(artifacts: Arti
     facts = evaluation(result).facts
     assert EXPLAIN not in facts.conversational and EXPLAIN not in facts.engine
     assert "opportunity to explain" not in result.reply
+
+
+# --- final ontology pass: conversationally covered is not workflow-satisfied ---------------------
+
+
+def test_an_implied_answer_the_checks_need_is_clarified_once(artifacts: Artifacts) -> None:
+    """Final ontology pass: a clearly implied answer covers its question in the conversation (it
+    isn't asked back at once, as if unsaid) but never satisfies what the checks need. Later, with
+    nothing unsaid left to ask, one focused question settles it; never a second time."""
+    chat = Remembering(artifacts)
+    narrated(chat, basis="inferred")
+    assert chat.memory.said[EXPLAIN].certainty == "implied"
+    later = aside(chat, "What should I prepare for the meeting?")
+    lead = "One thing you mentioned needs a plain answer before I can rely on it:"
+    assert lead in later.reply and later.reply.endswith("given opportunity to explain?")
+    assert EXPLAIN in chat.memory.asked
+    again = aside(chat, "And should I take notes?")
+    assert "opportunity to explain" not in again.reply
+
+
+def test_a_plainly_stated_answer_is_not_clarified_without_a_step(artifacts: Artifacts) -> None:
+    """Said plainly (noted), it waits for the step it serves (``_before_acting``)."""
+    chat = Remembering(artifacts)
+    narrated(chat)
+    later = aside(chat, "What should I prepare for the meeting?")
+    assert "opportunity to explain" not in later.reply
+
+
+def test_a_case_question_covered_only_by_implication_is_asked_once_in_its_own_words(
+    artifacts: Artifacts,
+) -> None:
+    """Found in the semantics pass: "the supervisor talked to him twice" left the earlier action
+    roughly verbal, so its Case question never came and "nothing on paper" never did. When nothing
+    else is open, the Case question is asked once, in the Case's own words."""
+    from types import SimpleNamespace
+
+    from app.assistant.gateway.memory import Reading
+    from app.assistant.gateway.service import CaseContext, _case_targets
+    from app.evaluation.model import CaseProgress, TrustedFactState
+
+    execution = artifacts.snapshot().execution("disciplinary")
+    assert execution is not None
+    case = CaseContext(
+        progress=CaseProgress(jurisdiction=None), view={}, open_questions=("incident.history",)
+    )
+    evaluation = SimpleNamespace(facts=TrustedFactState())
+
+    def offered(reading: Reading, asked: dict[str, AskRecord] | None = None) -> list[str | None]:
+        memory = ConversationMemory(said={"incident.history": reading}, asked=asked or {})
+        targets = _case_targets(execution, case, evaluation, (), {"incident.history"}, memory)  # type: ignore[arg-type]
+        return [t.question for t in targets]
+
+    assert offered(Reading("raised_before", 0, 0, "rough")) == [
+        "One thing you weren't sure about needs a plain answer before I can rely on it: had this "
+        "been raised with the employee before?"
+    ]
+    assert offered(Reading("raised_before", 0, 0, "implied"))[0].startswith(  # type: ignore[union-attr]
+        "One thing you mentioned needs a plain answer"
+    )
+    assert offered(Reading("raised_before", 0, 0, "stated")) == []  # said plainly: settled
+    asked = {"incident.history": AskRecord(1, "answered")}
+    assert offered(Reading("raised_before", 0, 0, "implied"), asked) == []  # once only
+
+
+def test_happened_before_is_recorded_never_asked(artifacts: Artifacts) -> None:
+    """Final ontology pass: that the conduct happened before is its own fact, never that it was
+    raised with the employee. It is noted when the founder says it; HeroOS doesn't ask it and the
+    Case's intake doesn't wait for it."""
+    words = "He did this last month too, and I still have the messages from then."
+    chat = OnThursday(artifacts)
+    result = chat.say(
+        words,
+        understood(
+            words, facts=[fact("history.previous_occurrence", "yes", "He did this last month too")]
+        ),
+    )
+    facts = evaluation(result).facts
+    assert facts.conversational["history.previous_occurrence"] == "yes"
+    assert "incident.history" not in facts.conversational
+    catalog = chat.provider.phase("understanding")[0].data["routing_catalog"]  # type: ignore[union-attr]
+    means = {f["key"]: f.get("means", "") for f in catalog["facts"]}
+    assert "whether anyone raised it" in means["history.previous_occurrence"]

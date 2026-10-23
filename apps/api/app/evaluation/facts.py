@@ -64,6 +64,13 @@ _QUALIFIERS: Final = re.compile(
     r"|perhaps|probably|possibly|sometimes|not\s+really|not\s+exactly|i\s+think|i\s+guess"
     r"|i\s+believe|i\s+suppose|more\s+or\s+less|in\s+a\s+way|not\s+sure|unsure)\b"
 )
+# The same without contrast words: what makes a reading's own words partial or doubtful. "I've
+# spoken to him twice, but only verbally" states both plainly (a clarification, not a doubt).
+_PARTIAL: Final = re.compile(
+    r"\b(?:except|unless|partly|partially|sort\s+of|kind\s+of|kinda|maybe|perhaps|probably"
+    r"|possibly|sometimes|not\s+really|not\s+exactly|i\s+think|i\s+guess|i\s+believe|i\s+suppose"
+    r"|more\s+or\s+less|in\s+a\s+way|not\s+sure|unsure)\b"
+)
 # The hedges among them, which count anywhere in the founder's sentence (a contrast word such as
 # "but" only qualifies the words it is part of).
 _HEDGES: Final = re.compile(
@@ -461,6 +468,30 @@ def proposition(message: str, excerpt: str) -> str:
     return " ".join(k for k in kept if k)
 
 
+# A question that offers an alternative ("Is it new, or has it been raised before?", "or was this
+# the first time?") or points back at something else ("Was that the case?"): a bare yes or no to
+# it can't be bound to one proposition. "At work, or while carrying out work duties?" offers one.
+_ALTERNATIVE: Final = re.compile(
+    r"\bor\s+(?:is|was|are|were|has|had|have|did|does|do|not)\b|\bor\s+(?:it|this)\s+is\b"
+)
+_POINTS_BACK: Final = re.compile(
+    r"^\W*(?:and\s+|so\s+)?(?:was|is|were|are)\s+(?:that|this|it)\s+(?:the\s+case|right|correct|true"
+    r"|so)\b"
+)
+
+
+def one_proposition(question: str | None) -> bool:
+    """Whether HeroOS's last question asked one thing a bare yes or no can answer: one question,
+    no alternative, never a reference back (final ontology pass: "Was that the case?", "Is this
+    new, or has it come up before?")."""
+    if question is None:
+        return True
+    text = normalized(question)
+    if text.count("?") > 1:
+        return False
+    return _ALTERNATIVE.search(text) is None and _POINTS_BACK.search(text) is None
+
+
 MAX_LEADING_CHARS: Final = 400
 # A plain yes or no opening a longer answer: it ends at punctuation, a dash, or the conjunction
 # that goes on ("No. The rule was never explained to her", "Yes, but only once", "No and we
@@ -548,10 +579,17 @@ def contradicted(
         return True
     if reading not in (NOT_SURE, "no", "false") and _HEARSAY.search(around):
         return True
-    qualified = _QUALIFIERS.search(words) is not None or _HEDGES.search(around) is not None
+    qualified = _PARTIAL.search(words) is not None or _HEDGES.search(around) is not None
     if reading in ("yes", "true", "y") or reading.startswith("yes"):
-        return _NEGATION.search(words) is not None or qualified
+        return _NEGATION.search(_main_clause(words)) is not None or qualified
     return qualified and reading not in ("no", "false", NOT_SURE)
+
+
+def _main_clause(words: str) -> str:
+    """The excerpt's first statement: "spoke to him twice, but never in writing" says he was spoken
+    to (the "never" is about writing); "I did NOT speak to him, but ..." says he wasn't."""
+    cut = _CLAUSE_BREAK.search(words.strip(" ,;:-"))
+    return words if cut is None else words.strip(" ,;:-")[: cut.start()]
 
 
 # --- the pipeline ------------------------------------------------------------------------------
@@ -622,6 +660,7 @@ def trust_facts(
     blueprint: Mapping[str, object],
     answered_in_words: bool = False,
     answers: Mapping[str, str] | None = None,
+    bare_answers: bool = True,
 ) -> TrustOutcome:
     """This turn's facts by trust level, from what the founder said and the trusted prior state.
 
@@ -629,7 +668,8 @@ def trust_facts(
     or a longer reply that opens with it ("No. The rule was never explained to her") when the
     understanding read the message as answering that question (``answered_in_words``) and read
     the same answer for its fact from it (``answers``: its readings of the current message, by
-    fact key, before any check; ``answer_in_words``).
+    fact key, before any check; ``answer_in_words``). ``bare_answers``: HeroOS's last question
+    asked one proposition (``one_proposition``); otherwise a yes or no answers no fact question.
     """
     schemas = execution.schemas
     engine: dict[str, Value] = {}
@@ -648,7 +688,7 @@ def trust_facts(
         asked = prior.asked[0]
         schema = schemas.get(asked.key)
         read = (answers or {}).get(asked.key) if answered_in_words else None
-        if asked.kind == "fact" and schema is not None:
+        if asked.kind == "fact" and schema is not None and bare_answers:
             answer = canonical(schema, message)
             if answer is None:
                 answer = answer_in_words(schema, message, read)

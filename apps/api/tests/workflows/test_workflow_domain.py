@@ -512,7 +512,7 @@ def test_submissions_become_employer_turns_with_neutral_acknowledgements() -> No
     # Items follow the question order; answers read back as given.
     assert [(i.key, i.display) for i in first.items] == [
         ("incident.date", "Not sure"),
-        ("incident.history", "This is a new issue"),
+        ("incident.history", "No, it hadn't been raised with them before"),
     ]
     assert ("incident.date", "10 October 2026") in [(i.key, i.display) for i in second.items]
     assert [(i.key, i.display) for i in third.items] == [

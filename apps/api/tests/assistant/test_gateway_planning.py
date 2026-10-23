@@ -325,12 +325,12 @@ def test_a_question_target_carries_what_its_fact_means_exactly(bundle: Knowledge
     understanding reads (the history question asks whether it was raised, never whether it
     happened before)."""
     plan = plan_turn(bundle, proposal(topics=("formal_warning",)), company(FED))
-    target = QuestionTarget("c1", "incident.history", "New or previously raised", "ask")
+    target = QuestionTarget("c1", "incident.history", "Raised with the employee before", "ask")
     plan = replace(plan, targets=(target,))
     means = "Earlier occasions: raised with the employee before."
     view = knowledge_view(bundle, plan, {"incident.history": means})
     assert view.data["question_targets"] == [
-        {"id": "c1", "about": "New or previously raised", "mode": "ask", "means": means}
+        {"id": "c1", "about": "Raised with the employee before", "mode": "ask", "means": means}
     ]
     assert means in view.texts
     assert "means" not in json.dumps(knowledge_view(bundle, plan).data["question_targets"])
