@@ -331,6 +331,9 @@ def test_a_reask_is_answered_directly_never_as_yes_thats_right(
          "check with him", True),
         ("no", "nobody saw it", "Not that I know of, nobody saw it", True),
         ("yes", "there were messages", "I was told there were messages", True),
+        # Hearsay never weakens a no: the founder heard about it later because nobody saw it.
+        ("no", "Nobody actually saw it",
+         "Nobody actually saw it. I was told about it afterwards", False),
         ("no", "he hasn't been in touch", "I don't think he has been in touch", True),
         # Plain statements stay statements; a fact about the employee being told is not hearsay.
         ("yes", "he was told the rules", "He was told the rules last month.", False),
@@ -374,3 +377,28 @@ def test_saying_they_dont_know_is_said_plainly_whatever_the_readings_confidence(
     result = trust(execution, "i don't know to be honest", stated=stated)
     assert result.facts.conversational["employee_aware_of_relevant_policy"] == "not_sure"
     assert "employee_aware_of_relevant_policy" not in result.facts.engine
+
+
+@pytest.mark.parametrize(
+    ("correction", "explicit"),
+    [
+        ("Nobody actually saw it.", True),
+        ("I don't think anyone actually saw it.", False),  # hedged: still voids
+    ],
+)
+def test_a_correction_voids_the_trusted_value_even_when_hedged(
+    execution: WorkflowExecution, correction: str, explicit: bool
+) -> None:
+    """Found in the final run: a correction read as hedged left the old trusted value standing."""
+    prior = PriorState(engine={"evidence.witnesses": "yes"})
+    stated = [StatedFact("evidence.witnesses", "no", correction, explicit, True)]
+    result = trust(execution, correction, stated=stated, prior=prior)
+    assert "evidence.witnesses" not in result.facts.engine
+    assert ("evidence.witnesses" in result.facts.conversational) is explicit
+
+
+def test_the_same_value_hedged_again_keeps_the_trusted_one(execution: WorkflowExecution) -> None:
+    prior = PriorState(engine={"evidence.witnesses": "yes"})
+    stated = [StatedFact("evidence.witnesses", "yes", "I think two of them saw it", False, True)]
+    result = trust(execution, "I think two of them saw it", stated=stated, prior=prior)
+    assert result.facts.engine["evidence.witnesses"] == "yes"

@@ -26,8 +26,8 @@
 
   Earlier engine-trusted values come back through the encrypted continuation
   (``app.evaluation.continuation``). HeroOS's own words are never a source.
-  The newest explicit founder statement controls: a different value stated
-  now voids the trusted one until it is confirmed again (stricter, never
+  The newest founder statement controls: a different value stated now, even
+  hedged, voids the trusted one until it is confirmed again (stricter, never
   looser).
 """
 
@@ -229,13 +229,17 @@ _ROUGHLY: Final = re.compile(
 )
 
 
-# Words that say the founder doesn't actually know (whatever the reading, "no" included): "not
-# that I know of" is not a definite no; "I was told" or "I'd need to check" is not a fact.
-_UNKNOWING: Final = re.compile(
+# Doubt about what the founder knows, whatever the reading ("no" included): "not that I know of" is
+# not a definite no, and "I'd need to check" is not a fact.
+_DOUBT: Final = re.compile(
     r"\b(?:not\s+that\s+i\s+know|as\s+far\s+as\s+i\s+know|i\s+don'?t\s+think|i\s+do\s+not\s+think"
-    r"|(?:need|have|got)\s+to\s+check|(?:i|we)\s+(?:was|were|have\s+been|'ve\s+been)\s+told"
-    r"|i'?m\s+told|i\s+heard|apparently|supposedly|i\s+reckon"
-    r"|not\s+(?:100%|a\s+hundred\s+percent|certain))"
+    r"|(?:need|have|got)\s+to\s+check|not\s+(?:100%|a\s+hundred\s+percent|certain))"
+)
+# Hearsay weakens a claim that something happened ("I was told there were messages"), never a
+# "no" ("Nobody saw it. I was told about it afterwards" is a plain no: found in the final run).
+_HEARSAY: Final = re.compile(
+    r"\b(?:(?:i|we)\s+(?:was|were|have\s+been|'ve\s+been)\s+told|i'?m\s+told|i\s+heard"
+    r"|apparently|supposedly|i\s+reckon)\b"
 )
 
 
@@ -288,7 +292,9 @@ def contradicted(
     around = normalized(context) if context else words
     if schema is not None and schema.kind == "count" and _ROUGHLY.search(words):
         return True
-    if reading != NOT_SURE and _UNKNOWING.search(around):
+    if reading != NOT_SURE and _DOUBT.search(around):
+        return True
+    if reading not in (NOT_SURE, "no", "false") and _HEARSAY.search(around):
         return True
     qualified = _QUALIFIERS.search(words) is not None or _HEDGES.search(around) is not None
     if reading in ("yes", "true", "y") or reading.startswith("yes"):
@@ -422,15 +428,10 @@ def trust_facts(
     proposed: list[str] = []
     for key, fact in newest.items():
         schema = schemas.get(key)
-        # Saying they don't know is said plainly, whatever confidence the reading carries (the
-        # evidence check only keeps "not sure" from words that say so).
-        not_known = schema is not None and canonical(schema, fact.value) == NOT_SURE
-        if (not fact.explicit and not not_known) or contradicted(fact.value, fact.excerpt, schema):
-            proposed.append(key)
-            continue
-        conversational[key] = fact.value
-        # The founder's newest explicit statement controls: a different value voids the
-        # trusted one until it is confirmed again.
+        # The founder's newest statement controls: a different value voids the trusted one until
+        # it is confirmed again, said plainly or not (a correction that reduces certainty reduces
+        # it; found in the final run: "Nobody actually saw it", read as hedged, left "witnesses:
+        # yes" trusted). Stricter only: nothing becomes trusted here.
         if (
             fact.current
             and key in engine
@@ -440,6 +441,13 @@ def trust_facts(
         ):
             engine.pop(key)
             sources.pop(key, None)
+        # Saying they don't know is said plainly, whatever confidence the reading carries (the
+        # evidence check only keeps "not sure" from words that say so).
+        not_known = schema is not None and canonical(schema, fact.value) == NOT_SURE
+        if (not fact.explicit and not not_known) or contradicted(fact.value, fact.excerpt, schema):
+            proposed.append(key)
+            continue
+        conversational[key] = fact.value
 
     for key, schema in schemas.items():
         if schema.kind == "blueprint" and schema.blueprint is not None:

@@ -283,6 +283,12 @@ _FRAMES: Final[tuple[tuple[Check, str], ...]] = (
         rf"\bI(?:'ve|\s+have)?(?:\s+(?:just|already|now|also))?\s+{CLAIM_DONE}\b"
         rf"(?!\s+my\b){_gap(4)}\s+{TARGET}",
     ),
+    # "...so I've recorded it." (found in the final run: no case word after the verb)
+    (
+        "action_claim",
+        r"\bI(?:'ve|\s+have)(?:\s+(?:just|already|now|also))?\s+(?:recorded|logged|saved|filed)"
+        r"\s+(?:it|that|this)\b",
+    ),
     # "I'll update the case record now."
     (
         "action_claim",
