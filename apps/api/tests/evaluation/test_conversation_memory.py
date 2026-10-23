@@ -1054,13 +1054,20 @@ def test_a_case_question_covered_only_by_implication_is_asked_once_in_its_own_wo
         return [t.question for t in targets]
 
     assert offered(Reading("raised_before", 0, 0, "rough")) == [
-        "One thing you weren't sure about needs a plain answer before I can rely on it: had this "
-        "been raised with the employee before?"
+        "One thing you mentioned needs a plain answer before I can rely on it: had this been "
+        "raised with the employee before?"
     ]
-    assert offered(Reading("raised_before", 0, 0, "implied"))[0].startswith(  # type: ignore[union-attr]
-        "One thing you mentioned needs a plain answer"
+    assert offered(Reading("raised_before", 0, 0, "uncertain"))[0].startswith(  # type: ignore[union-attr]
+        "One thing you weren't sure about needs a plain answer"
     )
     assert offered(Reading("raised_before", 0, 0, "stated")) == []  # said plainly: settled
+    # A rough date covers its question: asking for the day reads as asking again.
+    rough_date = Reading("2026-10-12", 0, 0, "rough")
+    memory = ConversationMemory(said={"incident.date": rough_date})
+    dated_case = CaseContext(
+        progress=CaseProgress(jurisdiction=None), view={}, open_questions=("incident.date",)
+    )
+    assert _case_targets(execution, dated_case, evaluation, (), {"incident.date"}, memory) == ()  # type: ignore[arg-type]
     asked = {"incident.history": AskRecord(1, "answered")}
     assert offered(Reading("raised_before", 0, 0, "implied"), asked) == []  # once only
 

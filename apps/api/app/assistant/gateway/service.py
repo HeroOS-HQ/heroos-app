@@ -72,8 +72,10 @@ from app.assistant.gateway.memory import (
     COVERED,
     MAX_UNANSWERED,
     STATED,
+    Certainty,
     ConversationMemory,
     Coverage,
+    Reading,
     carry,
     conversation_view,
     provenance,
@@ -156,6 +158,7 @@ from app.evaluation.presentation import (
 )
 from app.evaluation.snapshot import (
     ExecutionSnapshot,
+    FactSchema,
     WorkflowExecution,
     knowledge_only_runtime,
 )
@@ -343,13 +346,10 @@ BEFORE_ACTING: Final[Mapping[Coverage, str]] = {
 # A fact the founder only implied, gave without certainty or roughly covers its question in the
 # conversation (never asked as if they hadn't spoken about it) but never satisfies what the
 # deterministic checks or the Case record need: once it is needed, one focused question settles it.
-CLARIFY: Final[Mapping[Coverage, str]] = {
-    "answered_from_narrative": (
-        "One thing you mentioned needs a plain answer before I can rely on it:"
-    ),
-    "answered_uncertain": (
-        "One thing you weren't sure about needs a plain answer before I can rely on it:"
-    ),
+CLARIFY: Final[Mapping[Certainty, str]] = {
+    "implied": "One thing you mentioned needs a plain answer before I can rely on it:",
+    "rough": "One thing you mentioned needs a plain answer before I can rely on it:",
+    "uncertain": "One thing you weren't sure about needs a plain answer before I can rely on it:",
 }
 QUESTION_WORDS: Final = frozenset({"whether", "what", "which", "how", "when", "who", "where", "if"})
 ASKED_LABELS: Final[Mapping[str, str]] = {
@@ -670,16 +670,12 @@ def _case_targets(
         reading = memory.said.get(key)
         if schema is None or schema.question is None or reading is None or key in memory.asked:
             continue
-        if reading.certainty == "stated" or reading.value == NOT_SURE:
-            continue
-        if key in facts.engine or key in facts.conversational:
+        if not _clarifiable(reading, schema) or key in facts.engine or key in facts.conversational:
             continue
         asked = execution.definition.question(schema.question)
         if asked is None:
             continue
-        lead = CLARIFY.get(memory.coverage(key))
-        if lead is None:
-            continue
+        lead = CLARIFY[reading.certainty]
         wording = f"{lead} {asked.prompt[:1].lower()}{asked.prompt[1:]}"
         return (
             QuestionTarget("c1", key, schema.label, "ask", question=wording, prompt=asked.prompt),
@@ -779,15 +775,18 @@ def _before_acting(result: "_Turn", requirement: MissingRequirement) -> bool:
     )
 
 
-def _covered_only(result: "_Turn", key: str) -> bool:
-    """Whether the conversation covers this fact only with an implied, uncertain or rough reading:
-    covered conversationally (its question isn't repeated as if unanswered), never satisfied for
-    what the deterministic checks or the Case record need."""
-    reading = result.memory.said.get(key)
-    return reading is not None and reading.certainty != "stated" and reading.value != NOT_SURE
+def _clarifiable(reading: Reading | None, schema: FactSchema | None) -> bool:
+    """Whether a reading covers its question only conversationally (implied, uncertain or rough):
+    never satisfied for what the deterministic checks or the Case record need. A rough date isn't
+    (found live: "last week", then a question asking for the day, read as asking again)."""
+    if reading is None or reading.certainty == "stated" or reading.value == NOT_SURE:
+        return False
+    return not (reading.certainty == "rough" and schema is not None and schema.kind == "date")
 
 
-def _clarify(result: "_Turn", requirement: MissingRequirement) -> bool:
+def _clarify(
+    result: "_Turn", requirement: MissingRequirement, execution: WorkflowExecution
+) -> bool:
     """Whether a fact the deterministic checks need, covered only by an implied, uncertain or rough
     reading, is asked now: once (never asked before), never right after the founder said it, and
     only once nothing they haven't spoken about is left to ask (found in the semantics pass: "the
@@ -795,11 +794,19 @@ def _clarify(result: "_Turn", requirement: MissingRequirement) -> bool:
     never asked, so "nothing on paper" never came)."""
     if requirement.kind not in ("fact", "confirmation"):
         return False
-    if not _covered_only(result, requirement.key):
+    schema = execution.schemas.get(requirement.key)
+    if not _clarifiable(result.memory.said.get(requirement.key), schema):
         return False
     if requirement.key in result.said_now:
         return False
     return requirement.key not in result.memory.asked
+
+
+def _lead(result: "_Turn", key: str) -> str:
+    """A clarification's lead-in, by how the founder said it (never "weren't sure" for a rough or
+    implied answer)."""
+    reading = result.memory.said.get(key)
+    return CLARIFY[reading.certainty if reading is not None else "uncertain"]
 
 
 def _strictness(result: "_Turn") -> int:
@@ -1612,11 +1619,11 @@ class AiGateway:
         confirming = requirement is None
         if requirement is None:
             requirement = next((r for r in askable if _before_acting(result, r)), None)
-        leads = BEFORE_ACTING
+        clarifying = False
         if requirement is None:
             # What the checks need that the conversation covers only by implication or roughly.
-            requirement = next((r for r in askable if _clarify(result, r)), None)
-            leads = CLARIFY
+            requirement = next((r for r in askable if _clarify(result, r, execution)), None)
+            clarifying = True
         if requirement is None:
             # Nothing the checks need can be asked now: what the Case record still needs can.
             unanswered = {a.key for a in result.prior.asked if a.kind == "fact"}
@@ -1642,7 +1649,9 @@ class AiGateway:
             action_titles=titles,
             jurisdiction=company.jurisdiction.employment_jurisdiction,
             prompt=None if definition_question is None else definition_question.prompt,
-            lead=leads[result.coverage(requirement.key)] if confirming else None,
+            lead=_lead(result, requirement.key)
+            if clarifying
+            else (BEFORE_ACTING[result.coverage(requirement.key)] if confirming else None),
         )
         earlier = result.memory.asked.get(
             MEMORY_JURISDICTION if requirement.kind == "jurisdiction" else requirement.key
