@@ -19,6 +19,7 @@ from app.evaluation.facts import (
     parse_count,
     parse_insistence,
     parse_yes_no,
+    says_not_known,
     trust_facts,
 )
 from app.evaluation.model import TwoState
@@ -449,3 +450,11 @@ def test_an_answer_in_more_words_binds_only_with_the_same_reading_and_no_doubt(
 ) -> None:
     schema = execution.schemas["employee_aware_of_relevant_policy"]
     assert answer_in_words(schema, message, read) == expected
+
+
+@pytest.mark.parametrize(
+    "text", ["I can't confirm which entity employs him yet.", "We cannot confirm that today."]
+)
+def test_saying_they_cant_confirm_is_saying_they_dont_know(text: str) -> None:
+    """Found in the final pass: "I can't confirm the entity yet" was asked again at once."""
+    assert says_not_known(text)

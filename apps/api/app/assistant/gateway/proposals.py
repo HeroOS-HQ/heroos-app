@@ -51,9 +51,11 @@ INTENTS: Final[tuple[Intent, ...]] = (
 )  # fmt: skip
 # How the current message relates to the question HeroOS asked last turn (the model's reading;
 # it only steers what HeroOS asks next and how it acknowledges, never a fact).
-PreviousAnswer = Literal["answered", "does_not_know", "not_answered", "no_question"]
+PreviousAnswer = Literal[
+    "answered", "does_not_know", "does_not_apply", "not_answered", "no_question"
+]
 PREVIOUS_ANSWERS: Final[tuple[PreviousAnswer, ...]] = (
-    "answered", "does_not_know", "not_answered", "no_question",
+    "answered", "does_not_know", "does_not_apply", "not_answered", "no_question",
 )  # fmt: skip
 Confidence = Literal["high", "medium", "low"]
 CONFIDENCES: Final[tuple[Confidence, ...]] = ("high", "medium", "low")

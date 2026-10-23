@@ -196,7 +196,7 @@ def encode(checkpoint: Checkpoint) -> dict[str, object]:
     if checkpoint.noted:
         data["noted"] = dict(sorted(checkpoint.noted.items())[:MAX_FACTS])
     memory = checkpoint.memory
-    if memory.said or memory.asked or memory.turns:
+    if memory.said or memory.asked or memory.turns or memory.told:
         data["memory"] = {
             "said": {
                 k: [r.value, r.turn, r.words]
@@ -206,6 +206,7 @@ def encode(checkpoint: Checkpoint) -> dict[str, object]:
                 k: [r.times, r.last] for k, r in list(memory.asked.items())[-MAX_REMEMBERED:]
             },
             "turns": memory.turns,
+            "told": list(memory.told[-MAX_REMEMBERED:]),
         }
     if len(_json(data)) > MAX_CHECKPOINT_BYTES:  # pragma: no cover - bounded by the limits above
         raise ValueError("checkpoint exceeds its bound")
@@ -272,15 +273,20 @@ def _memory(data: object) -> ConversationMemory | None:
     if not isinstance(data, dict) or set(data) not in (
         {"said", "asked"},
         {"said", "asked", "turns"},
+        {"said", "asked", "turns", "told"},
     ):
         return None
     said, asked, turns = data["said"], data["asked"], data.get("turns", 0)
+    told = data.get("told", [])
     if (
         not isinstance(said, dict)
         or len(said) > MAX_REMEMBERED
         or not isinstance(asked, dict)
         or len(asked) > MAX_REMEMBERED
         or not _count(turns, 0, MAX_TURNS)
+        or not isinstance(told, list)
+        or len(told) > MAX_REMEMBERED
+        or not all(_key(t) for t in told)
     ):
         return None
     readings: dict[str, Reading] = {}
@@ -300,7 +306,7 @@ def _memory(data: object) -> ConversationMemory | None:
         ):
             return None
         records[key] = AskRecord(entry[0], entry[1])
-    return ConversationMemory(said=readings, asked=records, turns=turns)
+    return ConversationMemory(said=readings, asked=records, turns=turns, told=tuple(told))
 
 
 def decode(data: object) -> Checkpoint | None:

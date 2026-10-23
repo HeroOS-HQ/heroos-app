@@ -40,11 +40,16 @@ JURISDICTION: Final = "jurisdiction"
 UNKNOWN_WORDS: Final = -1
 
 # "hedged": the founder answered, but not with certainty ("I think so", "sort of");
-# "approximate": they answered only roughly or in part ("last week"), with no doubt in it.
-Outcome = Literal["pending", "answered", "not_sure", "unanswered", "hedged", "approximate"]
+# "approximate": they answered only roughly or in part ("last week"), with no doubt in it;
+# "not_applicable": they said the question doesn't fit their situation ("n/a, he never came in").
+Outcome = Literal[
+    "pending", "answered", "not_sure", "unanswered", "hedged", "approximate", "not_applicable"
+]
 OUTCOMES: Final[tuple[Outcome, ...]] = (
-    "pending", "answered", "not_sure", "unanswered", "hedged", "approximate",
+    "pending", "answered", "not_sure", "unanswered", "hedged", "approximate", "not_applicable",
 )  # fmt: skip
+# Never asked again after one of these replies.
+_DONE: Final = frozenset({"answered", "not_sure", "not_applicable"})
 # Asked this many times with any of these replies, a question isn't asked again.
 _ONCE_MORE: Final = frozenset({"unanswered", "hedged", "approximate", "answered"})
 
@@ -73,13 +78,18 @@ class ConversationMemory:
     asked: Mapping[str, AskRecord] = field(default_factory=dict)
     # Founder messages before the current one: the current message is number ``turns``.
     turns: int = 0
+    # The step results HeroOS's replies already explained ("<action>:<disposition>"), so a reply
+    # never explains the same one again (found in the final run: the same "can't take that step
+    # yet" in every reply).
+    told: tuple[str, ...] = ()
 
     def settled(self) -> frozenset[str]:
-        """What is never asked again: said, answered, not known, or asked often enough."""
+        """What is never asked again: said, answered, not known, not applicable, or asked often
+        enough."""
         done = {
             key
             for key, record in self.asked.items()
-            if record.last in ("answered", "not_sure")
+            if record.last in _DONE
             or (record.last in _ONCE_MORE and record.times >= MAX_UNANSWERED)
         }
         return frozenset({*self.said, *done})
@@ -94,7 +104,7 @@ class ConversationMemory:
         the server can't rely on), uncertainly, roughly, or not at all."""
         record = self.asked.get(key)
         return record is not None and (
-            record.last == "not_sure"
+            record.last in ("not_sure", "not_applicable")
             or (record.last in _ONCE_MORE and record.times >= MAX_UNANSWERED)
         )
 
@@ -219,6 +229,7 @@ def resolve(
     sources: Mapping[str, tuple[int, int]] | None = None,
     uncertain: Collection[str] = (),
     dropped: Collection[str] = (),
+    does_not_apply: bool = False,
 ) -> ConversationMemory:
     """The memory after the founder's message: how it related to what HeroOS asked last turn.
 
@@ -228,7 +239,8 @@ def resolve(
     where the ones read this turn came from (``sources``, from ``provenance``); ``hedged``:
     facts the current message touched without stating them, ``uncertain`` the ones among them
     with words of doubt (the others it gave only roughly); ``dropped``: earlier readings it no
-    longer lets stand (``superseded``).
+    longer lets stand (``superseded``); ``does_not_apply``: the founder said the question doesn't
+    fit their situation.
     """
     asked = dict(memory.asked)
     single = len(previous) == 1
@@ -252,6 +264,8 @@ def resolve(
             outcome = "answered"
         elif does_not_know and single:
             outcome = "not_sure"
+        elif does_not_apply and single:
+            outcome = "not_applicable"
         elif key in hedged:
             outcome = "hedged" if key in uncertain else "approximate"
         else:
@@ -268,12 +282,18 @@ def resolve(
         else:
             kept[key] = Reading(value, memory.turns)
     return ConversationMemory(
-        said=_bounded(kept), asked=_bounded(asked), turns=min(memory.turns + 1, MAX_TURNS)
+        said=_bounded(kept),
+        asked=_bounded(asked),
+        turns=min(memory.turns + 1, MAX_TURNS),
+        told=memory.told,
     )
 
 
-def record(memory: ConversationMemory, asked: Sequence[tuple[str, str]]) -> ConversationMemory:
-    """The memory after HeroOS's reply: the questions it asked now (kind, key)."""
+def record(
+    memory: ConversationMemory, asked: Sequence[tuple[str, str]], told: Sequence[str] = ()
+) -> ConversationMemory:
+    """The memory after HeroOS's reply: the questions it asked now (kind, key), and the step
+    results it explained (``told``)."""
     questions = dict(memory.asked)
     for kind, key in asked:
         if kind == "insistence":
@@ -281,7 +301,10 @@ def record(memory: ConversationMemory, asked: Sequence[tuple[str, str]]) -> Conv
         key = JURISDICTION if kind == "jurisdiction" else key
         earlier = questions.pop(key, None)
         questions[key] = AskRecord((0 if earlier is None else earlier.times) + 1, "pending")
-    return ConversationMemory(said=memory.said, asked=_bounded(questions), turns=memory.turns)
+    explained = [*memory.told, *(t for t in told if t not in memory.told)][-MAX_REMEMBERED:]
+    return ConversationMemory(
+        said=memory.said, asked=_bounded(questions), turns=memory.turns, told=tuple(explained)
+    )
 
 
 REPLIES: Final[Mapping[Outcome, str]] = {
@@ -294,6 +317,10 @@ REPLIES: Final[Mapping[Outcome, str]] = {
     "approximate": (
         "answered it only roughly or in part (acknowledge what they gave as they gave it; they "
         "weren't uncertain, so never say they were)"
+    ),
+    "not_applicable": (
+        "said the question doesn't fit their situation (accept that plainly; never ask it again "
+        "or say their reply doesn't count)"
     ),
 }
 

@@ -201,3 +201,20 @@ def test_a_carried_reading_keeps_where_it_came_from() -> None:
     assert carried.said[KEY] == Reading("no", 2, 1)
     new = after(ConversationMemory(turns=5), (), said={KEY: "no"})  # noted before sources existed
     assert new.said[KEY] == Reading("no", 5, UNKNOWN_WORDS)
+
+
+def test_a_question_that_doesnt_fit_is_never_asked_again() -> None:
+    """ "n/a, he never came in": the founder said the question doesn't fit; it is accepted, never
+    asked again, and never treated as an answer (the safeguard still holds the step)."""
+    memory = after(ASKED, (Asked("fact", KEY),), does_not_apply=True)
+    assert memory.asked[KEY] == AskRecord(1, "not_applicable")
+    assert memory.asked_enough(KEY) and KEY in memory.settled() and KEY not in memory.said
+    view = conversation_view(None, LABELS, facts(), memory, (Asked("fact", KEY),))
+    assert "doesn't fit" in view["last_question"]["founder_reply"]  # type: ignore[index]
+
+
+def test_the_step_results_already_explained_are_remembered_once() -> None:
+    memory = record(ConversationMemory(), [], told=["opt-warning:unknown"])
+    memory = record(memory, [], told=["opt-warning:unknown", "opt-dismissal:block"])
+    assert memory.told == ("opt-warning:unknown", "opt-dismissal:block")
+    assert after(memory, ()).told == memory.told  # the founder's message keeps it

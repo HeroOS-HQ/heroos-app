@@ -667,3 +667,28 @@ def test_a_question_answered_in_the_founders_own_words_is_not_asked_again(
             later, understood(later, pathway="less_serious", topics=["workplace_reminder"], turn=0)
         )
         assert POLICY_QUESTION.lower()[5:] not in reply.reply.lower()
+
+
+def test_a_step_already_explained_is_marked_so_the_reply_doesnt_repeat_it(
+    artifacts: Artifacts,
+) -> None:
+    """Found in the final run: the same "you can't take that step yet" in every reply. The
+    response phase sees which step results an earlier reply already explained."""
+    chat = Remembering(artifacts)
+    warning(chat)
+    steps = chat.shown()["heroos_outcome"]["steps"]
+    assert all("already_told" not in step for step in steps)
+    aside(chat, "What else should I do?")
+    steps = chat.shown()["heroos_outcome"]["steps"]
+    assert steps and all(step.get("already_told") is True for step in steps)
+
+
+def test_a_question_the_founder_says_doesnt_fit_is_not_asked_again(artifacts: Artifacts) -> None:
+    chat = Remembering(artifacts)
+    first = warning(chat)
+    assert first.reply.endswith(EXPLAIN_QUESTION)
+    result = aside(chat, "n/a, that doesn't really fit here.", previous="does_not_apply")
+    assert EXPLAIN_QUESTION not in result.reply
+    assert disposition(result) == "block"  # the safeguard still holds the step
+    for later in ("What else should I do?", "OK."):
+        assert EXPLAIN_QUESTION.lower()[6:] not in aside(chat, later).reply.lower()

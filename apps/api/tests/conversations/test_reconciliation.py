@@ -148,7 +148,7 @@ def concurrent_turn(
     message: str,
     proposal: Any,
     action: Callable[[], None],
-    targets: tuple[str, ...] = ("q1",),
+    targets: tuple[str, ...] = (),
 ) -> tuple[Any, ScriptedProvider]:
     chat = ScriptedProvider(proposal, response(SAFE, list(targets)))
     service = AskConversations(

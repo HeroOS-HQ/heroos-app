@@ -1284,6 +1284,7 @@ class AiGateway:
             sources=sources,
             uncertain=uncertain,
             dropped=dropped,
+            does_not_apply=understanding.previous_answer == "does_not_apply",
         )  # fmt: skip
         return _Turn(evaluation, card, trust, prior, reconfirm, case, memory)
 
@@ -1299,9 +1300,11 @@ class AiGateway:
         still needs (chat-first) and the methodology's, for the reply to choose from."""
         evaluation = result.evaluation
         execution = None if evaluation.workflow is None else snapshot.execution(evaluation.workflow)
-        settled = _settled(result)
         # Never what the conversation already covered (found live: a fact said early on, or one
-        # the founder said they don't know, was asked again and again).
+        # the founder said they don't know, was asked again and again), and never an optional
+        # question asked before, whatever the reply (found in the final run: the same optional
+        # question asked again a few turns later, in other words).
+        settled = _settled(result) | frozenset(result.memory.asked)
         planned = tuple(t for t in plan.targets if t.fact_key not in settled)
         if execution is None:
             return planned
@@ -1493,7 +1496,7 @@ class AiGateway:
                 plan, targets=tuple(t for t in plan.targets if t.question is None)
             )
         knowledge = knowledge_view(bundle, plan)
-        decided, decided_texts = outcome_view(result.evaluation, result.card)
+        decided, decided_texts = outcome_view(result.evaluation, result.card, result.memory.told)
         case_view, case_texts = (
             ({}, ()) if turn.case is None else turn.case.model_view(bundle)
         )  # fmt: skip
@@ -1930,7 +1933,11 @@ class AiGateway:
             hypothetical_actions=tuple(a.action for a in evaluation.actions if a.hypothetical),
         )
         next_state = self._next_state(result, asked)
-        memory = record(result.memory, [(t.kind, t.fact_key) for t in asked if t.fact_key])
+        memory = record(
+            result.memory,
+            [(t.kind, t.fact_key) for t in asked if t.fact_key],
+            told=[f"{a.action}:{a.disposition}" for a in evaluation.actions],
+        )
         return GatewayReply(
             reply=text,
             safe_next_step=step,

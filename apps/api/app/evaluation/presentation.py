@@ -28,6 +28,7 @@ requested, assigned, submitted or will respond (M2-NEW-09 owns that).
 """
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Final, Literal
 
@@ -311,9 +312,13 @@ OUTCOME_RULES: Final = (
 
 
 def outcome_view(
-    evaluation: ConversationEvaluation, card: Outcome | None
+    evaluation: ConversationEvaluation, card: Outcome | None, told: Collection[str] = ()
 ) -> tuple[dict[str, object] | None, tuple[str, ...]]:
-    """The minimized result the response phase may phrase, and its texts (for grounding)."""
+    """The minimized result the response phase may phrase, and its texts (for grounding).
+
+    ``told``: the step results earlier replies already explained ("<action>:<disposition>"):
+    such a step is marked, so the reply doesn't explain it again.
+    """
     if card is None:
         return None, ()
     if card.kind == "unavailable":
@@ -332,6 +337,7 @@ def outcome_view(
             "result": SPOKEN_RESULTS[a.disposition],
             # A "what if": explain it as such, never as what the employer intends.
             "asked": "hypothetically" if a.hypothetical else "as the employer's intention",
+            **({"already_told": True} if f"{a.action}:{a.disposition}" in told else {}),
         }
         for a in evaluation.actions
     ]

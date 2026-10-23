@@ -879,11 +879,10 @@ def test_the_case_view_is_read_only_labels_and_follows_the_turns_snapshot(
     assert "opt-" not in flat and "EX-" not in flat
 
 
-def test_an_optional_case_question_the_founder_didnt_answer_isnt_offered_at_once(
-    journey: Journey,
-) -> None:
+def test_an_optional_case_question_is_offered_once(journey: Journey) -> None:
     """Found live: HeroOS asked for the incident date again right after the founder talked about
-    something else. It answers them first; it may come back to the question later."""
+    something else; in the final run, the same optional question came back a few turns later.
+    An optional Case question is offered once: the next one is offered instead."""
 
     def offered() -> list[str]:
         targets = journey.sections()["approved_knowledge"]["question_targets"]
@@ -899,14 +898,13 @@ def test_an_optional_case_question_the_founder_didnt_answer_isnt_offered_at_once
         response(f"{SAFE} Has this come up with him before?", ["c1"]),
     )
     assert offered() == [history]
-    # ...the founder talks about something else: not asked again at once.
+    # ...the founder talks about something else: never offered again, now or later.
     other = "What should I say to him when he's back?"
-    journey.ask(other, absent(other, turn=2, topics=("workplace_reminder",)))
-    assert history not in offered()
-    # It may come back later.
+    journey.ask(other, absent(other, turn=2, topics=("workplace_reminder",)), response(SAFE, []))
+    assert history not in offered() and len(offered()) == 1
     later = "OK, thanks."
-    journey.ask(later, absent(later, turn=3, topics=("workplace_reminder",)))
-    assert history in offered()
+    journey.ask(later, absent(later, turn=3, topics=("workplace_reminder",)), response(SAFE, []))
+    assert history not in offered()
 
 
 def test_when_the_required_question_cant_be_asked_the_case_record_questions_can(

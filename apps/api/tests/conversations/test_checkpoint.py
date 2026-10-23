@@ -74,6 +74,7 @@ def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
         said={POLICY: Reading("yes", 3, 0), "misconduct_level": Reading("stated", 1)},
         asked={POLICY: AskRecord(2, "unanswered"), "jurisdiction": AskRecord(1, "approximate")},
         turns=5,
+        told=("opt-warning:unknown",),
     )
     checkpoint = Checkpoint(snapshot_versions(snapshot), trusted_state(), memory=memory)
     assert decode(encode(checkpoint)) == checkpoint
@@ -112,6 +113,8 @@ def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
         {"memory": {"said": {"x": ["yes", -1, 0]}, "asked": {}, "turns": 2}},
         {"memory": {"said": {"x": ["yes", 1, 99]}, "asked": {}, "turns": 2}},
         {"memory": {"said": {}, "asked": {}, "turns": True}},
+        {"memory": {"said": {}, "asked": {}, "turns": 1, "told": "opt-warning:unknown"}},
+        {"memory": {"said": {}, "asked": {}, "turns": 1, "told": [""]}},
     ],
 )
 def test_anything_it_cant_vouch_for_is_rejected(

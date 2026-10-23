@@ -248,7 +248,8 @@ _NOT_KNOWING: Final = re.compile(
     r"\b(?:not\s+sure|unsure|don'?t\s+know|do\s+not\s+know|dunno|idk|no\s+idea|no\s+clue"
     r"|not\s+certain|(?:need|have|got)\s+to\s+(?:check|ask|find\s+out)|check\s+with|find\s+out"
     r"|(?:wasn'?t|weren'?t|was\s+not|were\s+not)\s+there|(?:can'?t|cannot|don'?t)\s+remember"
-    r"|(?:might|would|may)\s+know|not\s+aware|can'?t\s+say|unclear|no\s+way\s+to\s+know)"
+    r"|(?:might|would|may)\s+know|not\s+aware|can'?t\s+say|(?:can'?t|cannot)\s+confirm|unclear"
+    r"|no\s+way\s+to\s+know)"
 )
 
 

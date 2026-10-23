@@ -585,7 +585,7 @@ def test_a_question_the_founder_didnt_answer_is_not_asked_again_at_once(
     founder = Founder(db, artifacts, alice_context)
     assert founder.say(LATE, late()).heroos.content == SAFE_ASKING_POLICY
     other = "Can he be suspended while I sort this out?"
-    assert founder.say(other, late(other, turn=1)).heroos.content == SAFE
+    assert founder.say(other, late(other, turn=1), response(SAFE, [])).heroos.content == SAFE
     again = "And what about his contract?"
     # Asked again, it says it is still needed (never the same words again).
     assert founder.say(again, late(again, turn=2)).heroos.content == (
