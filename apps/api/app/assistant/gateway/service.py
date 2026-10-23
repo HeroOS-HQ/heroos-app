@@ -80,6 +80,7 @@ from app.assistant.gateway.memory import (
     record,
     resolve,
     said_values,
+    same_words,
     superseded,
 )
 from app.assistant.gateway.memory import (
@@ -708,12 +709,11 @@ def _covered(result: "_Turn", requirement: MissingRequirement) -> bool:
 def _before_acting(result: "_Turn", requirement: MissingRequirement) -> bool:
     """Whether a question the founder answered in their story is asked now, to confirm it.
 
-    Only when HeroOS needs a fact it can rely on for a decision the founder is making: they are
-    pursuing a step the requirement holds (their message asks about taking it, as their intention
-    and not a "what if", or answers HeroOS's question about it), what they said about it came in
-    an earlier message, nothing they haven't spoken about is left to ask first, and the question
-    wasn't asked before (once more after an uncertain or rough answer to it). Never because the
-    question exists.
+    Only when HeroOS needs a fact it can rely on for a decision the founder is making: their
+    message asks about taking a step the requirement holds (as their intention, not a "what if"),
+    what they said about it came in an earlier message, nothing they haven't spoken about is left
+    to ask first, and the question wasn't asked before (once more after an uncertain or rough
+    answer to it). Never because the question exists.
     """
     coverage = result.coverage(requirement.key)
     if requirement.kind not in ("fact", "confirmation") or coverage not in COVERED:
@@ -939,10 +939,33 @@ _ANNOUNCES: Final = re.compile(
 _LEAD_IN: Final = re.compile(r"(?:[,:]|\b(?:so|and|then))$", re.IGNORECASE)
 
 
+def _asks(sentence: str, questions: Sequence[str]) -> bool:
+    """Whether a sentence of a reply asks one of these questions again, in mostly its words."""
+    return sentence.rstrip().endswith("?") and any(same_words(sentence, q) for q in questions)
+
+
+def _without_repeated(reply: str, previous: str | None) -> str:
+    """The reply without the question HeroOS's last reply asked, asked again in the model's own
+    words (found in the coverage pass: the server didn't ask the unanswered question again at
+    once, and the model copied it into its reply). Unchanged if nothing else would be left."""
+    if not previous:
+        return reply
+    questions = [s for s in _SENTENCE_END.split(previous.strip()) if s]
+    sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s]
+    kept = [s for s in sentences if not _asks(s, questions)]
+    return " ".join(kept) if kept and len(kept) < len(sentences) else reply
+
+
 def _with_question(reply: str, question: str) -> str:
     """The reply with the server's question as its one question (its own trailing questions
-    are left out: the server's wording is what the founder's answer is read against)."""
-    sentences = [s for s in _SENTENCE_END.split(reply.strip()) if s and not _ANNOUNCES.search(s)]
+    are left out, and the same question anywhere in it: the server's wording is what the
+    founder's answer is read against; found in the coverage pass, the same question twice in one
+    reply)."""
+    sentences = [
+        s
+        for s in _SENTENCE_END.split(reply.strip())
+        if s and not _ANNOUNCES.search(s) and not _asks(s, [question])
+    ]
     while sentences and sentences[-1].rstrip().endswith("?"):
         sentences.pop()
     lead, colon, _ = question.partition(":")
@@ -1353,8 +1376,9 @@ class AiGateway:
             }
             requested = [a.action for a in understanding.actions]
             hypothetical = tuple(a.action for a in understanding.hypothetical)
-            # The steps the founder is pursuing now: asked about in this message, or kept under
-            # evaluation by their answer to HeroOS's question about them.
+            # The steps the founder is pursuing now: asked about in this message, as their intention
+            # (an answer to another question keeps a step under evaluation, never "going ahead":
+            # found in the coverage pass, a confirmation asked right after "no, no penalty yet").
             pursued = frozenset(
                 a.action
                 for a in understanding.actions
@@ -1365,14 +1389,11 @@ class AiGateway:
                 # founder withdrew one in the same message); so does a message with no matter of
                 # its own ("ok", "thanks"): it never drops the decision under discussion.
                 withdrawn = {a.action for a in understanding.withdrawn}
-                kept = [
+                requested += [
                     a
                     for a in read.state.actions
                     if a in execution.options and a not in withdrawn and a not in hypothetical
                 ]
-                requested += kept
-                if trust.answered:
-                    pursued |= frozenset(kept)
             confirmed = company.jurisdiction
             request = EvaluationRequest(
                 matter="supported",
@@ -1420,6 +1441,8 @@ class AiGateway:
             ),
             hedged=hedged,
             replied=understanding.previous_answer == "answered",
+            hesitant=understanding.previous_answer in ("answered", "does_not_know")
+            and (understanding.previous_answer == "does_not_know" or doubtful(turn.message)),
             sources=sources,
             uncertain=uncertain,
             dropped=dropped,
@@ -1728,11 +1751,13 @@ class AiGateway:
             return self._fallback(
                 company, snapshot, FALLBACK_FAMILY[code], understanding, plan, result, turn
             )
+        required = next((t for t in plan.targets if t.question is not None), None)
         reply = proposal.reply
+        if required is None:
+            reply = _without_repeated(reply, _previous_question(turn))
         # A target counts as asked only if the reply asks something: a claim with no question
         # in the words would make the founder's next message a "direct answer" to nothing.
         used = [t for t in plan.targets if t.id in proposal.target_ids] if "?" in reply else []
-        required = next((t for t in plan.targets if t.question is not None), None)
         if required is not None:
             # A deterministic check needs this answer: always asked in the server's words (its
             # meaning is what the answer is parsed against), as the reply's one question (found

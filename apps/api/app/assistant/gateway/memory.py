@@ -214,9 +214,10 @@ def carry(
 _CONTENT: Final = re.compile(r"[a-z0-9']{4,}")
 
 
-def _same_words(first: str, second: str) -> bool:
-    """Whether two readings of one message rest on the same words: one excerpt contains the
-    other, or most of the shorter one's content words are the other's."""
+def same_words(first: str, second: str) -> bool:
+    """Whether two texts say the same thing in mostly the same words (two readings of one message,
+    or two questions): one contains the other, or most of the shorter one's content words are the
+    other's."""
     a, b = normalized(first), normalized(second)
     shorter = a if len(a) <= len(b) else b
     if len(shorter.split()) >= 2 and (a in b or b in a):
@@ -243,7 +244,7 @@ def provenance(
             continue
         message = max(0, turns - (current - source))
         statements = groups.setdefault(message, [])
-        words = next((i for i, w in enumerate(statements) if _same_words(w, excerpt)), None)
+        words = next((i for i, w in enumerate(statements) if same_words(w, excerpt)), None)
         if words is None:
             words = len(statements)
             statements.append(excerpt)
@@ -295,6 +296,7 @@ def resolve(
     does_not_apply: bool = False,
     touched: Mapping[str, Value] | None = None,
     implied: Collection[str] = (),
+    hesitant: bool = False,
 ) -> ConversationMemory:
     """The memory after the founder's message: how it related to what HeroOS asked last turn.
 
@@ -307,7 +309,9 @@ def resolve(
     longer lets stand (``superseded``); ``does_not_apply``: the founder said the question doesn't
     fit their situation; ``touched``: this turn's readings of the ``hedged`` facts (canonical, or
     ``STATED``), kept as covering their question only (``implied`` the ones the founder's words
-    clearly imply, ``uncertain`` the doubtful ones, the others rough).
+    clearly imply, ``uncertain`` the doubtful ones, the others rough); ``hesitant``: the founder
+    replied to the question without a plain answer the server could read (words of doubt, or a
+    "don't know" in words that don't say it plainly).
     """
     asked = dict(memory.asked)
     single = len(previous) == 1
@@ -338,6 +342,11 @@ def resolve(
             outcome = (
                 "hedged" if key in uncertain else "answered" if key in implied else "approximate"
             )
+        elif hesitant and single:
+            # A reply to it without certainty ("I think so but I'm not 100% sure", "how would I
+            # know"), with no reading of the fact: an uncertain answer, never "no answer" (found in
+            # the coverage pass: asked again later with "one thing I still need to know").
+            outcome = "hedged"
         else:
             outcome = "unanswered"
         asked[key] = AskRecord(record.times, outcome)

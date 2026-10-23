@@ -879,3 +879,31 @@ def test_a_narrative_answer_made_uncertain_is_never_confirmed_as_said(
     assert chat.memory.coverage(EXPLAIN) == "answered_uncertain"
     assert EXPLAIN not in evaluation(result).facts.conversational
     assert "opportunity to explain" not in result.reply
+
+
+def test_the_servers_question_is_asked_once_wherever_the_reply_put_it(
+    artifacts: Artifacts,
+) -> None:
+    """Found in the coverage pass: the model asked the question mid-reply and the server added it
+    at the end: the same question twice in one reply."""
+    chat = Remembering(artifacts)
+    result = chat.say(
+        WARN,
+        understood(WARN, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")]),
+        response(f"{SAFE} Could you tell me whether he got to explain? It matters here.", ["q1"]),
+    )
+    assert result.reply == f"{SAFE} It matters here. {EXPLAIN_QUESTION}"
+
+
+def test_the_model_never_asks_last_turns_unanswered_question_again(artifacts: Artifacts) -> None:
+    """Found in the coverage pass: the server didn't ask the unanswered question again at once,
+    and the model copied it into its own reply."""
+    chat = Remembering(artifacts)
+    warning(chat)
+    message = "How long does this usually take?"
+    data = understood(
+        message, topics=["formal_warning"], actions=[("opt-warning", "a formal warning")], turn=0
+    )
+    data["previous_question_answer"] = "not_answered"
+    result = chat.say(message, data, response(f"{SAFE} {EXPLAIN_QUESTION}", []))
+    assert result.reply == SAFE

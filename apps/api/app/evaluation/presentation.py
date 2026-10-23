@@ -382,8 +382,9 @@ def outcome_view(
                     "about": said,
                     "meaning": (
                         "the founder already spoke about these: never say they are unknown, "
-                        "still open or still to be established, and never ask about them; "
-                        "before the step is taken they confirm them plainly"
+                        "still open or still to be established, never ask about them and never "
+                        "ask the founder to confirm them (HeroOS asks for a confirmation itself, "
+                        "only when it is needed)"
                     ),
                 }
             }

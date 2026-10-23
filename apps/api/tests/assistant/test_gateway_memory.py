@@ -335,3 +335,11 @@ def test_a_correction_to_uncertainty_reduces_that_question_only() -> None:
     assert memory.coverage(OTHER) == "answered_uncertain"
     assert memory.said["misconduct_level"] == Reading("less_serious", 0, 1)
     assert memory.coverage("misconduct_level") == "answered_from_narrative"
+
+
+@pytest.mark.parametrize("hesitant", [True, False])
+def test_a_reply_to_the_question_without_certainty_is_an_uncertain_answer(hesitant: bool) -> None:
+    """ "I think so but I'm not 100% sure" with no reading of the fact: answered uncertainly (found
+    in the coverage pass: recorded as no answer, and asked again later)."""
+    memory = after(ASKED, (Asked("fact", KEY),), hesitant=hesitant)
+    assert memory.asked[KEY].last == ("hedged" if hesitant else "unanswered")
