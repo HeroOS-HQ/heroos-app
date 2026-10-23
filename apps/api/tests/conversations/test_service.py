@@ -57,6 +57,9 @@ from app.db.models import (
 )
 from app.evaluation.facts import Asked
 from app.evaluation.model import EVALUATION_SCHEMA
+from app.workflows.conversation import SubmissionRecord
+from app.workflows.definition import DISCIPLINARY_V2
+from app.workflows.history import compose_history, fact_versions
 from app.workflows.progress import FactRecord, latest_answers
 from tests.auth.conftest import SeedData
 from tests.auth.test_workflow_api import (  # noqa: F401  (pytest fixtures)
@@ -594,28 +597,79 @@ def test_a_question_the_founder_didnt_answer_is_not_asked_again_at_once(
     )
 
 
-def test_a_contradiction_never_changes_the_case_and_corrections_append(
+def submission_records(db: sessionmaker[Session]) -> list[SubmissionRecord]:
+    """The Case's saved answer groups with their facts, as the Case history reads them."""
+    facts = rows(db, CaseFact)
+    return [
+        SubmissionRecord(
+            s.id,
+            s.step_key,
+            s.revision,
+            s.submitted_at,
+            s.submitted_by_user_id,
+            {f.fact_key: f.value for f in facts if f.submission_id == s.id},
+            s.origin,
+            s.source_message_id,
+        )
+        for s in rows(db, WorkflowSubmission)
+    ]
+
+
+def save_noted(db: sessionmaker[Session], founder: Founder) -> None:
+    """The employer's one explicit action: save everything noted to the Case."""
+    labels = frozenset(q.label for step in DISCIPLINARY_V2.steps for q in step.questions)
+    assert founder.conversation_id is not None
+    with db() as session:
+        founder.service(ScriptedProvider(understanding())).save_noted(
+            session,
+            founder.context,
+            founder.conversation_id,
+            expected_revision=founder.revision,
+            confirmed=labels,
+        )
+
+
+def corrected(message: str, key: str, words: str, *facts: dict[str, Any], turn: int) -> Any:
+    """The understanding names ``key`` as corrected by ``words`` (and reads ``facts``)."""
+    data = late(message, facts=list(facts))
+    data["corrections"] = [{"fact_key": key, "source_turn": turn, "support_excerpt": words}]
+    return data
+
+
+def test_an_uncertain_or_unsupported_reading_never_changes_the_case_and_corrections_append(
     db: sessionmaker[Session],
     artifacts: Artifacts,
     alice_context: AuthenticatedCompanyContext,
     client: TestClient,  # noqa: F811
     admin_alice: dict[str, str],  # noqa: F811
 ) -> None:
+    """M2-NEW-07's safeguard, refined in the correction reliability pass: the model's output never
+    changes the Case by itself. A reading the founder's own words don't support changes nothing at
+    all; one said with doubt keeps the Case's value out of the evaluation (voided) and the Case
+    keeps it. Only the founder's validated explicit correction lets the server's correction
+    processor supersede a Case fact the conversation wrote (the tests below)."""
     founder = Founder(db, artifacts, alice_context)
     first = founder.say(LATE, late())
     founder.say("No.", late("No.", turn=1))
     assert first.case_id is not None
     assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "no"}
 
-    # The founder now says otherwise: the AI's reading changes nothing in the Case, and the
-    # Case's "no" stays out of the evaluation until a value is confirmed (voided).
-    said = "Sorry, I did explain the attendance standard to him."
-    founder.say(said, late(said, facts=[fact(POLICY, "yes", said[7:], turn=2)]))
+    # Words the founder never wrote: nothing is read, nothing changes.
+    said = "Sorry, there's something I should add."
+    founder.say(said, late(said, facts=[fact(POLICY, "yes", "I did explain the standard", turn=2)]))
+    assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "no"}
+    assert len(rows(db, CaseFact)) == 2
+
+    # Said with doubt: the Case's "no" stays out of the evaluation until a value is confirmed
+    # (voided), and the Case keeps it.
+    said = "Actually I think I may have explained the standard to him."
+    doubt = fact(POLICY, "yes", "I may have explained the standard", turn=3, basis="inferred")
+    founder.say(said, late(said, facts=[{**doubt, "confidence": "low"}]))
     assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "no"}
     assert len(rows(db, CaseFact)) == 2
     checkpoint = decode(rows(db, AssistantConversation)[0].checkpoint)
     assert checkpoint is not None and checkpoint.voided == (POLICY,)
-    founder.say("Anything else?", late("Anything else?", turn=3))
+    founder.say("Anything else?", late("Anything else?", turn=4))
     record = rows(db, AssistantTurnEvaluation)[-1].record
     assert POLICY not in record["facts"]["engine_trusted"]
 
@@ -640,18 +694,87 @@ def test_a_contradiction_never_changes_the_case_and_corrections_append(
         "structured",
     ]
     # The newer Case fact is trusted again from the next turn on.
-    founder.say("Thanks.", late("Thanks.", turn=4))
+    founder.say("Thanks.", late("Thanks.", turn=5))
     record = rows(db, AssistantTurnEvaluation)[-1].record
     assert record["facts"]["engine_trusted"][POLICY] == "yes"
 
 
-def test_an_answer_taken_back_is_voided_and_the_case_keeps_its_record(
+def test_a_validated_correction_supersedes_the_conversations_case_fact_and_keeps_its_history(
     db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
 ) -> None:
-    """Final blocker pass: an answer the Case holds, taken back with nothing in its place ("sorry,
-    that was another employee"), stays out of the evaluation from then on (voided). The AI's
-    reading never changes the Case: its append-only record keeps the answer until the employer
-    records a newer one."""
+    """Correction reliability pass (TL decision): "No." saved the Case's answer; "Sorry, I did
+    explain the attendance standard to him", a validated explicit correction, supersedes it.
+    Nothing trusted takes its place (the new words are a reading: noted for the employer to save),
+    the narrative stands, and the record keeps the earlier answer, superseded, with the message it
+    came from and the correcting one."""
+    founder = Founder(db, artifacts, alice_context)
+    first = founder.say(LATE, late())
+    answered = founder.say("No.", late("No.", turn=1))
+    assert first.case_id is not None
+    said = "Sorry, I did explain the attendance standard to him."
+    fixed = founder.say(
+        said,
+        corrected(said, POLICY, "I did explain", fact(POLICY, "yes", said[7:], turn=2), turn=2),
+    )
+
+    assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE}
+    assert [f.value for f in rows(db, CaseFact)] == [LATE, "no", None]
+    checkpoint = decode(rows(db, AssistantConversation)[0].checkpoint)
+    assert checkpoint is not None and checkpoint.noted == {POLICY_QUESTION: "yes"}
+    versions = fact_versions(submission_records(db))[POLICY_QUESTION]
+    assert [(v.value, v.status, v.origin) for v in versions] == [
+        ("no", "superseded", "assistant"),
+        (None, "current", "assistant"),
+    ]
+    assert [v.source_message_id for v in versions] == [answered.founder.id, fixed.founder.id]
+    (instance,) = rows(db, WorkflowInstance)
+    history = compose_history(
+        DISCIPLINARY_V2,
+        created_at=instance.created_at,
+        created_by_user_id=alice_context.user_id,
+        submissions=submission_records(db),
+        evaluations={},
+        viewer_user_id=alice_context.user_id,
+    )
+    assert [(h.title, h.detail) for h in history if h.kind == "answers_saved"][-1] == (
+        "Case information corrected through Ask HeroOS",
+        "Changed: Expected standard explained",
+    )
+    # Never relied on again until the employer saves a value (or the founder confirms one).
+    founder.say("What now?", late("What now?", turn=3))
+    record = rows(db, AssistantTurnEvaluation)[-1].record
+    assert POLICY not in record["facts"]["engine_trusted"]
+    save_noted(db, founder)
+    assert case_answers(db, first.case_id) == {NARRATIVE_KEY: LATE, POLICY_QUESTION: "yes"}
+    assert [f.value for f in rows(db, CaseFact)] == [LATE, "no", None, "yes"]
+
+
+def test_a_plain_word_after_a_doubtful_one_still_corrects_the_case(
+    db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
+) -> None:
+    """Said with doubt first (the Case keeps its value, voided in the conversation), then plainly:
+    the founder's explicit word is checked against the Case's own value, so the Case fact the
+    conversation wrote is superseded even though the conversation no longer held it."""
+    founder = Founder(db, artifacts, alice_context)
+    first = founder.say(LATE, late())
+    founder.say("No.", late("No.", turn=1))
+    assert first.case_id is not None
+    said = "I think I may have explained the standard to him, actually."
+    doubt = fact(POLICY, "yes", "I may have explained the standard", turn=2, basis="inferred")
+    founder.say(said, late(said, facts=[{**doubt, "confidence": "low"}]))
+    assert case_answers(db, first.case_id)[POLICY_QUESTION] == "no"
+    said = "I've checked my notes: I did explain the standard to him."
+    founder.say(said, late(said, facts=[fact(POLICY, "yes", "I did explain the standard", turn=3)]))
+    assert POLICY_QUESTION not in case_answers(db, first.case_id)
+    assert [f.value for f in rows(db, CaseFact)] == [LATE, "no", None]
+
+
+def test_an_answer_taken_back_supersedes_the_case_fact_with_nothing_in_its_place(
+    db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
+) -> None:
+    """An answer the Case holds, taken back with nothing in its place ("sorry, that answer was
+    about another employee"), is superseded in the Case (it was the conversation's) and stays out
+    of the evaluation; the record keeps it, superseded."""
     founder = Founder(db, artifacts, alice_context)
     first = founder.say(LATE, late())
     founder.say("No.", late("No.", turn=1))
@@ -663,12 +786,111 @@ def test_an_answer_taken_back_is_voided_and_the_case_keeps_its_record(
         {"fact_key": POLICY, "source_turn": 2, "support_excerpt": "about another employee"}
     ]
     founder.say(back, data)
-    assert case_answers(db, first.case_id)[POLICY_QUESTION] == "no"
-    checkpoint = decode(rows(db, AssistantConversation)[0].checkpoint)
-    assert checkpoint is not None and checkpoint.voided == (POLICY,)
+    assert POLICY_QUESTION not in case_answers(db, first.case_id)
+    assert [f.value for f in rows(db, CaseFact)] == [LATE, "no", None]
     founder.say("What now?", late("What now?", turn=3))
     record = rows(db, AssistantTurnEvaluation)[-1].record
     assert POLICY not in record["facts"]["engine_trusted"]
+
+
+def test_a_correction_never_supersedes_the_employers_own_record_or_a_formal_act(
+    db: sessionmaker[Session],
+    artifacts: Artifacts,
+    alice_context: AuthenticatedCompanyContext,
+    client: TestClient,  # noqa: F811
+    admin_alice: dict[str, str],  # noqa: F811
+) -> None:
+    """What the employer saved in a step's form, and what records a formal act of the employer's
+    (a sanction already applied for this incident), stay as they are whatever the founder now
+    says: the conversation only keeps a contradicted value out of its evaluation. Unrelated facts
+    are untouched."""
+    founder = Founder(db, artifacts, alice_context)
+    words = (
+        "My employee has been late three times this month. Two colleagues saw it. No sanction yet."
+    )
+    first = founder.say(
+        words,
+        late(
+            words,
+            facts=[
+                fact("evidence.witnesses", "yes", "Two colleagues saw it"),
+                fact("history.same_incident_sanction", "no", "No sanction yet"),
+            ],
+        ),
+    )
+    assert first.case_id is not None
+    save_noted(db, founder)
+    (instance,) = rows(db, WorkflowInstance)
+    saved = client.put(
+        f"/companies/{alice_context.company_id}/cases/{first.case_id}"
+        "/workflow/steps/incident_context/answers",
+        headers=admin_alice,
+        json={
+            "expected_revision": instance.revision,
+            "submission_key": str(uuid.uuid4()),
+            "answers": {POLICY_QUESTION: "no"},
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    before = case_answers(db, first.case_id)
+    assert before == {
+        NARRATIVE_KEY: words,
+        "evidence.witnesses": "yes",
+        "history.same_incident_sanction": "no",
+        POLICY_QUESTION: "no",
+    }
+    said = "Sorry, I did explain the standard to him, and he did get a sanction for it."
+    data = late(
+        said,
+        facts=[
+            fact(POLICY, "yes", "I did explain the standard to him", turn=1),
+            fact("history.same_incident_sanction", "yes", "he did get a sanction for it", turn=1),
+        ],
+    )
+    data["corrections"] = [
+        {"fact_key": POLICY, "source_turn": 1, "support_excerpt": "I did explain"},
+        {
+            "fact_key": "history.same_incident_sanction",
+            "source_turn": 1,
+            "support_excerpt": "he did get a sanction",
+        },
+    ]
+    founder.say(said, data)
+    assert case_answers(db, first.case_id) == before
+    record = rows(db, AssistantTurnEvaluation)[-1].record
+    assert POLICY not in record["facts"]["engine_trusted"]
+    assert "history.same_incident_sanction" not in record["facts"]["engine_trusted"]
+    assert record["facts"]["engine_trusted"]["evidence.witnesses"] == "yes"
+
+
+def test_an_unresolved_correction_is_asked_about_and_its_answer_is_the_normal_trusted_path(
+    db: sessionmaker[Session], artifacts: Artifacts, alice_context: AuthenticatedCompanyContext
+) -> None:
+    """Named as corrected with nothing usable in its place: the Case isn't changed (nothing was
+    validated), the earlier answer isn't relied on, and HeroOS asks one focused question in its own
+    words. The founder's plain answer to it is a direct answer: trusted, saved to the Case, and the
+    earlier answer stays in the record, superseded."""
+    founder = Founder(db, artifacts, alice_context)
+    first = founder.say(LATE, late())
+    founder.say("No.", late("No.", turn=1))
+    assert first.case_id is not None
+    said = "Hang on, I need to correct what I told you about the standard."
+    unclear = founder.say(
+        said, corrected(said, POLICY, "I need to correct what I told you", turn=2)
+    )
+    assert case_answers(db, first.case_id)[POLICY_QUESTION] == "no"
+    assert unclear.heroos.content.endswith(
+        "Just so I get your correction right: had the employee been told what was expected of them?"
+    )
+    record = rows(db, AssistantTurnEvaluation)[-1].record
+    assert POLICY not in record["facts"]["engine_trusted"]
+    answer = late("Yes.", turn=3)
+    answer["previous_question_answer"] = "answered"
+    answer["fact_proposals"] = [fact(POLICY, "yes", "Yes", turn=3)]
+    founder.say("Yes.", answer)
+    assert case_answers(db, first.case_id)[POLICY_QUESTION] == "yes"
+    versions = fact_versions(submission_records(db))[POLICY_QUESTION]
+    assert [(v.value, v.status) for v in versions] == [("no", "superseded"), ("yes", "current")]
 
 
 def test_no_turn_selects_a_pathway_moves_a_stage_or_records_a_decision(

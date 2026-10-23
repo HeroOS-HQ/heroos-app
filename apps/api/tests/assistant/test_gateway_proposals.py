@@ -15,6 +15,7 @@ from app.assistant.gateway.proposals import (
     MAX_REPLY_CHARS,
     ProposalError,
     check_evidence,
+    names_person,
     parse_response,
     parse_understanding,
 )
@@ -453,3 +454,65 @@ def test_a_fact_taken_back_needs_the_founders_words_in_the_current_message(
     assert [w.fact_key for w in checked.withdrawn_facts] == [policy]
     assert [f.fact_key for f in checked.facts] == ["misconduct_level"]
     assert dropped == 5  # four take-backs, and the earlier reading of the fact taken back
+
+
+# --- correction reliability pass: what a correction names, who the matter concerns -----------
+
+
+def test_a_correction_needs_the_founders_own_words_in_the_current_message(
+    bundle: KnowledgeBundle,
+) -> None:
+    """What the founder corrects is named apart from what the correction says now ("nobody
+    actually saw it"), only from the current message, in its own words, for a catalog fact:
+    never a bare yes, no or "not sure" (an answer corrects nothing), never words from an earlier
+    message, never words the founder didn't write."""
+    messages = ["Two colleagues saw her do it.", "No.", "Sorry, nobody actually saw it."]
+    policy = "employee_aware_of_relevant_policy"
+    data = understanding()
+    data["corrections"] = [
+        _taken_back(policy, "nobody actually saw it", turn=2),
+        _taken_back(policy, "nobody actually saw it", turn=2),  # named twice: once
+        _taken_back("misconduct_level", "No.", turn=1),  # an earlier message
+        _taken_back("investigation_completed", "No", turn=2),  # bare, and not its words
+        _taken_back("given_opportunity_to_explain", "never wrote this", turn=2),
+        _taken_back("repeated_misconduct", "nobody actually saw it", turn=2),  # not in the catalog
+    ]
+    checked, dropped = check_evidence(parse(bundle, data, 2), routing_catalog(bundle), messages, "")
+    assert [c.fact_key for c in checked.corrections] == [policy]
+    assert dropped == 5
+
+
+def test_names_stand_only_in_the_founders_own_words_and_a_mix_up_never_names_the_employee(
+    bundle: KnowledgeBundle,
+) -> None:
+    messages = ["Our porter Musa broke a tray of glasses.", "Sorry, that was Kareem, not Musa."]
+    data = understanding()
+    data["employee_name"] = "Musa"
+    data["not_the_employee"] = [
+        {"name": "Kareem", "source_turn": 1, "support_excerpt": "that was Kareem, not Musa"},
+        {"name": "Musa", "source_turn": 1, "support_excerpt": "that was Kareem, not Musa"},
+        {"name": "Ali", "source_turn": 1, "support_excerpt": "that was Kareem, not Musa"},
+        {"name": "Omar", "source_turn": 1, "support_excerpt": "Omar did it"},
+    ]
+    checked, _ = check_evidence(parse(bundle, data, 1), routing_catalog(bundle), messages, "")
+    assert checked.employee == "Musa"
+    assert [p.name for p in checked.mixed_up] == ["Kareem"]
+    data["employee_name"] = "Mohammed"  # never written by the founder
+    unnamed, _ = check_evidence(parse(bundle, data, 1), routing_catalog(bundle), messages, "")
+    assert unnamed.employee is None
+    assert [p.name for p in unnamed.mixed_up] == ["Kareem", "Musa"]
+    assert names_person("Thanks, so this was Kareem's.", "Kareem")
+    assert not names_person("Thanks, so this was Kareemah's.", "Kareem")
+
+
+def test_an_item_citing_no_founder_message_is_counted_never_silently_dropped(
+    bundle: KnowledgeBundle,
+) -> None:
+    """Diagnostics (the correction pass's case C): what the parser leaves out because it cites a
+    founder message that doesn't exist is counted for the turn's telemetry."""
+    data = understanding(facts=[fact("misconduct_level", "minor", "late", turn=5)])
+    data["corrections"] = [_taken_back("misconduct_level", "late", turn=7)]
+    data["withdrawn_facts"] = [_taken_back("misconduct_level", "late", turn=-1)]
+    proposal = parse(bundle, data, 1)
+    assert (proposal.facts, proposal.corrections, proposal.withdrawn_facts) == ((), (), ())
+    assert proposal.uncited == 3

@@ -128,7 +128,39 @@ A conversational fact is checked as a **value**, never by the founder's path thr
 
 Never a PROPOSED or conversational reading, a Blueprint value, the Case's own value carried into the turn, a requested action or a hidden summary. **Employer-owned actions are never inferred:** conversation never creates `pathway_selected`, `stage_started`, `stage_completed`, a decision record, a sanction, a dismissal, an investigation's completion, a document or a letter, and never confirms the Case's jurisdiction. Those stay the employer's own requests (AI understands; the employer acts).
 
-**Provenance.** An assistant submission has `origin = 'assistant'`, `step_key = 'ask_heroos'` and its founder message's id (a Company-qualified reference). **Corrections** append: the old Case fact stays, the new one is appended, the latest wins. A contradicting statement changes nothing in the Case and voids the Case fact in the conversation until a value is confirmed or the Case records a newer one.
+**Provenance.** An assistant submission has `origin = 'assistant'`, `step_key = 'ask_heroos'` and its founder message's id (a Company-qualified reference). **Corrections** append: the old Case fact stays, the new one is appended, the latest wins.
+
+**Founder corrections (refined in the correction reliability pass, Technical Lead decision 2026-10-24).** The original rule still holds: the model's output never changes the Case by itself. It is refined for one case. A **validated explicit founder correction** of a Case fact **the conversation wrote** (`origin = 'assistant'`) is superseded by the server's deterministic correction processor (`bridge.correction_changes`).
+
+How a correction is validated:
+
+1. The understanding names what the current message corrects (`corrections`, apart from the new value).
+2. The server checks it against the founder's own words in the current message, never a bare yes, no or "not sure".
+3. The fact must have held a value in the conversation.
+4. The correction must be said plainly (ESTABLISHED_CONVERSATIONAL), answered or confirmed, or be a validated take-back (`withdrawn_facts`). A hedged or uncertain contradiction doesn't qualify.
+
+What a supersession writes:
+
+- The Case's answer becomes the corrected value when that value is trusted (a direct answer or a confirmation saves itself through `fact_changes`).
+- Otherwise it is cleared: an appended `CaseFact` with no value. The founder's new words are noted for the employer to save.
+- The earlier value stays in the record as superseded, with the message it came from and the correcting message (`history.fact_versions`). The Case history reads "Case information corrected through Ask HeroOS", with labels only.
+
+What it never touches:
+
+- What the employer saved in a step's form.
+- The narrative.
+- What records a formal act of the employer's (`EMPLOYER_OWNED`: an earlier action put in writing, a sanction already applied).
+- Facts the correction didn't name.
+
+Pathway, stages, decisions, sanctions, suspensions, deductions and dismissals are never Case facts here at all.
+
+The rest keeps the earlier behaviour. A reading the founder's words don't support changes nothing. A hedged contradiction, or one of an employer-owned value, changes nothing in the Case. It voids the Case fact in the conversation until a value is confirmed or the Case records a newer one.
+
+Why the rule was refined: in the blocker pass, "Nobody actually saw it" left the Case's "witnesses: yes" in place. That value had been saved from the conversation. The conversation itself no longer relied on it, so the Case record said what the founder had just withdrawn.
+
+**Unresolved corrections.** Some corrections name a fact but leave nothing usable in its place, for example when the new value isn't read. The earlier value is then no longer relied on: it isn't trusted, said or noted, and the Case's value is voided in the conversation. Nothing is guessed, and the Case isn't changed. HeroOS asks one focused question in its own words: "Just so I get your correction right: …". The founder's answer is read like any other answer. A plain one is a direct answer, trusted and saved through the normal path.
+
+**People mixed up with the employee.** The understanding gives the employee's name as the founder writes it, and the people the founder says they mixed up with that employee. Both are evidence-checked against the founder's words. The reply is told both. A reply naming a mixed-up person fails the reply check (`wrong_person`): it is rewritten once with that reason, then replaced by the server's own text.
 
 ## 7. The checkpoint (`heroos.assistant-checkpoint/1`)
 

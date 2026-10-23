@@ -104,6 +104,9 @@ _FACT_FIELDS: Final = frozenset(
 )  # fmt: skip
 _ACTION_FIELDS: Final = frozenset({"action", "source_turn", "support_excerpt"})
 _WITHDRAWN_FACT_FIELDS: Final = frozenset({"fact_key", "source_turn", "support_excerpt"})
+_PERSON_FIELDS: Final = frozenset({"name", "source_turn", "support_excerpt"})
+# A person's name as the founder wrote it (a bound on the field, not a product rule).
+MAX_NAME_CHARS: Final = 60
 _RESPONSE_FIELDS: Final = frozenset({"schema_version", "reply"})
 _RESPONSE_OPTIONAL: Final = frozenset({"question_target_ids", "safe_next_step"})
 
@@ -157,6 +160,29 @@ class WithdrawnFact:
 
 
 @dataclass(frozen=True, slots=True)
+class CorrectedFact:
+    """A fact the founder gave earlier (or the Case holds) that the current message says was
+    wrong, whether or not it gives the right value ("nobody actually saw it"): what the founder
+    is correcting, apart from what the correction says now."""
+
+    fact_key: str
+    source_turn: int
+    # Server-side only: never logged, never returned to the browser.
+    excerpt: str
+
+
+@dataclass(frozen=True, slots=True)
+class MixedUpPerson:
+    """Someone the founder says a point of the matter (or the matter) was about instead of the
+    employee it concerns ("that was Kareem, not Musa"): never to be named as that employee."""
+
+    name: str
+    source_turn: int
+    # Server-side only: never logged, never returned to the browser.
+    excerpt: str
+
+
+@dataclass(frozen=True, slots=True)
 class UnderstandingProposal:
     intent: Intent
     workflow: str | None
@@ -181,6 +207,17 @@ class UnderstandingProposal:
     # Server-set: a message with no matter of its own continued the conversation's matter
     # (``app.assistant.gateway.service``); never from the model.
     continued: bool = False
+    # Correction reliability pass: the earlier facts the current message corrects, whatever it
+    # says in their place; kept only with the founder's own words in the current message. What
+    # was corrected with no usable value in its place is asked about, never guessed.
+    corrections: tuple[CorrectedFact, ...] = ()
+    # The employee the matter concerns, by the name the founder uses (in their own words), and
+    # the people they say they mixed up with that employee (what a reply may never call them).
+    employee: str | None = None
+    mixed_up: tuple[MixedUpPerson, ...] = ()
+    # Server-set (diagnostics only): items the parser left out because they cite no founder
+    # message that exists (a fact, a take-back, a correction, a person or a decision).
+    uncited: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +354,9 @@ def parse_understanding(
                 "hypothetical_actions",
                 "withdrawn_facts",
                 "previous_question_answer",
+                "corrections",
+                "employee_name",
+                "not_the_employee",
             }
         ),
         "$",
@@ -349,9 +389,10 @@ def parse_understanding(
         if workflow is not None and isinstance(topic, str) and workflow.has_topic(topic):
             topics.append(topic)
 
+    raw_facts = _list(data["fact_proposals"], MAX_FACTS, "$.fact_proposals")
     facts = tuple(
         fact
-        for i, raw in enumerate(_list(data["fact_proposals"], MAX_FACTS, "$.fact_proposals"))
+        for i, raw in enumerate(raw_facts)
         if (fact := _fact(raw, f"$.fact_proposals[{i}]", current_turn)) is not None
     )
     uncertainties = [
@@ -359,9 +400,14 @@ def parse_understanding(
         for i, u in enumerate(_list(data["uncertainties"], MAX_UNCERTAINTIES, "$.uncertainties"))
     ]
     summary = _text(data.get("case_summary"), MAX_SUMMARY_CHARS, "$.case_summary", nullable=True)
-    actions = _actions(data, "requested_actions", workflow, current_turn)
-    withdrawn = _actions(data, "withdrawn_actions", workflow, current_turn)
-    hypothetical = _actions(data, "hypothetical_actions", workflow, current_turn)
+    actions, left_actions = _actions(data, "requested_actions", workflow, current_turn)
+    withdrawn, left_withdrawn = _actions(data, "withdrawn_actions", workflow, current_turn)
+    hypothetical, left_hypothetical = _actions(data, "hypothetical_actions", workflow, current_turn)
+    taken_back, left_taken = _cited(data, "withdrawn_facts", "fact_key", current_turn)
+    corrected, left_corrected = _cited(data, "corrections", "fact_key", current_turn)
+    mixed_up, left_mixed = _cited(data, "not_the_employee", "name", current_turn)
+    named = data.get("employee_name") or None  # "" is no name, as null is
+    employee = _text(named, MAX_NAME_CHARS, "$.employee_name", nullable=True)
     previous = data.get("previous_question_answer", "no_question")
     return UnderstandingProposal(
         intent=intent,
@@ -374,36 +420,54 @@ def parse_understanding(
         actions=actions,
         withdrawn=withdrawn,
         hypothetical=hypothetical,
-        withdrawn_facts=_withdrawn_facts(data, current_turn),
+        withdrawn_facts=tuple(WithdrawnFact(*item) for item in taken_back),
         previous_answer=_code(previous, PREVIOUS_ANSWERS, "$.previous_question_answer"),
+        corrections=tuple(CorrectedFact(*item) for item in corrected),
+        employee=employee,
+        mixed_up=tuple(MixedUpPerson(*item) for item in mixed_up),
+        uncited=len(raw_facts)
+        - len(facts)
+        + left_actions
+        + left_withdrawn
+        + left_hypothetical
+        + left_taken
+        + left_corrected
+        + left_mixed,
     )
 
 
-def _withdrawn_facts(data: dict[str, Any], current_turn: int) -> tuple[WithdrawnFact, ...]:
-    """Fact keys outside the catalog are kept here and dropped by ``check_evidence``."""
-    items: list[WithdrawnFact] = []
-    for i, raw in enumerate(_list(data.get("withdrawn_facts", []), MAX_FACTS, "$.withdrawn_facts")):
-        where = f"$.withdrawn_facts[{i}]"
+def _cited(
+    data: dict[str, Any], field: str, subject: str, current_turn: int
+) -> tuple[list[tuple[str, int, str]], int]:
+    """(subject, turn, excerpt) per item of a list that cites the founder's words, and how many
+    were left out because they cite no founder message that exists (their words can't be
+    checked). Fact keys outside the catalog are kept here and dropped by ``check_evidence``."""
+    fields = _WITHDRAWN_FACT_FIELDS if subject == "fact_key" else _PERSON_FIELDS
+    limit = MAX_NAME_CHARS if subject == "name" else 100
+    items: list[tuple[str, int, str]] = []
+    raws = _list(data.get(field, []), MAX_FACTS, f"$.{field}")
+    for i, raw in enumerate(raws):
+        where = f"$.{field}[{i}]"
         if not isinstance(raw, dict):
             raise ProposalError("expected_object", where)
-        _fields(raw, _WITHDRAWN_FACT_FIELDS, frozenset(), where)
-        key = raw["fact_key"]
-        if not isinstance(key, str):
-            raise ProposalError("expected_string", f"{where}.fact_key")
+        _fields(raw, fields, frozenset(), where)
+        key = _text(raw[subject], limit, f"{where}.{subject}")
         turn = raw["source_turn"]
         if not isinstance(turn, int) or isinstance(turn, bool) or not 0 <= turn <= current_turn:
-            continue  # cites no founder message: left out (its words can't be checked)
+            continue
         excerpt = _text(raw["support_excerpt"], MAX_EXCERPT_CHARS, f"{where}.support_excerpt")
-        assert excerpt is not None
-        items.append(WithdrawnFact(key, turn, excerpt))
-    return tuple(items)
+        assert key is not None and excerpt is not None
+        items.append((key, turn, excerpt))
+    return items, len(raws) - len(items)
 
 
 def _actions(
     data: dict[str, Any], field: str, workflow: CatalogWorkflow | None, current_turn: int
-) -> tuple[RequestedAction, ...]:
+) -> tuple[tuple[RequestedAction, ...], int]:
+    """The decisions, and how many were left out for citing no founder message that exists."""
     actions: list[RequestedAction] = []
-    for i, raw in enumerate(_list(data.get(field, []), MAX_REQUESTED_ACTIONS, f"$.{field}")):
+    raws = _list(data.get(field, []), MAX_REQUESTED_ACTIONS, f"$.{field}")
+    for i, raw in enumerate(raws):
         where = f"$.{field}[{i}]"
         if not isinstance(raw, dict):
             raise ProposalError("expected_object", where)
@@ -419,7 +483,7 @@ def _actions(
         actions.append(RequestedAction(key, turn, excerpt))
     if len({a.action for a in actions}) != len(actions):
         raise ProposalError("duplicate_value", f"$.{field}")
-    return tuple(actions)
+    return tuple(actions), len(raws) - len(actions)
 
 
 # --- evidence -------------------------------------------------------------------------
@@ -544,25 +608,51 @@ def check_evidence(
         ):
             taken.setdefault(back.fact_key, back)
     kept = [f for f in kept if f.fact_key not in taken]
+    # What the current message corrects, only in its own words (never a bare yes, no or "not
+    # sure": that answers a question, it corrects nothing). Whether the conversation held a value
+    # for it is the gateway's to check (``app.assistant.gateway.service``).
+    corrections: dict[str, CorrectedFact] = {}
+    for correction in proposal.corrections:
+        words = normalized(correction.excerpt)
+        if (
+            correction.source_turn == current
+            and correction.fact_key in catalog.facts
+            and words
+            and words in messages[current]
+            and parse_yes_no(correction.excerpt) is None
+            and not only_not_known(correction.excerpt)
+        ):
+            corrections.setdefault(correction.fact_key, correction)
+    # A name only as the founder wrote it: the employee's in one of their messages, a mixed-up
+    # person's in the words that say so (never the employee's own name).
+    employee = proposal.employee
+    if employee is not None and not any(_names(employee, m) for m in messages):
+        employee = None
+    mixed_up = tuple(
+        person
+        for person in proposal.mixed_up
+        if normalized(person.excerpt)
+        and normalized(person.excerpt) in messages[person.source_turn]
+        and _names(person.name, normalized(person.excerpt))
+        and (employee is None or normalized(person.name) != normalized(employee))
+    )
     dropped = (
         len(proposal.facts) - len(kept) + len(proposal.actions) - len(supported)
         + len(proposal.withdrawn) - len(withdrawn)
         + len(proposal.withdrawn_facts) - len(taken)
+        + len(proposal.corrections) - len(corrections)
     )  # fmt: skip
     return (
-        UnderstandingProposal(
-            intent=proposal.intent,
-            workflow=proposal.workflow,
-            pathway=proposal.pathway,
-            topics=proposal.topics,
+        replace(
+            proposal,
             facts=tuple(kept),
-            uncertainties=proposal.uncertainties,
-            summary=proposal.summary,
             actions=actions,
             withdrawn=withdrawn,
             hypothetical=tuple(hypotheticals.values()),
             withdrawn_facts=tuple(taken.values()),
-            previous_answer=proposal.previous_answer,
+            corrections=tuple(corrections.values()),
+            employee=employee,
+            mixed_up=mixed_up,
         ),
         dropped,
     )
@@ -603,33 +693,24 @@ def without_contradicted(
     and a wrong reading: it becomes an inferred proposal, so HeroOS asks
     instead of relying on it.
     """
-    return UnderstandingProposal(
-        intent=proposal.intent,
-        workflow=proposal.workflow,
-        pathway=proposal.pathway,
-        topics=proposal.topics,
+    return replace(
+        proposal,
         facts=tuple(
-            FactProposal(
-                f.fact_key,
-                f.value,
-                f.confidence,
-                f.provenance,
-                f.source_turn,
-                f.excerpt,
-                "inferred",
-            )
-            if f.establishes and contradicted(f)
-            else f
+            replace(f, basis="inferred") if f.establishes and contradicted(f) else f
             for f in proposal.facts
-        ),  # fmt: skip
-        uncertainties=proposal.uncertainties,
-        summary=proposal.summary,
-        actions=proposal.actions,
-        withdrawn=proposal.withdrawn,
-        hypothetical=proposal.hypothetical,
-        withdrawn_facts=proposal.withdrawn_facts,
-        previous_answer=proposal.previous_answer,
+        ),
     )
+
+
+def _names(name: str, text: str) -> bool:
+    """Whether ``text`` (normalized) names ``name`` as a whole word or words."""
+    words = normalized(name)
+    return bool(words) and re.search(rf"(?<!\w){re.escape(words)}(?!\w)", text) is not None
+
+
+def names_person(text: str, name: str) -> bool:
+    """Whether a reply names a person (as a whole word, in any case or quote style)."""
+    return _names(name, normalized(text))
 
 
 # --- grounded response ----------------------------------------------------------------

@@ -451,6 +451,9 @@ def conversation_view(
     previous: Sequence[Asked],
     established: Sequence[tuple[str, str]] = (),
     corrected: Collection[str] = (),
+    unclear: Collection[str] = (),
+    employee: str | None = None,
+    mixed_up: Sequence[str] = (),
 ) -> dict[str, object]:
     """The compact, server-owned conversation state the response phase reads.
 
@@ -458,7 +461,10 @@ def conversation_view(
     what HeroOS asked without an answer, how the current message related to the last
     question, and what it corrected or took back (``corrected``: found in the final blocker pass,
     "that was Kareem, not Musa", about an earlier talk, was acknowledged as Kareem being the
-    employee involved). Labels and display values only: never a key, an id or a raw record.
+    employee involved). ``unclear``: what it corrected with nothing usable in its place (asked
+    about, never stated). ``employee`` and ``mixed_up``: who the matter concerns, by the founder's
+    own name for them, and the people they mixed up with that employee (never named in a reply).
+    Labels and display values only: never a key, an id or a raw record.
     """
     schemas = {} if execution is None else execution.schemas
 
@@ -523,6 +529,12 @@ def conversation_view(
     }
     if corrected:
         view["corrected_now"] = sorted({label(k) for k in corrected if label(k)})
+    if unclear:
+        view["correction_unclear"] = sorted({label(k) for k in unclear if label(k)})
+    if employee:
+        view["employee"] = employee
+    if mixed_up:
+        view["not_the_employee"] = sorted(set(mixed_up))
     last = [q for q in previous if q.kind != "insistence"]
     if last:
         question = last[0]

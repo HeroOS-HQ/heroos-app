@@ -47,6 +47,22 @@ What is checked is the *value*, not the founder's path through the form:
   saved yet stays in the checkpoint and is saved by the turn that makes it
   valid.
 
+**Corrections** (``correction_changes``, the deterministic correction processor): the
+founder's validated explicit correction (the understanding proposes it; the server checks it
+against their own words in the current message, and it is said plainly or taken back, never
+hedged) supersedes the Case fact it corrects, when that fact came from the conversation (an
+Ask HeroOS submission). The Case's answer is then the corrected value when it is trusted (a
+direct answer or a confirmation: ``fact_changes``), else nothing, with the founder's new
+words noted for the employer to save. Facts are append-only: the earlier value stays in the
+record, superseded, with the message it came from and the correcting message
+(``app.workflows.history.fact_versions``). Never superseded this way: what the employer saved
+in a step's form, the founder's own account (the narrative), and what records a formal act of
+the employer's (an earlier action put in writing, a sanction already applied); stages,
+pathways, decisions and sanctions are never Case facts here at all. An ordinary reading, an
+uncertain or hedged one, and anything a correction didn't name never change the Case (found
+in the correction pass: "Nobody actually saw it" left the Case's "witnesses: yes", saved from
+the conversation, in place while the conversation itself no longer relied on it).
+
 **Noted readings** (``noted_facts``): what the founder said in passing (an
 ESTABLISHED_CONVERSATIONAL reading, "it happened last month too, we spoke to
 him then") is never trusted on the AI's reading. The server canonicalizes it
@@ -54,15 +70,17 @@ against the Case question and checks it like a fact; it is then shown for the
 employer to save to the Case with one explicit action, never saved by itself.
 """
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from datetime import date
 from typing import Final
 
 from app.assistant.gateway.service import Handoff
+from app.db.models.workflow import SUBMISSION_ASSISTANT
 from app.evaluation.facts import canonical
 from app.evaluation.model import ConversationEvaluation
 from app.evaluation.snapshot import WorkflowExecution
 from app.workflows.answers import validate_answers
+from app.workflows.conversation import SubmissionRecord
 from app.workflows.definition import NOT_SURE, WorkflowDefinition, current_definition
 
 # The title of a Case whose workflow isn't known yet.
@@ -71,6 +89,15 @@ NEW_CASE_TITLE: Final = "New case"
 NARRATIVE_KEY: Final = "incident.narrative"
 # Where a value trusted this turn came from when the message answered HeroOS's question.
 ANSWER_SOURCES: Final = frozenset({"direct_answer", "confirmation"})
+
+# Case questions a founder's correction in Ask HeroOS never supersedes: their own account as they
+# wrote it, and what records a formal act of the employer's (an earlier action put in writing,
+# such as a written warning; a sanction already applied for this incident). The employer changes
+# those in the step's form; the conversation only keeps a contradicted value out of its
+# evaluation (``voided``, ``app.conversations.checkpoint``).
+EMPLOYER_OWNED: Final = frozenset(
+    {NARRATIVE_KEY, "history.documented_action", "history.same_incident_sanction"}
+)
 
 # Approved topic key -> a neutral label for the kind of matter (never a sanction, an
 # employer decision or a person). Every other topic gives the fallback title. Adding a
@@ -161,6 +188,47 @@ def fact_changes(
             continue
         candidates[question] = value
     return _accepted(candidates, definition, current=current, open_steps=open_steps, today=today)
+
+
+def written_by(submissions: Sequence[SubmissionRecord]) -> dict[str, str]:
+    """Per Case question, the origin of the submission that last wrote it (``structured``: the
+    employer's form; ``assistant``: an Ask HeroOS turn)."""
+    origins: dict[str, str] = {}
+    for submission in sorted(submissions, key=lambda s: s.revision):
+        for key in submission.facts:
+            origins[key] = submission.origin
+    return origins
+
+
+def correction_changes(
+    execution: WorkflowExecution,
+    definition: WorkflowDefinition,
+    corrections: Sequence[tuple[str, str | None]],
+    *,
+    current: Mapping[str, object],
+    written: Mapping[str, str],
+    changes: Mapping[str, object],
+) -> dict[str, object]:
+    """Case question key -> None: the Case facts the founder's validated corrections supersede.
+
+    ``corrections``: the founder's explicit word in the current message, validated by the gateway
+    (``Handoff.corrections``: fact key, the canonical value said plainly, answered or confirmed,
+    None when taken back); a Case fact it contradicts is corrected. ``current``: the Case's
+    answers; ``written``: who last wrote each (``written_by``); ``changes``: this turn's trusted
+    changes (a trusted corrected value supersedes the earlier one by itself).
+    """
+    superseded: dict[str, object] = {}
+    for key, value in corrections:
+        question = _case_question(execution, definition, key)
+        if question is None or question in EMPLOYER_OWNED or question in changes:
+            continue
+        held = current.get(question)
+        if held is None or written.get(question) != SUBMISSION_ASSISTANT:
+            continue  # nothing held, or the employer's own record (its form)
+        if value is not None and str(held) == value:
+            continue  # the Case already says what the founder says now
+        superseded[question] = None
+    return superseded
 
 
 def _case_question(

@@ -17,7 +17,9 @@ It is a projection, never a source of truth:
   ``case_facts``;
 - a Case fact the founder's newest statement contradicted stays out of the
   evaluation (``voided``) until the founder confirms a value or the Case
-  records a newer one, so a conversation is never looser than M2-NEW-06's;
+  records a newer one, so a conversation is never looser than M2-NEW-06's (a
+  validated explicit correction of a fact the conversation wrote supersedes it
+  in the Case itself: ``app.conversations.bridge.correction_changes``);
 - the founder's answer about the employee's jurisdiction is bound to the
   Company jurisdiction it was given under; the Case's own confirmation counts
   when it is stricter or newer;

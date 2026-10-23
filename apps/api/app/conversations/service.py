@@ -32,7 +32,9 @@ conversation id and the revision it last saw; everything else is the server's.
    conversation's Case is started (its first turn: one conversation is one
    Case, chat-first) and takes its workflow at the threshold (``bridge``); the
    founder's newly established canonical facts go through the shared pipeline
-   (``app.cases.mutation``); the active reviews, what the founder said that
+   (``app.cases.mutation``), with the Case facts the conversation wrote that their
+   validated explicit corrections supersede (``bridge.correction_changes``: appended,
+   the earlier value kept in the record); the active reviews, what the founder said that
    the Case could hold (``noted``, for the employer to save) and the next
    checkpoint are written.
 
@@ -270,6 +272,8 @@ class _Recorded:
     case_created: bool = False
     workflow_attached: bool = False
     facts: int = 0
+    # Case facts the founder's validated corrections superseded with nothing trusted in place.
+    superseded: int = 0
     reconciliation: Reconciliation = "kept"
     checkpoint: str = "ok"
 
@@ -431,12 +435,13 @@ class AskConversations:
         # Counts and categories only: never a message, fact, value or title.
         logger.info(
             "Ask HeroOS turn recorded (company_id=%s, new_conversation=%s, case_created=%s, "
-            "workflow_attached=%s, facts=%d, checkpoint=%s, reconciliation=%s)",
+            "workflow_attached=%s, facts=%d, superseded=%d, checkpoint=%s, reconciliation=%s)",
             scope.company_id,
             loaded.conversation_id is None,
             recorded.case_created,
             recorded.workflow_attached,
             recorded.facts,
+            recorded.superseded,
             recorded.checkpoint,
             recorded.reconciliation,
         )
@@ -656,14 +661,14 @@ class AskConversations:
 
         case_answers: dict[str, object] | None = None
         case_revision: int | None = None
-        facts = 0
+        facts = superseded = 0
         earlier_checkpoint = decode(conversation.checkpoint)
         answering = earlier_checkpoint is not None and bool(earlier_checkpoint.state.asked)
         noted: dict[str, Value] = (
             {} if earlier_checkpoint is None else dict(earlier_checkpoint.noted)
         )
         if item is not None:
-            case_answers, case_revision, facts, fresh_noted = self._apply_facts(
+            case_answers, case_revision, facts, superseded, fresh_noted = self._apply_facts(
                 scope,
                 item,
                 case_state,
@@ -674,6 +679,7 @@ class AskConversations:
                 context,
                 first.from_case | resumed.from_case,
                 blended,
+                handoff.corrections,
                 # The founder's own words that established the matter become its narrative; never
                 # a reply to the question HeroOS asked last turn (found live: "possibly, not sure"
                 # became the narrative on the turn the workflow attached).
@@ -730,6 +736,7 @@ class AskConversations:
             case_created=case_created,
             workflow_attached=attached,
             facts=facts,
+            superseded=superseded,
             reconciliation=reconciliation,
             checkpoint="rebuilt" if resumed.rebuilt else "ok",
         )
@@ -775,18 +782,21 @@ class AskConversations:
         context: AuthenticatedCompanyContext,
         from_case: frozenset[str],
         blended: bool,
+        corrections: Sequence[tuple[str, str | None]] = (),
         *,
         narrative: str | None = None,
-    ) -> tuple[dict[str, object], int, int, dict[str, str] | None]:
-        """The founder's new canonical facts through the shared pipeline; the Case after it,
-        and what the founder said that the Case could hold (None: this turn wasn't about it)."""
+    ) -> tuple[dict[str, object], int, int, int, dict[str, str] | None]:
+        """The founder's new canonical facts through the shared pipeline, with the Case facts
+        their validated corrections supersede (``bridge.correction_changes``); the Case after it,
+        how many facts changed and were superseded, and what the founder said that the Case could
+        hold (None: this turn wasn't about it)."""
         if state is None:
             state = evaluate_case(scope, item, self._policy, self._rules)
         answers = dict(state.answers)
         revision = item.instance.revision
         execution = snapshot.execution(item.instance.workflow_key)
         if execution is None or blended or evaluation.workflow != item.instance.workflow_key:
-            return answers, revision, 0, None
+            return answers, revision, 0, 0, None
         today = self._gateway.today()
         open_steps = state.intake.available_steps
         changes = bridge.fact_changes(
@@ -809,22 +819,33 @@ class AskConversations:
                     today=today,
                 )
             )
+        superseded = bridge.correction_changes(
+            execution,
+            state.definition,
+            corrections,
+            current=state.answers,
+            written=bridge.written_by(state.submissions),
+            changes=changes,
+        )
+        after = {
+            k: v for k, v in {**state.answers, **changes, **superseded}.items() if v is not None
+        }
         noted = bridge.noted_facts(
             evaluation,
             execution,
             state.definition,
-            current={**state.answers, **changes},
+            current=after,
             open_steps=open_steps,
             today=today,
         )
-        if not changes:
-            return answers, revision, 0, noted
+        if not changes and not superseded:
+            return answers, revision, 0, 0, noted
         applied = apply_case_fact_changes(
             scope,
             item,
             state,
             origin=AssistantOrigin(founder.id),
-            changes=changes,
+            changes={**changes, **superseded},
             expected_revision=revision,
             idempotency_key=turn.id,
             user_id=context.user_id,
@@ -833,7 +854,7 @@ class AskConversations:
         )
         if applied is None:  # pragma: no cover - the instance is locked
             raise ConversationConflict()
-        return {**answers, **changes}, applied.revision, len(changes), noted
+        return after, applied.revision, len(changes), len(superseded), noted
 
     # --- the employer saves what was noted ------------------------------------------------
 

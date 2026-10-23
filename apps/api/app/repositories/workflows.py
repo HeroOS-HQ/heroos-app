@@ -190,6 +190,7 @@ def submissions(scope: CompanyScope, instance_id: UUID) -> list[SubmissionRecord
             submitted_by_user_id=row.submitted_by_user_id,
             facts=by_submission.get(row.id, {}),
             origin=row.origin,
+            source_message_id=row.source_message_id,
         )
         for row in rows
     ]

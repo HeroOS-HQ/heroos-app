@@ -31,7 +31,7 @@ The trust model is unchanged (PROPOSED, ESTABLISHED_CONVERSATIONAL, ENGINE_TRUST
 4. **The narrative** ("What happened?") is the founder's own words: the message that established the matter is saved as written when the workflow attaches (never the AI's summary). Never a message that answered HeroOS's question (a direct answer or a confirmation, e.g. "Yes."): that is an answer, not the founder's account, so the narrative then stays open for the founder to give.
 5. The jurisdiction confirmation and the safety screening are never collected in words: they stay inline button steps (`CaseSteps`).
 
-Structured edits and chat share one state: a correction saved in Case details is a newer Case fact, which the next turn reads (`checkpoint.resume` loads Case-backed facts every turn).
+Structured edits and chat share one state: a correction saved in Case details is a newer Case fact, which the next turn reads (`checkpoint.resume` loads Case-backed facts every turn). A founder's validated explicit correction in the chat supersedes a Case fact the conversation wrote, through the server's correction processor. The earlier value is kept in the record, superseded. Form answers and formal employer acts are never superseded this way (`ask-conversations.md` §6, "Founder corrections").
 
 ## 3. Formal employer actions
 

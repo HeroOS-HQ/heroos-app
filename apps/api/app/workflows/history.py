@@ -20,13 +20,14 @@ evaluations for those saves; their history starts with the submissions.
 """
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Final, Literal
 from uuid import UUID
 
 from app.workflows.conditions import RuleSet
 from app.workflows.conversation import (
+    ASSISTANT_CORRECTION_TITLE,
     ASSISTANT_ORIGIN,
     ASSISTANT_UPDATE_TITLE,
     SubmissionRecord,
@@ -222,6 +223,44 @@ def _evaluation_items(
     return items
 
 
+@dataclass(frozen=True, slots=True)
+class FactVersion:
+    """One value a Case question held (answers are append-only: an earlier value is never
+    erased). ``value`` None: the answer was cleared, superseded with nothing in its place."""
+
+    value: object | None
+    revision: int
+    submitted_at: datetime
+    origin: str
+    submission_id: UUID
+    # The founder message an Ask HeroOS submission came from (the correction's, for a correction).
+    source_message_id: UUID | None
+    status: Literal["current", "superseded"]
+
+
+def fact_versions(submissions: Sequence[SubmissionRecord]) -> dict[str, list[FactVersion]]:
+    """Per Case question, every value it held, oldest first: the latest is current, every earlier
+    one superseded (by the employer's form, or by the founder's validated correction in Ask
+    HeroOS, which names the correcting message)."""
+    versions: dict[str, list[FactVersion]] = {}
+    for submission in sorted(submissions, key=lambda s: s.revision):
+        for key, value in submission.facts.items():
+            versions.setdefault(key, []).append(
+                FactVersion(
+                    value,
+                    submission.revision,
+                    submission.submitted_at,
+                    submission.origin,
+                    submission.id,
+                    submission.source_message_id,
+                    "current",
+                )
+            )
+    for chain in versions.values():
+        chain[:-1] = [replace(v, status="superseded") for v in chain[:-1]]
+    return versions
+
+
 def compose_history(
     definition: WorkflowDefinition,
     *,
@@ -253,6 +292,7 @@ def compose_history(
         )
     ]
     previous: EvaluationRecord | None = None
+    versions = fact_versions(submissions)
     for submission in sorted(submissions, key=lambda s: s.revision):
         by_viewer = submission.submitted_by_user_id == viewer_user_id
         step = definition.step(submission.step_key) or extra.get(submission.step_key)
@@ -266,7 +306,10 @@ def compose_history(
             changed.append(f"{unlabelled} answer{'s' if unlabelled > 1 else ''}")
         title = f"Answers saved: {step.title if step else 'stage checklist'}"
         if submission.origin == ASSISTANT_ORIGIN:
-            title = ASSISTANT_UPDATE_TITLE
+            # A founder's correction supersedes an earlier answer: said as such, the earlier one
+            # kept (``fact_versions``), never a value restated.
+            corrects = any(versions[k][0].submission_id != submission.id for k in submission.facts)
+            title = ASSISTANT_CORRECTION_TITLE if corrects else ASSISTANT_UPDATE_TITLE
         items.append(
             HistoryItem(
                 f"submission:{submission.id}",

@@ -23,6 +23,7 @@ from app.assistant.gateway.prompts import LIGHT_INSTRUCTION, RESPONSE_INSTRUCTIO
 from app.assistant.gateway.service import (
     OUTSIDE,
     OUTSIDE_AGAIN,
+    OUTSIDE_HR,
     UNCLEAR,
     AiGateway,
     FounderTurn,
@@ -1247,3 +1248,134 @@ def test_the_understanding_reads_an_earlier_reply_with_the_question_it_answered(
     assert "replying_to" not in messages[0]  # nothing was asked before the first message
     assert EXPLAIN_QUESTION in messages[1]["replying_to"]
     assert "replying_to" not in messages[-1]  # the current one: previous_heroos_question
+
+
+# --- correction reliability pass: unresolved corrections, people mixed up ----------------------
+
+
+def corrects(chat: Remembering, message: str, key: str, words: str, *facts: Any) -> GatewayReply:
+    """The founder corrects ``key`` in ``message`` (the understanding names it, with ``words``)."""
+    data = understood(message, pathway="less_serious", topics=["workplace_reminder"], facts=facts)
+    turn = chat.memory.turns
+    data["corrections"] = [{"fact_key": key, "source_turn": turn, "support_excerpt": words}]
+    return chat.say(message, data)
+
+
+def test_a_correction_with_nothing_usable_in_its_place_is_asked_about_never_guessed(
+    artifacts: Artifacts,
+) -> None:
+    """Found in the correction pass: "Nobody actually saw it" was read with no fact at all, half
+    the time, and the earlier "witnesses: yes" stood. What the founder names as corrected, with no
+    usable value in its place, no longer stands either (never trusted, said or noted, its earlier
+    words not read again) and is never guessed: HeroOS asks one focused question in its own words,
+    and the answer to it is read like any other."""
+    chat = Remembering(artifacts)
+    said_earlier(chat)
+    message = "Sorry, I need to correct what I said about the standard."
+    old = fact(POLICY, "yes", "I explained the attendance standard to him", turn=0)
+    result = corrects(
+        chat, message, POLICY, "I need to correct what I said about the standard", old
+    )
+    facts = evaluation(result).facts
+    assert POLICY not in facts.conversational | facts.engine
+    assert POLICY not in chat.memory.said
+    asked = (
+        f"Just so I get your correction right: {POLICY_QUESTION[:1].lower()}{POLICY_QUESTION[1:]}"
+    )
+    assert result.reply.endswith(asked)
+    state = chat.shown()["conversation_state"]
+    assert state["correction_unclear"] == state["corrected_now"] == ["Standard explained"]
+    assert not any(k["about"] == "Standard explained" for k in state["known"])
+    assert result.handoff.unresolved_corrections == (POLICY,)
+    assert result.handoff.corrections == ()  # nothing validated for the Case
+    # The founder's plain answer to that question is the normal trusted path.
+    answer = understood("No.", pathway="less_serious", topics=["workplace_reminder"], turn=2)
+    answer["previous_question_answer"] = "answered"
+    answer["fact_proposals"] = [fact(POLICY, "no", "No", turn=2)]
+    answered = chat.say("No.", answer)
+    assert evaluation(answered).facts.engine[POLICY] == "no"
+    assert evaluation(answered).facts.sources[POLICY] == "direct_answer"
+
+
+def test_a_correction_of_something_never_said_corrects_nothing(artifacts: Artifacts) -> None:
+    """Not every "no" is a correction: one named for a fact the conversation never held a value
+    for changes nothing and asks nothing."""
+    chat = Remembering(artifacts)
+    warning(chat)
+    message = "Actually he wasn't told about the standard."
+    told = fact(POLICY, "no", "he wasn't told about the standard", turn=1)
+    result = corrects(chat, message, POLICY, "he wasn't told about the standard", told)
+    assert evaluation(result).facts.conversational[POLICY] == "no"
+    assert result.handoff.unresolved_corrections == ()
+    assert "Just so I get your correction right" not in result.reply
+
+
+def mixed_up(chat: Remembering, *replies: Any) -> GatewayReply:
+    words = "Our porter Musa broke a tray of glasses. His manager already spoke to him last month."
+    chat.say(
+        words,
+        understood(
+            words,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[fact("incident.history", "raised_before", "His manager already spoke to him")],
+        ),
+    )
+    back = "Sorry, that was Kareem, not Musa."
+    data = understood(back, pathway="less_serious", topics=["workplace_reminder"])
+    data["withdrawn_facts"] = [
+        {"fact_key": "incident.history", "source_turn": 1, "support_excerpt": "that was Kareem"}
+    ]
+    data["employee_name"] = "Musa"
+    data["not_the_employee"] = [
+        {"name": "Kareem", "source_turn": 1, "support_excerpt": "that was Kareem, not Musa"}
+    ]
+    return chat.say(back, data, list(replies))
+
+
+def test_a_reply_never_names_someone_the_founder_mixed_up_with_the_employee(
+    artifacts: Artifacts,
+) -> None:
+    """Found in the blocker pass: "that was Kareem, not Musa", about an earlier talk, became "the
+    matter concerns Kareem" in 2 of 4 replies, with the state right. The reply is told who the
+    matter concerns and who was mixed up; a reply naming the mixed-up person is rewritten once
+    with that reason, and the server's own text stands if the rewrite names them too."""
+    chat = Remembering(artifacts)
+    wrong = response("Thanks, so this matter is about Kareem.")
+    right = response("Thanks for clarifying. For Musa, that earlier talk doesn't count.")
+    result = mixed_up(chat, wrong, right)
+    assert result.reply.startswith(right["reply"])
+    state = chat.shown()["conversation_state"]
+    assert (state["employee"], state["not_the_employee"]) == ("Musa", ["Kareem"])
+    assert chat.provider is not None
+    rewrite = chat.provider.phase("response")[1].turns[-1].content
+    assert "mixed up with the employee" in rewrite
+
+    again = Remembering(artifacts)
+    fallback = mixed_up(again, wrong, wrong)
+    assert "Kareem" not in fallback.reply
+    assert fallback.reply.startswith("Thanks for setting that straight.")
+
+
+def test_no_reply_names_someone_mixed_up_with_the_employee_after_the_correction(
+    artifacts: Artifacts,
+) -> None:
+    """Later turns too: a thanks continues the matter (checked like any reply: the server's text
+    stands when the rewrite names them again), and a short reply in the model's words to a
+    question outside the matter is never shown naming them (the fixed text is)."""
+    chat = Remembering(artifacts)
+    mixed_up(chat, response("Thanks for clarifying. For Musa, that earlier talk doesn't count."))
+    people = {
+        "employee_name": "Musa",
+        "not_the_employee": [
+            {"name": "Kareem", "source_turn": 1, "support_excerpt": "that was Kareem, not Musa"}
+        ],
+    }
+    named = response("You're welcome, and good luck with Kareem.")
+    thanks = chat.say("ok thanks", understood("ok thanks", intent="conversational") | people, named)
+    assert "Kareem" not in thanks.reply
+    assert thanks.reply.startswith("Thanks for setting that straight.")
+    other = "Separately, how do probation reviews work?"
+    aside = chat.say(other, understood(other, intent="other_hr", workflow=None) | people, named)
+    assert "Kareem" not in aside.reply
+    assert aside.reply.startswith(OUTSIDE_HR.split("{", 1)[0])

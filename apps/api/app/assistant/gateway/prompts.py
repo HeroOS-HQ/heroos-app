@@ -50,6 +50,9 @@ Return exactly this object, with no other fields:
  "workflow_candidate": a workflow key from the catalog, or null,
  "pathway_candidate": a pathway key of that workflow, or null,
  "topics": up to 3 topic keys of that workflow (most relevant first),
+ "corrections": [{{"fact_key": a fact key from the catalog,
+   "source_turn": the current founder message's turn number,
+   "support_excerpt": the founder's own words correcting it, copied exactly}}],
  "fact_proposals": [{{"fact_key": a fact key from the catalog, "proposed_value": short text,
    "confidence": "high" | "medium" | "low",
    "provenance": "current_user_message" | "prior_user_message" | "company_blueprint",
@@ -71,6 +74,10 @@ Return exactly this object, with no other fields:
  "withdrawn_facts": [{{"fact_key": a fact key from the catalog,
    "source_turn": the current founder message's turn number,
    "support_excerpt": the founder's own words taking it back, copied exactly}}],
+ "employee_name": the name the founder uses for the employee the matter concerns, or null,
+ "not_the_employee": [{{"name": a person's name as the founder wrote it,
+   "source_turn": the founder message's turn number,
+   "support_excerpt": the founder's own words saying so, copied exactly}}],
  "previous_question_answer": "answered" | "does_not_know" | "not_answered" | "no_question"}}
 
 Rules:
@@ -157,6 +164,13 @@ shift ends, happens at work; people who saw it ("in front of everyone", "others 
 witnesses. Evidence the founder doubts ("the CCTV doesn't really show anything", "I don't know if \
 it counts") is "inferred". Talking with the employee is never a warning, sanction or penalty \
 unless the founder says one was given.
+- corrections: every fact the founder gave earlier (in an earlier message, or in an answer to \
+HeroOS) that the current message says was wrong, was about someone else, or now states otherwise \
+("nobody actually saw it" after saying others saw it; "it was Tuesday, not Monday"), with the \
+current message's words that correct it, whether or not they say what is right instead. Leave it \
+empty when the current message corrects nothing: a first answer, a new detail, or a "no" to \
+HeroOS's question corrects nothing. A correction never empties fact_proposals: propose the \
+corrected value too (or list the fact in withdrawn_facts), and every other fact as usual.
 - If the founder corrects an earlier statement, propose the corrected value from the newer turn. \
 If they now say they aren't sure of something they stated before, propose it again from the \
 current message as "not_sure" (when that is one of its options) or as "inferred". A correction \
@@ -168,6 +182,13 @@ gives for this employee, "explicit" when it says so and "inferred" when it only 
 it gives no value for this employee, list the fact in withdrawn_facts instead. Never leave a fact \
 the correction took back unproposed or unlisted; keep every fact it didn't touch. An earlier \
 answer to HeroOS's question is the fact that question asked about (see "replying_to").
+- employee_name: the employee the matter concerns, by the name the founder uses for them (their \
+latest word on who it is), exactly as written; null when they haven't named them. \
+not_the_employee: each person the founder says they mixed up with that employee, or says a point \
+of the matter (or the matter itself) was about instead of them, with their words: "that was \
+Kareem, not Musa" about an earlier talk names Kareem, and the matter still concerns Musa; "sorry, \
+it was Kareem who broke them, not Musa" names Musa, and the employee is now Kareem. Never the \
+employee, a witness, a manager or anyone else in the story; empty when nothing was mixed up.
 - previous_question_answer: "answered" when the current message answers what HeroOS last asked \
 (in any words: "No. The rule was never explained to her" answers whether she had been told), \
 "does_not_know" when the founder says in any words that they don't know, aren't sure, would \
@@ -273,7 +294,13 @@ unclear (never "that's clear"), and "thanks for confirming" only follows a confi
 - conversation_state.corrected_now is what the founder's current message corrected or took \
 back: acknowledge exactly that. When they say something was about another person, only those \
 points were about the other person: the matter, the employee it concerns and everything else \
-stay as they described them, unless they say the matter itself concerns someone else.
+stay as they described them, unless they say the matter itself concerns someone else. \
+conversation_state.correction_unclear is what they corrected without it being clear what is \
+right instead: acknowledge the correction, never say what the right answer is, and leave the \
+question to the one HeroOS adds.
+- conversation_state.employee is who the matter concerns: when you name the employee, use that \
+name. conversation_state.not_the_employee are people the founder mixed up with the employee: \
+never name them, and never say the matter or anything about the employee concerns them.
 - conversation_state is authoritative about the conversation: reuse what is "known" and never \
 ask for it again; never ask again what the founder doesn't know, answered uncertainly or \
 roughly, or what HeroOS already asked without an answer, in any words. A question target about \
@@ -405,6 +432,11 @@ REWRITE_NOTES: Final[Mapping[str, str]] = {
     "contradicts_hold": "it says a step that can't proceed yet may go ahead",
     "contradicts_review": "it says a step needing specialist review may go ahead without it",
     "contradicts_caution": "it removes or softens the caution heroos_outcome decided",
+    "wrong_person": (
+        "it names someone the founder mixed up with the employee (conversation_state."
+        "not_the_employee): leave them unnamed, and call the employee by conversation_state."
+        'employee or "the employee"'
+    ),
 }
 REWRITE_NOTE: Final = (
     "Your previous reply can't be shown: {note}. Write the reply again without that, answering "

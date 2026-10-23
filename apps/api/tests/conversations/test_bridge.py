@@ -7,7 +7,13 @@ from typing import Any
 import pytest
 
 from app.assistant.gateway.service import Handoff
-from app.conversations.bridge import case_definition, case_title, fact_changes
+from app.conversations.bridge import (
+    case_definition,
+    case_title,
+    correction_changes,
+    fact_changes,
+    written_by,
+)
 from app.evaluation.model import ConversationEvaluation, FactSource, TrustedFactState, Value
 from app.evaluation.snapshot import FactSchema
 from app.workflows.definition import DISCIPLINARY_V2, Option
@@ -226,3 +232,58 @@ def test_the_forms_own_validator_decides_and_sensitive_questions_never_qualify()
     # Asked only after an earlier raised issue (AskWhen), exactly like the form.
     assert changes({}) == {}
     assert changes({"incident.history": "raised_before"}) == {"history.documented_action": "yes"}
+
+
+# --- the correction processor (correction reliability pass) ------------------------------------
+
+
+def test_a_validated_correction_supersedes_only_a_case_fact_the_conversation_wrote() -> None:
+    """The deterministic correction processor: the founder's validated explicit correction
+    supersedes a Case fact an Ask HeroOS turn wrote, with nothing in its place unless a trusted
+    value is saved by itself. Never what the employer saved in the form, never a formal act of the
+    employer's, never a fact the correction didn't name or the Case doesn't hold."""
+    yes_no = (Option("yes", "Yes"), Option("no", "No"), Option("not_sure", "Not sure"))
+    fake = SimpleNamespace(
+        schemas={
+            "witnesses": FactSchema(
+                "witnesses", "Witnesses", "choice", yes_no, question="evidence.witnesses"
+            ),
+            "policy": FactSchema("policy", "Standard", "choice", yes_no, question=QUESTION),
+            "sanction": FactSchema(
+                "sanction", "Sanction", "choice", yes_no, question="history.same_incident_sanction"
+            ),
+            "documented": FactSchema(
+                "documented", "Documented", "choice", yes_no, question="history.documented_action"
+            ),
+            "date": FactSchema("date", "Date", "date", (), question="incident.date"),
+            "mood": FactSchema("mood", "Mood", "choice", yes_no),
+        }
+    )
+    current = {
+        "evidence.witnesses": "yes",
+        QUESTION: "no",
+        "history.same_incident_sanction": "no",
+        "history.documented_action": "yes",
+    }
+    written = {**dict.fromkeys(current, "assistant"), QUESTION: "structured"}
+
+    def superseded(*corrections: tuple[str, str | None], **changes: object) -> dict[str, object]:
+        return correction_changes(
+            fake,  # type: ignore[arg-type]
+            DISCIPLINARY_V2,
+            corrections,
+            current=current,
+            written=written,
+            changes={k.replace("_", "."): v for k, v in changes.items()},
+        )
+
+    assert superseded(("witnesses", "no")) == {"evidence.witnesses": None}
+    assert superseded(("witnesses", None)) == {"evidence.witnesses": None}  # taken back
+    assert superseded(("witnesses", "not_sure")) == {"evidence.witnesses": None}
+    assert superseded(("witnesses", "yes")) == {}  # the Case already says it
+    assert superseded(("witnesses", "no"), evidence_witnesses="no") == {}  # trusted: saved itself
+    assert superseded(("policy", "yes")) == {}  # the employer's own record
+    assert superseded(("sanction", "yes"), ("documented", "verbal_only")) == {}  # formal acts
+    assert superseded(("date", "2026-10-20"), ("mood", "no")) == {}  # nothing held / no question
+    assert superseded() == {}
+    assert written_by([]) == {}

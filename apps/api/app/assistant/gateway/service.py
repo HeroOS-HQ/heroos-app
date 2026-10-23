@@ -109,6 +109,7 @@ from app.assistant.gateway.proposals import (
     ResponseProposal,
     UnderstandingProposal,
     check_evidence,
+    names_person,
     parse_response,
     parse_understanding,
     proposition_of,
@@ -310,6 +311,8 @@ FALLBACK_LEADS: Final[dict[str, str]] = {
     "provider": "",
     # M2-NEW-07: the case changed while this answer was prepared (commit-time reconciliation).
     "changed": "This case changed while I was answering, so here is HeroOS's current result.",
+    # A reply that named someone the founder mixed up with the employee (correction pass).
+    "person": "Thanks for setting that straight.",
 }
 FALLBACK_FAMILY: Final[dict[str, str]] = {
     "action_claim": "claim",
@@ -325,8 +328,11 @@ FALLBACK_FAMILY: Final[dict[str, str]] = {
     "contradicts_hold": "outcome",
     "contradicts_review": "outcome",
     "contradicts_caution": "outcome",
+    "wrong_person": "person",
 }
 OPEN_QUESTION: Final = "What would you like to work through next?"
+# A focused question about what the founder corrected without saying what is right instead.
+CORRECTION_LEAD: Final = "Just so I get your correction right:"
 # How a required question asked a second time opens, by how the founder replied the first time.
 AGAIN: Final[Mapping[str, str]] = {
     "hedged": "You weren't certain earlier, so just to check:",
@@ -461,6 +467,13 @@ class Handoff:
     withdrawn_actions: tuple[str, ...] = ()
     # M2-NEW-08: the decisions asked about only hypothetically (evaluated, never intended).
     hypothetical_actions: tuple[str, ...] = ()
+    # Correction reliability pass: the founder's explicit, evidence-checked word in this message
+    # (fact key, the canonical value said plainly, answered or confirmed, or None when taken back),
+    # for the Case's deterministic correction processor (``bridge.correction_changes``), which
+    # supersedes only a Case fact the conversation wrote that it contradicts.
+    corrections: tuple[tuple[str, str | None], ...] = ()
+    # What the founder corrected with nothing usable in its place: asked about, never guessed.
+    unresolved_corrections: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -502,6 +515,12 @@ class Telemetry:
     cache_write_tokens: int = 0
     understanding_cache_read_tokens: int = 0
     understanding_cache_write_tokens: int = 0
+    # Correction reliability pass (counts only): the fact proposals the understanding returned
+    # (-1: no understanding), the items it cited no existing founder message for (left out), and
+    # the corrections resolved, unresolved (asked about) and of a fact with no earlier value.
+    understanding_facts: int = -1
+    uncited: int = 0
+    corrections: str = "-"
 
 
 @dataclass(frozen=True, slots=True)
@@ -586,6 +605,14 @@ class _Turn:
     # The facts it corrected (another value) or took back (nothing in their place): what the
     # reply acknowledges as corrected, and nothing else.
     corrected: frozenset[str] = frozenset()
+    # Corrected with nothing usable in its place: no longer relied on, and asked about once.
+    unresolved: frozenset[str] = frozenset()
+    # The founder's explicit word now, for the Case's correction processor (Handoff.corrections).
+    case_corrections: tuple[tuple[str, str | None], ...] = ()
+    # The employee by the founder's name for them, and the people they mixed up with the employee
+    # (a reply never names them: ``AiGateway._checked``).
+    employee: str | None = None
+    mixed_up: tuple[str, ...] = ()
 
     def coverage(self, key: str) -> Coverage:
         """Where the question about ``key`` stands in the conversation (trusted facts included)."""
@@ -684,6 +711,22 @@ def _case_targets(
             QuestionTarget("c1", key, schema.label, "ask", question=wording, prompt=asked.prompt),
         )
     return ()
+
+
+def _correction_target(execution: WorkflowExecution, key: str) -> QuestionTarget | None:
+    """The focused question about a fact the founder corrected without saying what is right
+    instead: its own question (the definition's, else one from its label), with a lead-in that
+    says why it is asked. The answer is then read against that question like any other."""
+    schema = execution.schemas.get(key)
+    if schema is None or schema.kind == "blueprint" or not schema.label:
+        return None
+    asked = execution.definition.question(schema.question) if schema.question else None
+    target = QuestionTarget(
+        "q1", key, schema.label, "ask", prompt=None if asked is None else asked.prompt
+    )
+    question = target_question(target)
+    wording = f"{CORRECTION_LEAD} {question[:1].lower()}{question[1:]}"
+    return dataclasses.replace(target, question=wording)
 
 
 def asked_again(question: str, earlier: str, jurisdiction: bool = False) -> str:
@@ -1475,8 +1518,38 @@ class AiGateway:
         # What the founder's message takes back with nothing in its place (said about someone
         # else, or wrong): no longer trusted, said or noted, and asked again when needed.
         retracted = frozenset(w.fact_key for w in understanding.withdrawn_facts)
+        unresolved: frozenset[str] = frozenset()
+        explicit: dict[str, str | None] = {}
         request = EvaluationRequest(matter=matter, workflow=workflow)
         if matter == "supported" and execution is not None:
+            noted = turn.noted
+            said_before = {
+                **{k: str(r.value) for k, r in turn.memory.said.items()},
+                **_noted_facts(execution, noted),
+            }
+            # Against what was said and what was trusted: a trusted answer corrected is corrected.
+            trusted_before = {k: str(v) for k, v in prior.engine.items()}
+            earlier = {**said_before, **trusted_before}
+            changed = _corrected(execution, understanding, current, earlier)
+            # What the founder says they corrected, of a fact the conversation held a value for
+            # (said, noted, trusted, or the Case's): with another value, or taken back, it is
+            # resolved. With nothing usable in its place (found in the correction pass: "Nobody
+            # actually saw it" read with no fact at all, half the time) the earlier value doesn't
+            # stand either: never trusted, said or noted, and never guessed; HeroOS asks about it.
+            named = {c.fact_key for c in understanding.corrections}
+            unresolved = frozenset(
+                k for k in named if k in earlier and k not in changed and k not in retracted
+            )
+            telemetry.corrections = (
+                f"r{len(named & (changed | retracted))}u{len(unresolved)}"
+                f"x{len(named - set(earlier))}"
+            )
+            if unresolved:
+                # Nothing of it is read this turn (an earlier message's words included).
+                understanding = dataclasses.replace(
+                    understanding,
+                    facts=tuple(f for f in understanding.facts if f.fact_key not in unresolved),
+                )
             stated_facts = [
                 StatedFact(f.fact_key, f.value, f.excerpt, f.establishes, f.source_turn == current)
                 for f in understanding.facts
@@ -1493,7 +1566,7 @@ class AiGateway:
                     f.fact_key: f.value for f in understanding.facts if f.source_turn == current
                 },
                 bare_answers=one_proposition(_previous_question(turn)),
-                withdrawn=retracted,
+                withdrawn=retracted | unresolved,
             )
             # The current message touched these without stating them (hedged, inferred or
             # contradicted): what was said about them before no longer stands.
@@ -1540,21 +1613,33 @@ class AiGateway:
                     context=proposition_of(founder, f),
                 )
             )
-            noted = turn.noted
-            said_before = {
-                **{k: str(r.value) for k, r in turn.memory.said.items()},
-                **_noted_facts(execution, noted),
-            }
-            # Against what was said and what was trusted: a trusted answer corrected is corrected.
-            trusted_before = {k: str(v) for k, v in prior.engine.items()}
-            corrected = retracted | _corrected(
-                execution, understanding, current, {**said_before, **trusted_before}
-            )
+            corrected = retracted | unresolved | changed
+            # The founder's explicit word in the current message, for the Case's correction
+            # processor: taken back (None), or a value said plainly (ESTABLISHED_CONVERSATIONAL),
+            # answered or confirmed; never a hedged one. It supersedes only a Case fact the
+            # conversation wrote that this word contradicts (``bridge.correction_changes``): against
+            # the Case's own value, so one the conversation voided earlier is corrected too.
+            explicit.update(dict.fromkeys(sorted(retracted)))
+            for f in understanding.facts:
+                key, schema = f.fact_key, execution.schemas.get(f.fact_key)
+                if f.source_turn != current or key in explicit or schema is None:
+                    continue
+                if key in trust.facts.conversational or trust.facts.sources.get(key) in (
+                    "direct_answer",
+                    "confirmation",
+                ):
+                    value = trust.facts.engine.get(key, trust.facts.conversational.get(key))
+                    now = None if value is None else canonical(schema, str(value))
+                    if isinstance(now, str):
+                        explicit[key] = now
             # A correction, or a statement made uncertain, replaces what was said about that fact
             # and what rested on the same words; every other reading stands.
             dropped = superseded(
                 turn.memory,
-                _corrected(execution, understanding, current, said_before) | hedged | retracted,
+                _corrected(execution, understanding, current, said_before)
+                | hedged
+                | retracted
+                | unresolved,
                 {f.fact_key for f in understanding.facts},
                 unknown=_not_known_now(execution, understanding, current),
             )
@@ -1660,7 +1745,8 @@ class AiGateway:
         said_now = frozenset(f.fact_key for f in understanding.facts if f.source_turn == current)
         return _Turn(
             evaluation, card, trust, prior, reconfirm, case, memory, taken_back, pursued, said_now,
-            corrected,
+            corrected, unresolved, tuple(explicit.items()), understanding.employee,
+            tuple(p.name for p in understanding.mixed_up),
         )  # fmt: skip
 
     def _targets(
@@ -1683,6 +1769,11 @@ class AiGateway:
         planned = tuple(t for t in plan.targets if t.fact_key not in settled)
         if execution is None:
             return planned
+        # What the founder corrected with nothing usable in its place comes first, in the server's
+        # words: one focused question, read like any answer to it (never the correction guessed).
+        unclear = [t for k in sorted(result.unresolved) if (t := _correction_target(execution, k))]
+        if unclear:
+            return (unclear[0], *(t for t in planned if t.fact_key != unclear[0].fact_key))
         if not evaluation.missing:
             unanswered = (
                 {a.key for a in result.prior.asked if a.kind == "fact"}
@@ -1815,6 +1906,8 @@ class AiGateway:
             self.understanding, company, founder, [lbl for lbl in labels if lbl], telemetry,
             deadline, view.catalog, _previous_question(turn), _replying_to(turn),
         )  # fmt: skip
+        telemetry.understanding_facts = len(understanding.facts)
+        telemetry.uncited = understanding.uncited
         # A bare answer can only answer the one question HeroOS just asked, and only when that
         # question asked one thing (never "new, or raised before?" or "was that the case?").
         single = one_proposition(_previous_question(turn))
@@ -1857,12 +1950,11 @@ class AiGateway:
                 # "what is this thing for?" got the same canned paragraph, again and again; in
                 # the final run, a question outside the approved guidance got the same refusal
                 # three times, whatever it asked).
-                text = (
-                    self._light(
-                        provider, company, turn, founder, view, telemetry, deadline, outside
-                    )
-                    or text
+                mixed_up = tuple(p.name for p in understanding.mixed_up)
+                light = self._light(
+                    provider, company, turn, founder, view, telemetry, deadline, outside, mixed_up
                 )
+                text = light or text
             return self._reply(
                 company, snapshot, text, None, state, (), understanding, None, result, turn,
                 fixed=True,
@@ -1915,8 +2007,15 @@ class AiGateway:
                 result.evaluation.facts if result.trust else None,
                 result.memory,
                 result.prior.asked,
-                [(f.fact_key, f.value) for f in plan.established],
+                [
+                    (f.fact_key, f.value)
+                    for f in plan.established
+                    if f.fact_key not in result.unresolved
+                ],
                 corrected=result.corrected,
+                unclear=result.unresolved,
+                employee=result.employee,
+                mixed_up=result.mixed_up,
             ),
             "jurisdiction_note": self._jurisdiction_note(plan),
             "conversation": _recent_conversation(turn),
@@ -2018,6 +2117,10 @@ class AiGateway:
         )
         if problem is None:
             problem = outcome_contradiction(list(texts), result.evaluation)
+        if problem is None and any(names_person(t, n) for t in texts for n in result.mixed_up):
+            # Someone the founder mixed up with the employee is never named (found in the blocker
+            # pass: "that was Kareem, not Musa", about an earlier talk, became "Kareem's case").
+            problem = "wrong_person"
         if problem is not None:
             return "safety", problem
         grounding = check_grounding(
@@ -2034,7 +2137,7 @@ class AiGateway:
     def _light(
         self, provider: StructuredChatProvider, company: CompanyBlueprintContext,
         turn: FounderTurn, founder: Sequence[str], view: _SnapshotView, telemetry: Telemetry,
-        deadline: _Deadline, outside: str | None = None,
+        deadline: _Deadline, outside: str | None = None, mixed_up: Sequence[str] = (),
     ) -> str | None:  # fmt: skip
         """A short reply in the model's words to a message with no matter to work on yet (a
         start, a reaction, thanks, a goodbye, a question about HeroOS) or about something the
@@ -2054,7 +2157,11 @@ class AiGateway:
             LIGHT_TOKENS, lambda text: parse_response(text, []), "l", telemetry, deadline,
             fail_soft=True,
         )  # fmt: skip
-        if proposal is None or gateway_problem(proposal.reply) is not None:
+        if (
+            proposal is None
+            or gateway_problem(proposal.reply) is not None
+            or any(names_person(proposal.reply, name) for name in mixed_up)
+        ):
             telemetry.wording = "fixed_light"
             return None
         grounding = check_grounding(
@@ -2337,6 +2444,7 @@ class AiGateway:
             established=tuple(
                 EstablishedFact(f.fact_key, f.value, f.provenance, f.source_turn)
                 for f in (() if plan is None else plan.established)
+                if f.fact_key not in result.unresolved
             ),
             tentative=tuple(f.fact_key for f in understanding.facts if not f.establishes),
             uncertainties=understanding.uncertainties,
@@ -2357,6 +2465,8 @@ class AiGateway:
             snapshot=snapshot,
             withdrawn_actions=tuple(a.action for a in understanding.withdrawn),
             hypothetical_actions=tuple(a.action for a in evaluation.actions if a.hypothetical),
+            corrections=result.case_corrections,
+            unresolved_corrections=tuple(sorted(result.unresolved)),
         )
         next_state = self._next_state(result, asked)
         memory = record(
@@ -2421,7 +2531,8 @@ class AiGateway:
             "facts_rejected=%d, prompt_tokens=%d, completion_tokens=%d, latency_ms=%d, "
             "workflow=%s, evaluation=%s, presentation=%s, dispositions=%s, engine_trusted=%d, "
             "conversational_untrusted=%d, profile=%s, rule_bundle=%s, continuation=%s, "
-            "evaluation_us=%d, wording=%s, understanding_model=%s, understanding_calls=%d, "
+            "evaluation_us=%d, wording=%s, understanding_facts=%d, uncited=%d, corrections=%s, "
+            "understanding_model=%s, understanding_calls=%d, "
             "understanding_prompt_tokens=%d, understanding_completion_tokens=%d, "
             "cache_read_tokens=%d, cache_write_tokens=%d, understanding_cache_read_tokens=%d, "
             "understanding_cache_write_tokens=%d)",
@@ -2449,6 +2560,9 @@ class AiGateway:
             telemetry.continuation,
             telemetry.evaluation_us,
             telemetry.wording,
+            telemetry.understanding_facts,
+            telemetry.uncited,
+            telemetry.corrections,
             telemetry.understanding_model,
             telemetry.understanding_calls,
             telemetry.understanding_prompt_tokens,
