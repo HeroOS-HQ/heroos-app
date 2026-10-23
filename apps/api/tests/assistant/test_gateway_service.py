@@ -11,6 +11,7 @@ operational facts only.
 
 import json
 import logging
+from datetime import date
 from typing import Any
 
 import pytest
@@ -20,6 +21,7 @@ from app.assistant.gateway.service import (
     DEVELOPMENT_NOTICE,
     FALLBACK_LEADS,
     MAX_PROVIDER_CALLS,
+    AiGateway,
     FounderTurn,
     GatewayFailure,
 )
@@ -337,3 +339,70 @@ def test_the_handoff_records_the_understanding_and_its_bundle(bundle: KnowledgeB
     assert handoff.knowledge_status == "needs_more_context"
     assert handoff.jurisdiction == FED and handoff.asked == ("employee_aware_of_relevant_policy",)
     json.dumps(handoff.summary)
+
+
+# --- a model for each phase -----------------------------------------------------------
+
+
+class Modelled(ScriptedProvider):
+    """A scripted provider under another model name (the same adapter, configured apart)."""
+
+    def __init__(self, model: str, *scripts: Any) -> None:
+        super().__init__(*scripts)
+        self._model = model
+
+    @property
+    def model(self) -> str:
+        return self._model
+
+
+def test_the_understanding_and_the_response_each_use_their_own_model(
+    bundle: KnowledgeBundle, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Understanding on one model (its reading still untrusted), the reply on another."""
+    reader = Modelled("reader-model", LESS_SERIOUS)
+    writer = Modelled("writer-model", LESS_SERIOUS, response(REPLY))
+    ai = AiGateway(
+        enabled=True,
+        provider=writer,
+        understanding=reader,
+        bundle=bundle,
+        approval="TEST-APPROVAL-1",
+        allow_development_knowledge=True,
+        limits=UsageLimits(account_limit=100, global_per_minute=100, global_per_day=1000),
+    )
+    caplog.set_level(logging.INFO)
+    ai.respond(company(), FounderTurn(MESSAGE))
+    assert [c.phase for c in reader.calls] == ["understanding"]
+    assert [c.phase for c in writer.calls] == ["response"]
+    logged = caplog.text
+    assert "AI gateway turn (provider=fake, model=writer-model, outcome=ok, calls=2" in logged
+    assert "prompt_tokens=200, completion_tokens=40" in logged  # both phases
+    assert (
+        "understanding_model=reader-model, understanding_calls=1, "
+        "understanding_prompt_tokens=100, understanding_completion_tokens=20)" in logged
+    )
+
+
+def test_one_model_serves_both_phases_unless_configured_apart(bundle: KnowledgeBundle) -> None:
+    provider = ScriptedProvider(LESS_SERIOUS, response(REPLY))
+    ai = gateway(bundle, provider)
+    assert ai.understanding is provider
+    ai.respond(company(), FounderTurn(MESSAGE))
+    assert [c.phase for c in provider.calls] == ["understanding", "response"]
+
+
+def test_the_understanding_reads_dates_against_today_with_its_weekday(
+    bundle: KnowledgeBundle,
+) -> None:
+    """Found in the acceptance run: "Saturday night" read a day late. The weekday and the past
+    week's dates are given; nothing is left to the model's arithmetic."""
+    provider = ScriptedProvider(LESS_SERIOUS, response(REPLY))
+    ai = gateway(bundle, provider)
+    ai.today = lambda: date(2026, 10, 22)
+    ai.respond(company(), FounderTurn(MESSAGE))
+    data = provider.calls[0].data
+    assert data["today"] == "Thursday, 22 October 2026 (2026-10-22)"
+    assert data["past_week"][0] == {"day": "Wednesday", "date": "2026-10-21"}
+    assert {"day": "Saturday", "date": "2026-10-17"} in data["past_week"]
+    assert data["past_week"][-1] == {"day": "Thursday", "date": "2026-10-15"}

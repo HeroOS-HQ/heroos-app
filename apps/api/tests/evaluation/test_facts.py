@@ -458,3 +458,34 @@ def test_an_answer_in_more_words_binds_only_with_the_same_reading_and_no_doubt(
 def test_saying_they_cant_confirm_is_saying_they_dont_know(text: str) -> None:
     """Found in the final pass: "I can't confirm the entity yet" was asked again at once."""
     assert says_not_known(text)
+
+
+DATE = FactSchema("incident.date", "Date of the incident", "date")
+
+
+@pytest.mark.parametrize(
+    ("value", "words", "wrong"),
+    [
+        # Found in the acceptance run (the scenario day: Thursday 22 October 2026).
+        ("2026-10-18", "PUSHED a customer saturday night", True),
+        ("2026-10-17", "pushed a customer saturday night", False),
+        ("2026-10-21", "waiter pushed a customer sat night", True),
+        ("2026-10-17", "waiter pushed a customer sat night", False),
+        ("2026-10-20", "He hasn't come in since Monday", True),
+        ("2026-10-19", "He hasn't come in since Monday", False),
+        ("2026-10-14", "tues evening", True),
+        ("2026-10-15", "Thurs morning", False),
+        # No weekday named: nothing to compare (and no inference here).
+        ("2026-10-21", "it happened yesterday", False),
+        ("2026-10-16", "my friend saw it last month on the 16th", False),
+        # Any weekday the words name may be the day ("not Monday, not Tuesday").
+        ("2026-10-19", "not Monday, not Tuesday, not yesterday", False),
+    ],
+)
+def test_a_date_on_another_weekday_than_its_words_name_is_never_trusted(
+    value: str, words: str, wrong: bool
+) -> None:
+    """The model's weekday arithmetic is never the founder's day: such a reading stays proposed
+    (never noted or trusted). It never computes a date itself."""
+    assert contradicted(value, words, DATE) is wrong
+    assert not contradicted(value, words)  # other kinds of fact: not a date question

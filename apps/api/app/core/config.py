@@ -250,6 +250,11 @@ class Settings(DatabaseSettings):
     heroos_ai_gateway_enabled: bool = False
     heroos_ai_gateway_provider: AiProvider | None = None
     heroos_ai_gateway_model: str | None = None
+    # A model for each phase, when they differ: the understanding (the structured, untrusted
+    # reading of the founder's words) and the response (the founder-facing reply). Each falls back
+    # to HEROOS_AI_GATEWAY_MODEL; same provider for both.
+    heroos_ai_gateway_understanding_model: str | None = None
+    heroos_ai_gateway_response_model: str | None = None
     heroos_ai_gateway_approval: str | None = None
     heroos_ai_gateway_allow_development_knowledge: bool = False
     # Founder turns (each up to four provider requests) in this API process's
@@ -273,11 +278,25 @@ class Settings(DatabaseSettings):
     # same on any day. Unset in every deployment; production refuses it.
     heroos_evaluation_reference_date: date | None = None
 
+    @property
+    def ai_gateway_understanding_model(self) -> str | None:
+        """The understanding phase's model (HEROOS_AI_GATEWAY_MODEL unless set apart)."""
+        return self.heroos_ai_gateway_understanding_model or self.heroos_ai_gateway_model
+
+    @property
+    def ai_gateway_response_model(self) -> str | None:
+        """The response phase's model (HEROOS_AI_GATEWAY_MODEL unless set apart)."""
+        return self.heroos_ai_gateway_response_model or self.heroos_ai_gateway_model
+
     @model_validator(mode="after")
     def _validate_ai_gateway(self) -> Self:
-        model = self.heroos_ai_gateway_model
-        if model is not None and not HANNAH_MODEL_ID.fullmatch(model):
-            raise ValueError("HEROOS_AI_GATEWAY_MODEL must be a model identifier")
+        for name, model in (
+            ("HEROOS_AI_GATEWAY_MODEL", self.heroos_ai_gateway_model),
+            ("HEROOS_AI_GATEWAY_UNDERSTANDING_MODEL", self.heroos_ai_gateway_understanding_model),
+            ("HEROOS_AI_GATEWAY_RESPONSE_MODEL", self.heroos_ai_gateway_response_model),
+        ):
+            if model is not None and not HANNAH_MODEL_ID.fullmatch(model):
+                raise ValueError(f"{name} must be a model identifier")
         approval = self.heroos_ai_gateway_approval
         if approval is not None and not AI_GATEWAY_APPROVAL.fullmatch(approval):
             raise ValueError("HEROOS_AI_GATEWAY_APPROVAL must be a short reference identifier")

@@ -62,6 +62,8 @@ def test_the_gateway_is_off_by_default() -> None:
     [
         {"heroos_ai_gateway_model": "https://evil.example/v1"},
         {"heroos_ai_gateway_model": "model with spaces"},
+        {"heroos_ai_gateway_understanding_model": "https://evil.example/v1"},
+        {"heroos_ai_gateway_response_model": "model with spaces"},
         {"heroos_ai_gateway_provider": "openai"},
         {"heroos_ai_gateway_provider": "https://api.example.com"},
         {"heroos_ai_gateway_approval": "approved by me, trust me"},
@@ -117,6 +119,54 @@ def test_startup_wires_a_ready_gateway_offline_in_a_test_run(
     assert (ai.provider.name, ai.provider.model) == ("offline", "openai/gpt-oss-120b")
     assert "AI gateway enabled (provider=offline, model=openai/gpt-oss-120b" in caplog.text
     assert KEY not in caplog.text
+
+
+ANTHROPIC = READY | {
+    "heroos_ai_gateway_provider": "anthropic",
+    "heroos_ai_gateway_model": "claude-haiku-5-5",
+    "anthropic_api_key": KEY,
+}
+
+
+def test_each_phase_falls_back_to_the_gateway_model() -> None:
+    config = settings(**ANTHROPIC)
+    assert config.ai_gateway_understanding_model == "claude-haiku-5-5"
+    assert config.ai_gateway_response_model == "claude-haiku-5-5"
+    apart = settings(**ANTHROPIC, heroos_ai_gateway_understanding_model="claude-sonnet-5-5")
+    assert apart.ai_gateway_understanding_model == "claude-sonnet-5-5"
+    assert apart.ai_gateway_response_model == "claude-haiku-5-5"
+    only = settings(
+        **(ANTHROPIC | {"heroos_ai_gateway_model": None}),
+        heroos_ai_gateway_understanding_model="claude-sonnet-5-5",
+        heroos_ai_gateway_response_model="claude-haiku-5-5",
+    )
+    assert (only.ai_gateway_understanding_model, only.ai_gateway_response_model) == (
+        "claude-sonnet-5-5",
+        "claude-haiku-5-5",
+    )
+
+
+def test_the_understanding_and_the_response_each_get_their_model_from_one_provider(
+    bundle: KnowledgeBundle, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    config = settings(
+        **ANTHROPIC,
+        heroos_ai_gateway_understanding_model="claude-sonnet-5-5",
+        heroos_ai_live_smoke_enabled=True,
+    )
+    ai = load_ai_gateway(config, bundle)
+    assert ai.reason is None and ai.provider is not None and ai.understanding is not None
+    assert (ai.understanding.name, ai.understanding.model) == ("anthropic", "claude-sonnet-5-5")
+    assert (ai.provider.name, ai.provider.model) == ("anthropic", "claude-haiku-5-5")
+    assert type(ai.understanding) is type(ai.provider)  # one adapter, two models
+    assert (
+        "AI gateway enabled (provider=anthropic, model=claude-haiku-5-5, "
+        "understanding_model=claude-sonnet-5-5" in caplog.text
+    )
+    assert KEY not in caplog.text
+    same = load_ai_gateway(settings(**ANTHROPIC, heroos_ai_live_smoke_enabled=True), bundle)
+    assert same.understanding is same.provider  # one model: one instance
 
 
 def test_startup_wires_the_real_provider_only_for_a_live_smoke_test(

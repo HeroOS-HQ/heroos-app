@@ -35,6 +35,7 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Final, Literal
 
 from app.evaluation.model import FactSource, TrustedFactState, TwoState, Value
@@ -229,6 +230,25 @@ _ROUGHLY: Final = re.compile(
 )
 
 
+# A weekday the founder names, in full or in its usual short forms ("sat night", "Thurs"): Monday
+# is 0.
+_WEEKDAY: Final = re.compile(
+    r"\b(mon|tue|wed|thu|fri|sat|sun)(?:day|s|sday|nesday|r|rs|rsday|urday)?\b"
+)
+_WEEKDAYS: Final = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _another_weekday(value: str, words: str) -> bool:
+    """A date reading whose own words name only other weekdays ("Saturday night" read as a
+    Sunday): the model's arithmetic, never the founder's day (found in the acceptance run)."""
+    try:
+        day = date.fromisoformat(value)
+    except ValueError:
+        return False
+    named = {_WEEKDAYS.index(m) for m in _WEEKDAY.findall(words)}
+    return bool(named) and day.weekday() not in named
+
+
 # Doubt about what the founder knows, whatever the reading ("no" included): "not that I know of" is
 # not a definite no, and "I'd need to check" is not a fact.
 _DOUBT: Final = re.compile(
@@ -334,8 +354,9 @@ def contradicted(
     """A reading the founder's own words don't support exactly.
 
     An affirmative reading of negative or hedged words ("I did NOT speak to
-    him", "I sort of spoke to him"), any reading of hedged words, and an exact
-    number read from approximate words ("basically all week"). ``context``: the
+    him", "I sort of spoke to him"), any reading of hedged words, an exact
+    number read from approximate words ("basically all week"), and a date on
+    another weekday than the one its words name ("Saturday night" as a Sunday). ``context``: the
     founder's whole sentence around the excerpt, where a hedge counts too (found
     live: "i think her manager gave her a verbal warning ..., but honestly id need
     to check" cited without its first and last words was noted as a fact).
@@ -344,6 +365,8 @@ def contradicted(
     words = normalized(excerpt)
     around = normalized(context) if context else words
     if schema is not None and schema.kind == "count" and _ROUGHLY.search(words):
+        return True
+    if schema is not None and schema.kind == "date" and _another_weekday(reading, words):
         return True
     if reading != NOT_SURE and _DOUBT.search(around):
         return True

@@ -63,7 +63,7 @@ import re
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Final, Literal
 
 from app.assistant.gateway.catalog import EMPTY_CATALOG, RoutingCatalog, routing_catalog
@@ -454,6 +454,7 @@ class Telemetry:
     """Operational facts only: never a message, fact, value, reply, prompt or knowledge text."""
 
     provider: str
+    # The response phase's model (and the model of the turn's other replies).
     model: str
     calls: int = 0
     repairs: list[str] = field(default_factory=list)
@@ -476,6 +477,11 @@ class Telemetry:
     continuation: str = "none"
     evaluation_us: int = 0
     wording: str = "model"
+    # The understanding phase, apart (its own model when they differ; included in the totals).
+    understanding_model: str = "-"
+    understanding_calls: int = 0
+    understanding_prompt_tokens: int = 0
+    understanding_completion_tokens: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1045,6 +1051,19 @@ def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
     }
 
 
+PAST_DAYS: Final = 7
+
+
+def reference_days(today: date) -> dict[str, object]:
+    """The understanding's date context: today with its weekday, and the dates of the past week
+    by weekday ("Thursday, 22 October 2026 (2026-10-22)"; "Saturday": "2026-10-17")."""
+    past = [today - timedelta(days=n) for n in range(1, PAST_DAYS + 1)]
+    return {
+        "today": f"{today:%A}, {today.day} {today:%B %Y} ({today.isoformat()})",
+        "past_week": [{"day": f"{d:%A}", "date": d.isoformat()} for d in past],
+    }
+
+
 def utc_today() -> date:
     """The date founders' dates are read against: today, in UTC (an evaluation harness may fix
     it: ``HEROOS_EVALUATION_REFERENCE_DATE``, never in production)."""
@@ -1057,6 +1076,7 @@ class AiGateway:
         *,
         enabled: bool,
         provider: StructuredChatProvider | None,
+        understanding: StructuredChatProvider | None = None,
         bundle: KnowledgeBundle | None = None,
         approval: str | None,
         allow_development_knowledge: bool,
@@ -1067,7 +1087,11 @@ class AiGateway:
         today: Callable[[], date] = utc_today,
     ) -> None:
         self.enabled = enabled
+        # The founder-facing reply (and the server's light replies) ...
         self.provider = provider
+        # ... and the structured understanding of the founder's words, when configured apart
+        # (HEROOS_AI_GATEWAY_UNDERSTANDING_MODEL; ``understanding``). Its reading is never trusted.
+        self._understanding = understanding
         self.approval = approval
         self.allow_development_knowledge = allow_development_knowledge
         self.limits = limits
@@ -1078,6 +1102,12 @@ class AiGateway:
         )
         self._codec = continuations or ContinuationCodec(None)
         self._views: dict[str, _SnapshotView] = {}
+
+    @property
+    def understanding(self) -> StructuredChatProvider | None:
+        """The understanding phase's provider: its own model when configured apart, else the
+        response's."""
+        return self._understanding or self.provider
 
     # --- the snapshot ---------------------------------------------------------------------
 
@@ -1139,7 +1169,7 @@ class AiGateway:
     def missing(self) -> tuple[str, ...]:
         """The prerequisites that keep an enabled gateway unavailable (names only)."""
         missing = []
-        if self.provider is None:
+        if self.provider is None or self.understanding is None:
             missing.append("provider")
         if self.approval is None:
             missing.append("approval")
@@ -1189,7 +1219,12 @@ class AiGateway:
         if bundle is None:
             raise GatewayFailure("knowledge_unavailable")
         started = self._clock()
-        telemetry = Telemetry(provider=provider.name, model=provider.model)
+        assert self.understanding is not None
+        telemetry = Telemetry(
+            provider=provider.name,
+            model=provider.model,
+            understanding_model=self.understanding.model,
+        )
         if snapshot.profile is not None:
             telemetry.profile = f"{snapshot.profile.profile}@{snapshot.profile.version}"
         try:
@@ -1592,9 +1627,10 @@ class AiGateway:
                 turn, fixed=True,
             )  # fmt: skip
 
+        assert self.understanding is not None
         understanding = self._understand(
-            provider, company, founder, [lbl for lbl in labels if lbl], telemetry, deadline,
-            view.catalog, _previous_question(turn),
+            self.understanding, company, founder, [lbl for lbl in labels if lbl], telemetry,
+            deadline, view.catalog, _previous_question(turn),
         )  # fmt: skip
         # A bare answer can only answer the one question HeroOS just asked.
         answering = (
@@ -1921,8 +1957,10 @@ class AiGateway:
             # actually asked (context only: never a source for a fact).
             **({"previous_heroos_question": previous} if previous else {}),
             "founder_messages": [{"turn": i, "text": text} for i, text in enumerate(founder)],
-            # For a date the founder gives relatively ("yesterday"); a reading, never trusted.
-            "today": self.today().isoformat(),
+            # For a date the founder gives relatively ("yesterday", "on Saturday"); a reading,
+            # never trusted. The weekday and the past week's dates are given, never left to the
+            # model's arithmetic (found in the acceptance run: "Saturday night" read a day late).
+            **reference_days(self.today()),
         }
         current = len(founder) - 1
         result = self._phase(
@@ -1940,7 +1978,10 @@ class AiGateway:
         telemetry: Telemetry, deadline: _Deadline, *, fail_soft: bool, repair: bool = True,
     ) -> P | None:  # fmt: skip
         """One request and at most one schema repair. Transport failures are never retried."""
-        completion = self._call(provider, system, turns, temperature, tokens, telemetry, deadline)
+        reading = name == "a"  # the understanding phase
+        completion = self._call(
+            provider, system, turns, temperature, tokens, telemetry, deadline, reading
+        )
         try:
             return parse(completion.text)
         except ProposalError as first:
@@ -1951,7 +1992,7 @@ class AiGateway:
             logger.info("AI gateway output repaired (phase=%s, code=%s)", name, first.code)
             repaired = self._call(
                 provider, system, repair_turns(turns, completion.text, [first.code]),
-                temperature, tokens, telemetry, deadline,
+                temperature, tokens, telemetry, deadline, reading,
             )  # fmt: skip
             try:
                 return parse(repaired.text)
@@ -1963,6 +2004,7 @@ class AiGateway:
     def _call(
         self, provider: StructuredChatProvider, system: str, turns: Sequence[ChatTurn],
         temperature: float, tokens: int, telemetry: Telemetry, deadline: _Deadline,
+        understanding: bool = False,
     ) -> Completion:  # fmt: skip
         if telemetry.calls >= MAX_PROVIDER_CALLS:
             raise GatewayFailure("unavailable")
@@ -1977,6 +2019,10 @@ class AiGateway:
             raise GatewayFailure(exc.kind, retry_after=exc.retry_after) from None
         telemetry.prompt_tokens += completion.prompt_tokens or 0
         telemetry.completion_tokens += completion.completion_tokens or 0
+        if understanding:
+            telemetry.understanding_calls += 1
+            telemetry.understanding_prompt_tokens += completion.prompt_tokens or 0
+            telemetry.understanding_completion_tokens += completion.completion_tokens or 0
         return completion
 
     # --- replies the server composes ---------------------------------------------------
@@ -2167,7 +2213,8 @@ class AiGateway:
             "facts_rejected=%d, prompt_tokens=%d, completion_tokens=%d, latency_ms=%d, "
             "workflow=%s, evaluation=%s, presentation=%s, dispositions=%s, engine_trusted=%d, "
             "conversational_untrusted=%d, profile=%s, rule_bundle=%s, continuation=%s, "
-            "evaluation_us=%d, wording=%s)",
+            "evaluation_us=%d, wording=%s, understanding_model=%s, understanding_calls=%d, "
+            "understanding_prompt_tokens=%d, understanding_completion_tokens=%d)",
             telemetry.provider,
             telemetry.model,
             telemetry.outcome,
@@ -2192,4 +2239,8 @@ class AiGateway:
             telemetry.continuation,
             telemetry.evaluation_us,
             telemetry.wording,
+            telemetry.understanding_model,
+            telemetry.understanding_calls,
+            telemetry.understanding_prompt_tokens,
+            telemetry.understanding_completion_tokens,
         )

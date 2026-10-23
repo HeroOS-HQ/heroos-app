@@ -256,11 +256,22 @@ def load_ai_gateway(
     allowed development knowledge); otherwise it stays unavailable and the
     log names what is missing, never a key or a value.
     """
-    model, name = config.heroos_ai_gateway_model, config.heroos_ai_gateway_provider
+    name = config.heroos_ai_gateway_provider
+    model, understanding_model = (
+        config.ai_gateway_response_model,
+        config.ai_gateway_understanding_model,
+    )
     reference = config.heroos_evaluation_reference_date
     provider: StructuredChatProvider | None = None
-    if name is not None and model is not None:
+    understanding: StructuredChatProvider | None = None
+    if name is not None and model is not None and understanding_model is not None:
         provider = external_provider(config, name, model)
+        # The same provider for both phases; another instance only when the model differs.
+        understanding = (
+            provider
+            if understanding_model == model
+            else external_provider(config, name, understanding_model)
+        )
         if provider is None and config.heroos_ai_gateway_enabled:
             logger.warning(
                 "AI gateway provider key missing (provider=%s, key=%s)", name, PROVIDER_KEYS[name]
@@ -268,6 +279,7 @@ def load_ai_gateway(
     ai = AiGateway(
         enabled=config.heroos_ai_gateway_enabled,
         provider=provider,
+        understanding=understanding,
         bundle=knowledge,
         approval=config.heroos_ai_gateway_approval,
         allow_development_knowledge=config.heroos_ai_gateway_allow_development_knowledge,
@@ -287,10 +299,11 @@ def load_ai_gateway(
     elif ai.reason is None:
         assert ai.provider is not None
         logger.info(
-            "AI gateway enabled (provider=%s, model=%s, approval=%s, development_knowledge=%s, "
-            "account_limit=%d/5min, global_limit=%d/min %d/day)",
+            "AI gateway enabled (provider=%s, model=%s, understanding_model=%s, approval=%s, "
+            "development_knowledge=%s, account_limit=%d/5min, global_limit=%d/min %d/day)",
             ai.provider.name,
-            config.heroos_ai_gateway_model,
+            model,
+            understanding_model,
             config.heroos_ai_gateway_approval,
             ai.development_knowledge,
             config.heroos_ai_gateway_account_limit,
