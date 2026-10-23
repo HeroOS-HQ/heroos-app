@@ -12,8 +12,10 @@ from app.evaluation.facts import (
     Asked,
     PriorState,
     StatedFact,
+    answer_in_words,
     canonical,
     contradicted,
+    leading_answer,
     parse_count,
     parse_insistence,
     parse_yes_no,
@@ -402,3 +404,48 @@ def test_the_same_value_hedged_again_keeps_the_trusted_one(execution: WorkflowEx
     stated = [StatedFact("evidence.witnesses", "yes", "I think two of them saw it", False, True)]
     result = trust(execution, "I think two of them saw it", stated=stated, prior=prior)
     assert result.facts.engine["evidence.witnesses"] == "yes"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("No. The rule was never explained to her.", "no"),
+        ("No, nobody has contacted us.", "no"),
+        ("Yes, but only once.", "yes"),
+        ("Yes - last month.", "yes"),
+        ("No and we don't have any evidence either", "no"),
+        ("Yep, that's right", "yes"),
+        ("Correct, it was the 14th.", "yes"),
+        # A bare answer is parse_yes_no's; no plain answer opens these.
+        ("No.", None),
+        ("Yes!", None),
+        ("No idea, sorry.", None),
+        ("nope nobody heard frm him", None),
+        ("Nobody saw it.", None),
+        ("Not really, no.", None),
+        ("Maybe, I'd have to check.", None),
+    ],
+)
+def test_a_reply_may_open_with_a_plain_yes_or_no(text: str, expected: str | None) -> None:
+    assert leading_answer(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("message", "read", "expected"),
+    [
+        ("No. The rule was never explained to her.", "no", "no"),
+        ("Yes, but only once.", "yes", "yes"),
+        # The understanding read another answer, or none: the opening word answers nothing.
+        ("No, he knew the rule well.", "yes", None),
+        ("No, nobody has heard from him.", None, None),
+        # Doubt anywhere in the reply.
+        ("Yes, I think so.", "yes", None),
+        ("No. I was told he never got it.", "no", None),
+        ("No, but I'd need to check.", "no", None),
+    ],
+)
+def test_an_answer_in_more_words_binds_only_with_the_same_reading_and_no_doubt(
+    execution: WorkflowExecution, message: str, read: str | None, expected: str | None
+) -> None:
+    schema = execution.schemas["employee_aware_of_relevant_policy"]
+    assert answer_in_words(schema, message, read) == expected

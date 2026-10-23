@@ -890,22 +890,23 @@ def test_an_optional_case_question_the_founder_didnt_answer_isnt_offered_at_once
         return [t["about"] for t in targets]
 
     journey.ask(ABSENT, absent(topics=("workplace_reminder",)))
-    date = "Date of the incident"
-    # HeroOS asks when it happened (an optional Case question)...
+    history = "New or previously raised"
+    # HeroOS asks whether it came up before (an optional Case question, one at a time; a date
+    # comes last)...
     journey.ask(
         "Yes.",
         absent("Yes.", turn=1, topics=("workplace_reminder",)),
-        response(f"{SAFE} When did it happen?", ["c1"]),
+        response(f"{SAFE} Has this come up with him before?", ["c1"]),
     )
-    assert date in offered()
+    assert offered() == [history]
     # ...the founder talks about something else: not asked again at once.
     other = "What should I say to him when he's back?"
     journey.ask(other, absent(other, turn=2, topics=("workplace_reminder",)))
-    assert date not in offered()
+    assert history not in offered()
     # It may come back later.
     later = "OK, thanks."
     journey.ask(later, absent(later, turn=3, topics=("workplace_reminder",)))
-    assert date in offered()
+    assert history in offered()
 
 
 def test_when_the_required_question_cant_be_asked_the_case_record_questions_can(
@@ -924,6 +925,6 @@ def test_when_the_required_question_cant_be_asked_the_case_record_questions_can(
     reply = journey.ask(unknown, data)
     assert required not in last_heroos(reply)["text"]
     offered = [t["about"] for t in journey.sections()["approved_knowledge"]["question_targets"]]
-    assert "Date of the incident" in offered
+    assert offered == ["New or previously raised"]
     state = journey.sections()["conversation_state"]
     assert state["founder_does_not_know"]

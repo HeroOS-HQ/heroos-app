@@ -110,9 +110,12 @@ def test_an_unanswered_question_is_asked_at_most_twice(artifacts: Artifacts) -> 
     replies = [warning(chat)] + [
         aside(chat, f"Something else entirely, part {i}.") for i in range(5)
     ]
-    asked = [r for r in replies if r.reply.endswith(EXPLAIN_QUESTION)]
+    question = EXPLAIN_QUESTION[:1].lower() + EXPLAIN_QUESTION[1:]
+    asked = [r for r in replies if r.reply.lower().endswith(question.lower())]
     assert len(asked) == 2  # never twice in a row, never a third time
-    assert not replies[1].reply.endswith(EXPLAIN_QUESTION)
+    assert not replies[1].reply.lower().endswith(question.lower())
+    # The second time says it is still needed, never the same question word for word.
+    assert asked[1].reply.endswith(f"One thing I still need to know: {question}")
     assert all(disposition(r) == "block" for r in replies)  # the Block never weakens
     assert chat.memory.asked["given_opportunity_to_explain"] == AskRecord(2, "unanswered")
 
@@ -170,7 +173,8 @@ def test_a_correction_that_reduces_certainty_reduces_it(
     )
     facts = evaluation(result).facts
     assert facts.conversational.get(POLICY) in (None, "not_sure")
-    assert chat.memory.said.get(POLICY) in (None, "not_sure")
+    said = chat.memory.said.get(POLICY)
+    assert said is None or said.value == "not_sure"
     assert POLICY not in facts.engine
 
 
@@ -313,7 +317,8 @@ def test_a_correction_drops_what_the_understanding_no_longer_reads(artifacts: Ar
             ],
         ),
     )
-    assert chat.memory.said.get("incident.discussed_with_employee") == "yes"
+    said = chat.memory.said.get("incident.discussed_with_employee")
+    assert said is not None and said.value == "yes"
     fix = "Sorry, I got that wrong: that was another operative. For him it's the first time."
     result = chat.say(
         fix,
@@ -447,3 +452,218 @@ def test_the_jurisdiction_question_asked_again_says_why_a_yes_or_no_helps(
     assert "To settle it for the case, a plain yes or no helps: is this employee employed" in (
         result.reply
     )
+
+
+# --- where each reading came from: a correction replaces only what it corrects ----------------
+
+MONDAY = "It happened on Monday and the manager spoke to him about it."
+DISCUSSED = "incident.discussed_with_employee"
+
+
+def on_monday(chat: Remembering) -> GatewayReply:
+    return chat.say(
+        MONDAY,
+        understood(
+            MONDAY,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[
+                fact("incident.date", "2026-10-19", "on Monday"),
+                fact(DISCUSSED, "yes", "the manager spoke to him about it"),
+            ],
+        ),
+    )
+
+
+def test_a_correction_replaces_only_the_reading_it_corrects(artifacts: Artifacts) -> None:
+    """ "Actually, it was Tuesday" corrects the date; that the manager spoke to him stands, even
+    when the understanding doesn't read it again (found in the final run: a correction dropped
+    every other reading, and those facts were asked for again)."""
+    chat = Remembering(artifacts)
+    on_monday(chat)
+    assert chat.memory.said[DISCUSSED].turn == chat.memory.said["incident.date"].turn == 0
+    fix = "Actually, it was Tuesday."
+    result = chat.say(
+        fix,
+        understood(
+            fix,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[fact("incident.date", "2026-10-20", "it was Tuesday", turn=1)],
+        ),
+    )
+    facts = evaluation(result).facts
+    assert facts.conversational["incident.date"] == "2026-10-20"
+    assert facts.conversational[DISCUSSED] == "yes"
+    assert chat.memory.said["incident.date"].turn == 1
+    assert chat.memory.said[DISCUSSED].value == "yes" and chat.memory.said[DISCUSSED].turn == 0
+    known = chat.shown()["conversation_state"]["known"]
+    assert any("discussed" in k["about"].lower() and k["value"] == "Yes" for k in known)
+
+
+def test_saying_they_are_no_longer_sure_revokes_what_they_said_before(artifacts: Artifacts) -> None:
+    """ "The manager warned her", then "Actually, I'm not sure the manager spoke to her": the later,
+    less certain statement controls; the first is not kept because it came first, and it never
+    comes back on a later turn."""
+    chat = Remembering(artifacts)
+    on_monday(chat)
+    unsure = "Actually, I'm not sure the manager spoke to him."
+    result = chat.say(
+        unsure,
+        understood(
+            unsure,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[fact(DISCUSSED, "not_sure", "I'm not sure the manager spoke to him", turn=1)],
+        ),
+    )
+    assert evaluation(result).facts.conversational.get(DISCUSSED) == "not_sure"
+    later = "What should I do next?"
+    result = chat.say(
+        later, understood(later, pathway="less_serious", topics=["workplace_reminder"], turn=2)
+    )
+    facts = evaluation(result).facts
+    assert (
+        facts.conversational.get(DISCUSSED) in (None, "not_sure") and DISCUSSED not in facts.engine
+    )
+    assert facts.conversational["incident.date"] == "2026-10-19"  # untouched
+
+
+def test_a_reading_dropped_by_a_correction_never_comes_back(artifacts: Artifacts) -> None:
+    """Found while adding provenance: the reading a correction dropped stayed remembered, and
+    the next turn brought it back as said."""
+    chat = Remembering(artifacts)
+    first = "He's careless with stock, it has been raised with him before."
+    chat.say(
+        first,
+        understood(
+            first,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[
+                fact("incident.history", "raised_before", "it has been raised with him before"),
+                fact(DISCUSSED, "yes", "raised with him before"),
+            ],
+        ),
+    )
+    fix = "Sorry, I got that wrong: that was another operative. For him it's the first time."
+    chat.say(
+        fix,
+        understood(
+            fix,
+            pathway="less_serious",
+            topics=["workplace_reminder"],
+            facts=[fact("incident.history", "new", "For him it's the first time", turn=1)],
+        ),
+    )
+    later = "OK. What happens next?"
+    result = chat.say(
+        later, understood(later, pathway="less_serious", topics=["workplace_reminder"], turn=2)
+    )
+    facts = evaluation(result).facts
+    assert DISCUSSED not in facts.conversational and DISCUSSED not in chat.memory.said
+    assert facts.conversational["incident.history"] == "new"
+
+
+# --- an answer in the founder's own words: bound only when it answers the question ---------------
+
+
+def asked_policy(chat: Remembering) -> GatewayReply:
+    result = chat.say(LATE, understood(LATE, pathway="less_serious", topics=["workplace_reminder"]))
+    assert result.reply.endswith(POLICY_QUESTION)
+    return result
+
+
+def answer(chat: Remembering, words: str, previous: str, *facts: dict[str, Any]) -> GatewayReply:
+    data = understood(words, pathway="less_serious", topics=["workplace_reminder"], facts=[*facts])
+    data["previous_question_answer"] = previous
+    return chat.say(words, data)
+
+
+@pytest.mark.parametrize(
+    "words",
+    [
+        "No. The rule was never explained to him and he was not given the policy.",
+        "No, nobody ever explained it to him.",
+        "Nope - he never got the policy.",
+        "No and he never signed anything either.",
+    ],
+)
+def test_a_reply_that_opens_with_the_answer_answers_the_question(
+    artifacts: Artifacts, words: str
+) -> None:
+    """Found in the final run: "No. The rule was never explained to her ..." was not taken as the
+    answer, and the same question came back three times. The opening "No" answers it when the
+    understanding reads the reply as that answer; the rest is read for what else it says."""
+    chat = Remembering(artifacts)
+    asked_policy(chat)
+    result = answer(chat, words, "answered", fact(POLICY, "no", words, turn=1))
+    facts = evaluation(result).facts
+    assert facts.engine[POLICY] == "no" and facts.sources[POLICY] == "direct_answer"
+    assert POLICY_QUESTION.lower() not in result.reply.lower()
+
+
+@pytest.mark.parametrize(
+    ("words", "previous", "reading"),
+    [
+        # A yes or no about something else answers nothing (the brief's example).
+        ("No, nobody has heard from him.", "not_answered", None),
+        ("No, nobody has heard from him.", "answered", None),
+        # Doubt anywhere keeps it from binding.
+        ("Yes, I think so.", "answered", "yes"),
+        ("No, but I'd need to check with his manager.", "answered", "no"),
+        ("Yes. Well, I was told he got the handbook.", "answered", "yes"),
+        # The understanding reads another answer than the opening word: nothing is bound.
+        ("No, he knew the rule well.", "answered", "yes"),
+        # No plain answer opens it.
+        ("Nobody ever explained it to him.", "answered", "no"),
+        ("No idea, sorry.", "does_not_know", None),
+    ],
+)
+def test_an_opening_yes_or_no_answers_nothing_unless_the_reply_answers_the_question(
+    artifacts: Artifacts, words: str, previous: str, reading: str | None
+) -> None:
+    chat = Remembering(artifacts)
+    asked_policy(chat)
+    facts = [] if reading is None else [fact(POLICY, reading, words, turn=1)]
+    result = answer(chat, words, previous, *facts)
+    assert evaluation(result).facts.engine.get(POLICY) is None
+
+
+def test_an_answer_with_more_facts_binds_the_answer_and_reads_the_rest(
+    artifacts: Artifacts,
+) -> None:
+    """ "No, and nobody has spoken to him about it yet": the opening answers the question asked;
+    the rest is another reading (said, never trusted by the opening word)."""
+    chat = Remembering(artifacts)
+    asked_policy(chat)
+    words = "No, and nobody has spoken to him about it yet."
+    result = answer(
+        chat,
+        words,
+        "answered",
+        fact(POLICY, "no", "No", turn=1),
+        fact(DISCUSSED, "no", "nobody has spoken to him about it yet", turn=1),
+    )
+    facts = evaluation(result).facts
+    assert facts.engine[POLICY] == "no"
+    assert facts.conversational.get(DISCUSSED) == "no" and DISCUSSED not in facts.engine
+
+
+def test_a_question_answered_in_the_founders_own_words_is_not_asked_again(
+    artifacts: Artifacts,
+) -> None:
+    """An answer the server can't rely on as it stands ("Nobody ever explained it to him") is
+    noted, never trusted, and the same question is not asked again: the step stays held."""
+    chat = Remembering(artifacts)
+    asked_policy(chat)
+    words = "Nobody ever explained it to him."
+    result = answer(chat, words, "answered", fact(POLICY, "no", words, turn=1))
+    facts = evaluation(result).facts
+    assert POLICY not in facts.engine and facts.conversational[POLICY] == "no"
+    assert POLICY_QUESTION.lower() not in result.reply.lower()
+    for later in ("What else should I know?", "OK."):
+        reply = chat.say(
+            later, understood(later, pathway="less_serious", topics=["workplace_reminder"], turn=0)
+        )
+        assert POLICY_QUESTION.lower()[5:] not in reply.reply.lower()

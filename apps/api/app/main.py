@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from app.api import assistant, companies, documents, gateway, onboarding, workflows
 from app.api.assistant import HannahDemo
 from app.assistant.anthropic import AnthropicChatProvider
-from app.assistant.gateway.service import AiGateway
+from app.assistant.gateway.service import AiGateway, utc_today
 from app.assistant.groq import GroqChatProvider
 from app.assistant.limits import UsageLimits
 from app.assistant.live import OfflineProvider, external_ai_permitted
@@ -257,6 +257,7 @@ def load_ai_gateway(
     log names what is missing, never a key or a value.
     """
     model, name = config.heroos_ai_gateway_model, config.heroos_ai_gateway_provider
+    reference = config.heroos_evaluation_reference_date
     provider: StructuredChatProvider | None = None
     if name is not None and model is not None:
         provider = external_provider(config, name, model)
@@ -277,7 +278,10 @@ def load_ai_gateway(
         ),
         evaluation=evaluation,
         continuations=continuation_codec(config),
+        today=utc_today if reference is None else lambda: reference,
     )
+    if reference is not None:
+        logger.warning("AI gateway reads dates against a fixed evaluation date (%s)", reference)
     if not ai.enabled:
         logger.info("AI gateway disabled")
     elif ai.reason is None:

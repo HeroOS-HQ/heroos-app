@@ -1,4 +1,5 @@
 import re
+from datetime import date
 from pathlib import Path
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
@@ -267,6 +268,10 @@ class Settings(DatabaseSettings):
     # (app/assistant/live.py, docs/architecture/ai-gateway.md).
     heroos_automated_test: bool = False
     heroos_ai_live_smoke_enabled: bool = False
+    # The date founders' dates are read against ("yesterday", "on Monday") instead of today: an
+    # evaluation harness's fixed clock, so a frozen scenario corpus written for one day reads the
+    # same on any day. Unset in every deployment; production refuses it.
+    heroos_evaluation_reference_date: date | None = None
 
     @model_validator(mode="after")
     def _validate_ai_gateway(self) -> Self:
@@ -285,6 +290,11 @@ class Settings(DatabaseSettings):
             raise ValueError(
                 "HEROOS_AI_LIVE_SMOKE_ENABLED must be false when HEROOS_ENV=production "
                 "(a local smoke-test switch, never a deployment setting)"
+            )
+        if self.heroos_env == "production" and self.heroos_evaluation_reference_date is not None:
+            raise ValueError(
+                "HEROOS_EVALUATION_REFERENCE_DATE must be unset when HEROOS_ENV=production "
+                "(an evaluation harness's fixed clock, never a deployment setting)"
             )
         return self
 

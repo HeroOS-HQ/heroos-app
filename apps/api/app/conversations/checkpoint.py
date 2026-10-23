@@ -37,9 +37,12 @@ from typing import Final
 
 from app.assistant.gateway.memory import (
     MAX_REMEMBERED,
+    MAX_TURNS,
     OUTCOMES,
+    UNKNOWN_WORDS,
     AskRecord,
     ConversationMemory,
+    Reading,
 )
 from app.assistant.gateway.service import snapshot_versions
 from app.db.models.assistant import MAX_CHECKPOINT_BYTES
@@ -193,12 +196,16 @@ def encode(checkpoint: Checkpoint) -> dict[str, object]:
     if checkpoint.noted:
         data["noted"] = dict(sorted(checkpoint.noted.items())[:MAX_FACTS])
     memory = checkpoint.memory
-    if memory.said or memory.asked:
+    if memory.said or memory.asked or memory.turns:
         data["memory"] = {
-            "said": dict(list(memory.said.items())[-MAX_REMEMBERED:]),
+            "said": {
+                k: [r.value, r.turn, r.words]
+                for k, r in list(memory.said.items())[-MAX_REMEMBERED:]
+            },
             "asked": {
                 k: [r.times, r.last] for k, r in list(memory.asked.items())[-MAX_REMEMBERED:]
             },
+            "turns": memory.turns,
         }
     if len(_json(data)) > MAX_CHECKPOINT_BYTES:  # pragma: no cover - bounded by the limits above
         raise ValueError("checkpoint exceeds its bound")
@@ -238,35 +245,62 @@ def _reviews(data: object) -> Reviews | None:
     return Reviews(tuple(actions), matter)
 
 
+def _count(value: object, low: int, high: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+def _reading(entry: object, *, sourced: bool) -> Reading | None:
+    """One remembered reading: [value, message, words] (before readings had a source, the value
+    alone: its message and words unknown)."""
+    if not sourced:
+        return Reading(entry, 0) if isinstance(entry, (str, int)) and _value(entry) else None
+    if (
+        not isinstance(entry, list)
+        or len(entry) != 3
+        or not _value(entry[0])
+        or not _count(entry[1], 0, MAX_TURNS)
+        or not _count(entry[2], UNKNOWN_WORDS, MAX_FACTS)
+    ):
+        return None
+    return Reading(entry[0], entry[1], entry[2])
+
+
 def _memory(data: object) -> ConversationMemory | None:
     """The stored memory, or None for anything malformed (an absent one is empty)."""
     if data is None:
         return ConversationMemory()
-    if not isinstance(data, dict) or set(data) != {"said", "asked"}:
+    if not isinstance(data, dict) or set(data) not in (
+        {"said", "asked"},
+        {"said", "asked", "turns"},
+    ):
         return None
-    said, asked = data["said"], data["asked"]
+    said, asked, turns = data["said"], data["asked"], data.get("turns", 0)
     if (
         not isinstance(said, dict)
         or len(said) > MAX_REMEMBERED
-        or not all(_key(k) and _value(v) for k, v in said.items())
         or not isinstance(asked, dict)
         or len(asked) > MAX_REMEMBERED
+        or not _count(turns, 0, MAX_TURNS)
     ):
         return None
+    readings: dict[str, Reading] = {}
+    for key, entry in said.items():
+        reading = _reading(entry, sourced="turns" in data)
+        if not _key(key) or reading is None:
+            return None
+        readings[key] = reading
     records: dict[str, AskRecord] = {}
     for key, entry in asked.items():
         if (
             not _key(key)
             or not isinstance(entry, list)
             or len(entry) != 2
-            or not isinstance(entry[0], int)
-            or isinstance(entry[0], bool)
-            or not 0 < entry[0] <= 1000
+            or not _count(entry[0], 1, 1000)
             or entry[1] not in OUTCOMES
         ):
             return None
         records[key] = AskRecord(entry[0], entry[1])
-    return ConversationMemory(said=dict(said), asked=records)
+    return ConversationMemory(said=readings, asked=records, turns=turns)
 
 
 def decode(data: object) -> Checkpoint | None:

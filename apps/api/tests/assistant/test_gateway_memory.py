@@ -10,11 +10,15 @@ from app.assistant.gateway.memory import (
     JURISDICTION,
     MAX_REMEMBERED,
     STATED,
+    UNKNOWN_WORDS,
     AskRecord,
     ConversationMemory,
+    Reading,
     conversation_view,
+    provenance,
     record,
     resolve,
+    superseded,
 )
 from app.evaluation.facts import NOT_SURE, Asked
 from app.evaluation.model import TrustedFactState
@@ -65,16 +69,16 @@ def test_settled_is_said_answered_not_known_or_ignored_twice() -> None:
     assert twice.asked[KEY] == AskRecord(2, "unanswered") and KEY in twice.settled()
     not_known = after(ASKED, (Asked("fact", KEY),), does_not_know=True)
     assert KEY in not_known.settled() and KEY in not_known.not_known()
-    said = ConversationMemory(said={"misconduct_level": STATED})
+    said = ConversationMemory(said={"misconduct_level": Reading(STATED, 0)})
     assert "misconduct_level" in said.settled()
 
 
 def test_a_hedge_now_removes_what_was_said_before() -> None:
-    earlier = ConversationMemory(said={KEY: "yes"})
+    earlier = ConversationMemory(said={KEY: Reading("yes", 0)})
     hedged = after(earlier, (), hedged={KEY})
     assert KEY not in hedged.said and KEY not in hedged.settled()
-    corrected = after(earlier, (), said={KEY: "no"})
-    assert corrected.said[KEY] == "no"  # the newest statement controls
+    corrected = after(earlier, (), said={KEY: "no"}, sources={KEY: (1, 0)})
+    assert corrected.said[KEY] == Reading("no", 1, 0)  # the newest statement controls
 
 
 def test_two_questions_at_once_are_never_answered_by_a_bare_reply() -> None:
@@ -103,7 +107,7 @@ def test_memory_stays_bounded() -> None:
 
 def test_the_view_says_what_is_known_not_known_and_how_the_last_question_went() -> None:
     memory = after(
-        record(ConversationMemory(said={"misconduct_level": STATED}), [("fact", KEY)]),
+        record(ConversationMemory(said={"misconduct_level": Reading(STATED, 0)}), [("fact", KEY)]),
         (Asked("fact", KEY),),
         does_not_know=True,
     )
@@ -129,10 +133,71 @@ def test_the_view_says_what_is_known_not_known_and_how_the_last_question_went() 
 
 
 def test_an_uncertain_answer_is_recorded_as_such_and_asked_once_more_at_most() -> None:
-    hedged = after(ASKED, (Asked("fact", KEY),), hedged={KEY})
+    hedged = after(ASKED, (Asked("fact", KEY),), hedged={KEY}, uncertain={KEY})
     assert hedged.asked[KEY] == AskRecord(1, "hedged") and KEY not in hedged.settled()
     again = after(record(hedged, [("fact", KEY)]), (Asked("fact", KEY),), hedged={KEY})
-    assert again.asked[KEY] == AskRecord(2, "hedged") and KEY in again.settled()
+    assert again.asked[KEY] == AskRecord(2, "approximate") and KEY in again.settled()
+    assert again.asked_enough(KEY) and not hedged.asked_enough(KEY)
     view = conversation_view(None, LABELS, facts(), hedged, (Asked("fact", KEY),))
     assert view["answered_without_certainty"] == ["Standard explained"]
     assert "without being certain" in view["last_question"]["founder_reply"]  # type: ignore[index]
+
+
+def test_a_rough_answer_is_never_acknowledged_as_an_uncertain_one() -> None:
+    """ "Last week" is rough, not uncertain: the founder is never told they weren't certain."""
+    rough = after(ASKED, (Asked("fact", KEY),), hedged={KEY})
+    assert rough.asked[KEY] == AskRecord(1, "approximate")
+    view = conversation_view(None, LABELS, facts(), rough, (Asked("fact", KEY),))
+    assert view["answered_only_roughly"] == ["Standard explained"]
+    assert view["answered_without_certainty"] == []
+    reply = view["last_question"]["founder_reply"]  # type: ignore[index]
+    assert "roughly" in reply and "never say they were" in reply
+
+
+def test_founder_messages_are_numbered_and_readings_of_the_same_words_share_them() -> None:
+    """Provenance: which founder message a reading came from, and which of its statements."""
+    stated = [
+        ("incident.date", 2, "Actually, it was Tuesday"),  # the current message
+        ("incident.history", 0, "it has been raised with him before"),
+        ("incident.discussed_with_employee", 0, "raised with him before"),
+        ("evidence.witnesses", 0, "the whole shift saw it"),
+        ("incident.date", 0, "on Monday"),  # read again from an older message: the newest wins
+    ]
+    sources = provenance(stated, current=2, turns=7)
+    assert sources["incident.date"] == (7, 0)
+    assert sources["incident.history"] == sources["incident.discussed_with_employee"] == (5, 0)
+    assert sources["evidence.witnesses"] == (5, 1)
+    memory = ConversationMemory(turns=7)
+    after_turn = after(memory, (), said={"incident.date": "2026-10-20"}, sources=sources)
+    assert after_turn.turns == 8 and after_turn.said["incident.date"] == Reading("2026-10-20", 7, 0)
+
+
+def test_a_correction_supersedes_the_fact_and_what_rested_on_the_same_words_only() -> None:
+    memory = ConversationMemory(
+        said={
+            "incident.history": Reading("raised_before", 0, 1),
+            "incident.discussed_with_employee": Reading("yes", 0, 1),  # the same words
+            "incident.date": Reading("2026-10-19", 0, 0),  # the same message, other words
+            "evidence.witnesses": Reading("yes", 3, 1),  # another message
+            "incident.evidence_available": Reading("yes", 0, UNKNOWN_WORDS),
+        }
+    )
+    assert superseded(memory, {"incident.history"}, read_now=()) == {
+        "incident.history",
+        "incident.discussed_with_employee",
+    }
+    # Read again now, a reading stands on its own words.
+    assert superseded(
+        memory, {"incident.history"}, read_now={"incident.discussed_with_employee"}
+    ) == {"incident.history"}
+    assert superseded(memory, {"incident.date"}, read_now=()) == {"incident.date"}
+    kept = after(memory, (), dropped={"incident.history", "incident.discussed_with_employee"})
+    assert set(kept.said) == {"incident.date", "evidence.witnesses", "incident.evidence_available"}
+
+
+def test_a_carried_reading_keeps_where_it_came_from() -> None:
+    memory = ConversationMemory(said={KEY: Reading("no", 2, 1)}, turns=5)
+    carried = after(memory, (), said={KEY: "no"})  # not read again this turn: no new source
+    assert carried.said[KEY] == Reading("no", 2, 1)
+    new = after(ConversationMemory(turns=5), (), said={KEY: "no"})  # noted before sources existed
+    assert new.said[KEY] == Reading("no", 5, UNKNOWN_WORDS)

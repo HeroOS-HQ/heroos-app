@@ -9,12 +9,14 @@ request is one bounded request to the fixed endpoint, with no tools.
 import hashlib
 import json
 import logging
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from app.assistant.gateway.service import utc_today
 from app.assistant.groq import (
     GROQ_CHAT_COMPLETIONS_URL,
     MAX_JSON_CHARS,
@@ -79,6 +81,30 @@ def test_production_never_serves_development_knowledge() -> None:
             database_url="postgresql+psycopg://heroos_app@db.test.invalid/heroos",
             heroos_ai_gateway_allow_development_knowledge=True,
         )
+
+
+def test_production_never_reads_dates_against_a_fixed_evaluation_date() -> None:
+    with pytest.raises(ValidationError, match="EVALUATION_REFERENCE_DATE"):
+        Settings(  # type: ignore[call-arg]
+            _env_file=None,
+            heroos_env="production",
+            database_url="postgresql+psycopg://heroos_app@db.test.invalid/heroos",
+            heroos_evaluation_reference_date="2026-10-22",
+        )
+
+
+def test_an_evaluation_harness_fixes_the_date_founders_dates_are_read_against(
+    bundle: KnowledgeBundle, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A frozen corpus's "yesterday" was written for one day: its harness fixes that day (found
+    in the robustness pass: a run that crossed midnight read every "yesterday" a day late)."""
+    caplog.set_level(logging.INFO)
+    assert load_ai_gateway(settings(**READY), bundle).today() == utc_today()
+    fixed = load_ai_gateway(
+        settings(**READY, heroos_evaluation_reference_date="2026-10-22"), bundle
+    )
+    assert fixed.today() == date(2026, 10, 22)
+    assert "fixed evaluation date (2026-10-22)" in caplog.text
 
 
 def test_startup_wires_a_ready_gateway_offline_in_a_test_run(

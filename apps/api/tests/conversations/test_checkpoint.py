@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from app.assistant.gateway.memory import AskRecord, ConversationMemory
+from app.assistant.gateway.memory import AskRecord, ConversationMemory, Reading
 from app.assistant.gateway.service import snapshot_versions
 from app.conversations.bridge import NARRATIVE_KEY
 from app.conversations.checkpoint import (
@@ -71,14 +71,18 @@ def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
     snapshot: ExecutionSnapshot,
 ) -> None:
     memory = ConversationMemory(
-        said={POLICY: "yes", "misconduct_level": "stated"},
-        asked={POLICY: AskRecord(2, "unanswered"), "jurisdiction": AskRecord(1, "not_sure")},
+        said={POLICY: Reading("yes", 3, 0), "misconduct_level": Reading("stated", 1)},
+        asked={POLICY: AskRecord(2, "unanswered"), "jurisdiction": AskRecord(1, "approximate")},
+        turns=5,
     )
     checkpoint = Checkpoint(snapshot_versions(snapshot), trusted_state(), memory=memory)
     assert decode(encode(checkpoint)) == checkpoint
     older = stored(snapshot)
     assert "memory" not in older and decode(older) is not None
     assert decode(older).memory == ConversationMemory()  # type: ignore[union-attr]
+    # Remembered before readings had a source: the values stand, their source is unknown.
+    before = {**stored(snapshot), "memory": {"said": {POLICY: "yes"}, "asked": {}}}
+    assert decode(before).memory == ConversationMemory(said={POLICY: Reading("yes", 0)})  # type: ignore[union-attr]
 
 
 @pytest.mark.parametrize(
@@ -104,6 +108,10 @@ def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
         {"memory": {"said": {}, "asked": {"x": [0, "answered"]}}},
         {"memory": {"said": {}, "asked": {"x": [1, "maybe"]}}},
         {"memory": {"said": {}, "asked": {"x": [True, "answered"]}}},
+        {"memory": {"said": {"x": "yes"}, "asked": {}, "turns": 2}},  # a source is required
+        {"memory": {"said": {"x": ["yes", -1, 0]}, "asked": {}, "turns": 2}},
+        {"memory": {"said": {"x": ["yes", 1, 99]}, "asked": {}, "turns": 2}},
+        {"memory": {"said": {}, "asked": {}, "turns": True}},
     ],
 )
 def test_anything_it_cant_vouch_for_is_rejected(

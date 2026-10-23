@@ -81,6 +81,22 @@ STEP_RESULTS: Final[dict[str, str]] = {
     "warn": "a caution applies",
     "allow": "no HeroOS rule prevents it on what's established so far (still your decision)",
 }
+# The same results as the founder should hear them, for the response phase (never the card's
+# words: found in the final run, "HeroOS can't yet confirm it's clear of its safeguards" and
+# "approved guidance can continue" echoed in replies as system-speak).
+SPOKEN_RESULTS: Final[dict[str, str]] = {
+    "escalate": "needs a specialist's review before the employer takes it",
+    "block": "can't be taken yet",
+    "unknown": (
+        "can't be relied on yet: it depends on facts still missing (still_needed); say what is "
+        "still needed, never that it may go ahead"
+    ),
+    "warn": "a caution applies; the employer may still decide to go ahead",
+    "allow": (
+        "nothing here stands in its way on what's known so far; it's still the employer's "
+        "decision, after the required steps (never approved, lawful or recommended)"
+    ),
+}
 PROVISIONAL: Final = "A practical caution: its legal basis isn't confirmed."
 UNAVAILABLE_MESSAGE: Final = (
     "HeroOS's deterministic checks aren't available right now, so this reply can't say whether "
@@ -159,13 +175,16 @@ def requirement_question(
         )
     if prompt is not None:
         if requirement.kind == "confirmation":
-            return f"So I can rely on it for this step: {prompt[:1].lower() + prompt[1:]}"
+            # Found in the final run: "So I can rely on it for this step: ..." read as mechanical.
+            return f"Just to be sure I've understood: {prompt[:1].lower() + prompt[1:]}"
         return prompt
     label = requirement.label.rstrip(".")
     lowered = label[:1].lower() + label[1:]
     if requirement.kind == "confirmation" and requirement.candidate is not None:
         # No question of its own: "yes" confirms the server's canonical reading.
-        return f"Just to confirm: {lowered}: {display(schema, requirement.candidate)}?"
+        value = display(schema, requirement.candidate)
+        value = value[:1].lower() + value[1:]
+        return f"Just to be sure I've understood, for {lowered}: is it {value}?"
     if label.split(" ", 1)[0].lower() in QUESTION_WORDS:
         return f"Could you tell me {lowered}?"
     return f"Could you tell me about {lowered}?"
@@ -270,19 +289,21 @@ def next_step_text(evaluation: ConversationEvaluation) -> str | None:
 
 MEANING: Final[dict[Presentation, str]] = {
     "guidance": (
-        "approved guidance may continue; this never means an action is approved, lawful or "
-        "recommended"
+        "nothing is decided: help the founder with their situation; never imply that any action "
+        "is approved, lawful or recommended"
     ),
     "warning": "a caution applies; the founder remains free to continue",
-    "block": "the step named below can't safely proceed yet; the conversation continues",
+    "block": "the step named below can't be taken yet; the conversation continues",
     "expert_review": (
-        "the step named below needs specialist review before it is taken; HeroOS has no review "
-        "service yet, so never say a review was requested, assigned or will respond"
+        "the step named below needs a specialist's review before it is taken; HeroOS has no "
+        "review service yet, so never say a review was requested, assigned or will respond"
     ),
 }
 OUTCOME_RULES: Final = (
-    "HeroOS's deterministic checks decided this outcome, not you. Phrase it naturally in your "
-    "reply; never soften, remove or contradict it, and never add another outcome.",
+    "HeroOS's deterministic checks decided this outcome, not you. Say what it means for the "
+    'founder in plain words ("you can\'t take that step yet, because ..."), never how it was '
+    'decided: no "checks", "safeguards", "cleared" or "outcome". Never soften, remove or '
+    "contradict it, and never add another outcome.",
     "Never say a step that can't proceed or needs specialist review may go ahead, and never say "
     "no specialist review is needed.",
     "Keep your safe_next_step to the same meaning as the safe next step given here.",
@@ -308,7 +329,7 @@ def outcome_view(
     steps = [
         {
             "step": a.title,
-            "result": STEP_RESULTS[a.disposition],
+            "result": SPOKEN_RESULTS[a.disposition],
             # A "what if": explain it as such, never as what the employer intends.
             "asked": "hypothetically" if a.hypothetical else "as the employer's intention",
         }

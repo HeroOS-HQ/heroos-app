@@ -82,6 +82,8 @@ class QuestionTarget:
     candidate: str | int | None = None
     # The server's own wording of the question (a deterministic check needs this answer).
     question: str | None = None
+    # The definition's own question, for a reply the server composes (never added otherwise).
+    prompt: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

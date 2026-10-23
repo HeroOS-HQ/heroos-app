@@ -635,7 +635,7 @@ class AskConversations:
             prior = resumed.read.state
             next_state = replace(next_state, engine={} if prior is None else dict(prior.engine))
         attached = False
-        today = datetime.now(UTC).date()
+        today = self._gateway.today()
         if item is None:
             definition = bridge.case_definition(
                 evaluation, handoff, conversation_workflow=conversation.workflow_key, has_case=False
@@ -787,7 +787,7 @@ class AskConversations:
         execution = snapshot.execution(item.instance.workflow_key)
         if execution is None or blended or evaluation.workflow != item.instance.workflow_key:
             return answers, revision, 0, None
-        today = datetime.now(UTC).date()
+        today = self._gateway.today()
         open_steps = state.intake.available_steps
         changes = bridge.fact_changes(
             evaluation,
@@ -878,7 +878,7 @@ class AskConversations:
                 state.definition,
                 current=state.answers,
                 open_steps=state.intake.available_steps,
-                today=datetime.now(UTC).date(),
+                today=self._gateway.today(),
             )
             labels = bridge.noted_labels(accepted, state.definition)
             changes = {k: v for k, v in accepted.items() if labels.get(k) in confirmed}
@@ -1033,7 +1033,7 @@ class AskConversations:
                             state.definition,
                             current=state.answers,
                             open_steps=state.intake.available_steps,
-                            today=datetime.now(UTC).date(),
+                            today=self._gateway.today(),
                         ),
                         state.definition,
                     )

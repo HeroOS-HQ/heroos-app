@@ -63,7 +63,7 @@ import re
 import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Final, Literal
 
 from app.assistant.gateway.catalog import EMPTY_CATALOG, RoutingCatalog, routing_catalog
@@ -72,13 +72,14 @@ from app.assistant.gateway.memory import (
     JURISDICTION as MEMORY_JURISDICTION,
 )
 from app.assistant.gateway.memory import (
-    MAX_UNANSWERED,
     ConversationMemory,
     carry,
     conversation_view,
+    provenance,
     record,
     resolve,
     said_values,
+    superseded,
 )
 from app.assistant.gateway.planning import QuestionTarget, TurnPlan, plan_turn
 from app.assistant.gateway.projection import (
@@ -122,6 +123,7 @@ from app.evaluation.facts import (
     TrustOutcome,
     canonical,
     contradicted,
+    doubtful,
     says_not_known,
     trust_facts,
 )
@@ -231,6 +233,11 @@ OUTSIDE_AGAIN: Final = (
     "workplace conduct or disciplinary situation comes up, tell me about it and we can work "
     "through it."
 )
+# What a message outside the approved guidance is about, for the short reply that declines it.
+OUTSIDE_MATTERS: Final[Mapping[str, str]] = {
+    "other_hr": "an HR matter the approved guidance doesn't cover",
+    "unsupported": "something that isn't an employer's workplace HR situation",
+}
 # What HeroOS is, for a reply to a question about HeroOS itself (no approved guidance in it).
 SCOPE: Final = (
     "HeroOS helps employers in the United Arab Emirates handle workplace conduct and "
@@ -304,6 +311,12 @@ FALLBACK_FAMILY: Final[dict[str, str]] = {
     "contradicts_caution": "outcome",
 }
 OPEN_QUESTION: Final = "What would you like to work through next?"
+# How a required question asked a second time opens, by how the founder replied the first time.
+AGAIN: Final[Mapping[str, str]] = {
+    "hedged": "You weren't certain earlier, so just to check:",
+    "approximate": "Just to be sure:",
+    "unanswered": "One thing I still need to know:",
+}
 QUESTION_WORDS: Final = frozenset({"whether", "what", "which", "how", "when", "who", "where", "if"})
 ASKED_LABELS: Final[Mapping[str, str]] = {
     "insistence": "whether they still intend to go ahead with a step despite HeroOS's caution",
@@ -528,12 +541,15 @@ def target_question(target: QuestionTarget) -> str:
     """A plain question about a target, for a reply the server composes."""
     if target.question is not None:
         return target.question
+    if target.prompt is not None:
+        return target.prompt
     label = _label(target)
     lead = "Could you confirm" if target.mode == "confirm" else "Could you tell me"
     text = label[:1].lower() + label[1:]
     if label.split(" ", 1)[0].lower() in QUESTION_WORDS:
         return f"{lead} {text}?"
-    return f"{lead} more about this: {text}?"
+    # Found live: "Could you tell me more about this: date of the incident?" read as a form.
+    return f"{lead} about the {text}?"
 
 
 def _signature(result: "_Turn") -> tuple[object, ...]:
@@ -551,7 +567,7 @@ def _signature(result: "_Turn") -> tuple[object, ...]:
     )
 
 
-MAX_CASE_TARGETS: Final = 2
+MAX_CASE_TARGETS: Final = 1
 
 
 def _case_targets(
@@ -561,14 +577,18 @@ def _case_targets(
     planned: Sequence[QuestionTarget],
     unanswered: Collection[str] = (),
 ) -> tuple[QuestionTarget, ...]:
-    """Optional targets for the Case's open intake questions (never one the founder answered
-    or already said, never one asked last turn that the reply didn't answer, and never twice):
-    the reply may ask about one, in its own words."""
+    """The Case's open intake question to offer next, if any: the reply may ask about it, in its
+    own words, as its one question.
+
+    Never one the founder answered, said or gave approximately ("last week": found live, a
+    question asking for more precision reads as asking again), never one asked last turn that
+    the reply didn't answer, never one asked often enough, and never twice. One at a time (found
+    in the final run: two offered became one double question), a date last: what changes the
+    approved steps comes before the precision of a day.
+    """
     if case is None:
         return ()
     facts = evaluation.facts
-    # Never what the founder already said only approximately ("last week"): an optional question
-    # asking for more precision reads as asking again (found live).
     known = {
         *facts.engine, *facts.conversational, *facts.proposed, *(t.fact_key for t in planned),
         *unanswered,
@@ -579,10 +599,11 @@ def _case_targets(
         schema = execution.schemas.get(key)
         if schema is None or schema.kind == "blueprint" or key in known:
             continue
-        targets.append(QuestionTarget(f"c{len(targets) + 1}", key, schema.label, "ask"))
-        if len(targets) == MAX_CASE_TARGETS:
-            break
-    return tuple(targets)
+        asked = execution.definition.question(schema.question) if schema.question else None
+        prompt = None if asked is None else asked.prompt
+        targets.append(QuestionTarget("c1", key, schema.label, "ask", prompt=prompt))
+    targets.sort(key=lambda t: execution.schemas[t.fact_key].kind == "date")
+    return tuple(targets[:MAX_CASE_TARGETS])
 
 
 def _asked_again(result: "_Turn", requirement: MissingRequirement) -> bool:
@@ -611,11 +632,14 @@ def _settled(result: "_Turn") -> frozenset[str]:
 
 
 def _ignored(result: "_Turn", requirement: MissingRequirement) -> bool:
-    """Whether the founder already said they don't know this, or left it unanswered too often.
+    """Whether the question for this requirement is never asked again.
 
-    The requirement stays (its safeguard still holds the step); only the question stops: HeroOS
-    may say why it matters, never append the same question again. The jurisdiction question
-    counts as answered once the founder replied to it in any way the server could read.
+    The founder answered it in their own words (a reading HeroOS notes but can't rely on: found
+    in the final run, "No. The rule was never explained to her ..." was asked again and again),
+    said they don't know, or it was asked twice already with no plain answer. The requirement
+    stays (its safeguard still holds the step); only the question stops: HeroOS may say why it
+    matters, never append the same question again. The jurisdiction question counts as answered
+    once the founder replied to it in any way the server could read.
     """
     if requirement.kind not in ("fact", "confirmation", "jurisdiction"):
         return False
@@ -623,11 +647,7 @@ def _ignored(result: "_Turn", requirement: MissingRequirement) -> bool:
     asked = result.memory.asked.get(key)
     if asked is None:
         return False
-    if asked.last == "not_sure" or (
-        asked.last == "answered" and requirement.kind == "jurisdiction"
-    ):
-        return True
-    return asked.last == "unanswered" and asked.times >= MAX_UNANSWERED
+    return asked.last == "answered" or result.memory.asked_enough(key)
 
 
 def _strictness(result: "_Turn") -> int:
@@ -870,24 +890,31 @@ def _noted_facts(execution: WorkflowExecution, noted: Mapping[str, str]) -> dict
     return facts
 
 
-def _corrects(
+def _noted_key(execution: WorkflowExecution, question_key: str) -> str:
+    """A noted reading's fact key (noted readings are kept by Case question key)."""
+    return next(
+        (s.key for s in execution.schemas.values() if question_key in (s.key, s.question)),
+        question_key,
+    )
+
+
+def _corrected(
     execution: WorkflowExecution,
     understanding: UnderstandingProposal,
     current: int,
     earlier: Mapping[str, str],
-) -> bool:
-    """Whether the current message corrects something said before: it states another value for a
-    fact the conversation holds, or the understanding reads conflicting statements."""
-    if "conflicting_statements" in understanding.uncertainties:
-        return True
+) -> frozenset[str]:
+    """The facts the current message corrects: it states another value for one the
+    conversation holds."""
+    corrected: set[str] = set()
     for proposal in understanding.facts:
         before = earlier.get(proposal.fact_key)
         schema = execution.schemas.get(proposal.fact_key)
         if proposal.source_turn != current or before is None or schema is None:
             continue
         if canonical(schema, proposal.value) not in (None, canonical(schema, before)):
-            return True
-    return False
+            corrected.add(proposal.fact_key)
+    return frozenset(corrected)
 
 
 def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
@@ -897,6 +924,12 @@ def _blueprint_values(company: CompanyBlueprintContext) -> dict[str, object]:
         "policies_exist": company.policies_exist,
         "hr_support": company.hr_support,
     }
+
+
+def utc_today() -> date:
+    """The date founders' dates are read against: today, in UTC (an evaluation harness may fix
+    it: ``HEROOS_EVALUATION_REFERENCE_DATE``, never in production)."""
+    return datetime.now(UTC).date()
 
 
 class AiGateway:
@@ -912,6 +945,7 @@ class AiGateway:
         clock: Callable[[], float] = time.monotonic,
         evaluation: ConversationEvaluationService | None = None,
         continuations: ContinuationCodec | None = None,
+        today: Callable[[], date] = utc_today,
     ) -> None:
         self.enabled = enabled
         self.provider = provider
@@ -919,6 +953,7 @@ class AiGateway:
         self.allow_development_knowledge = allow_development_knowledge
         self.limits = limits
         self._clock = clock
+        self.today = today
         self._evaluation = evaluation or ConversationEvaluationService(
             knowledge_only_runtime(bundle)
         )
@@ -1115,6 +1150,9 @@ class AiGateway:
         started = time.perf_counter_ns()
         trust = None
         hedged: frozenset[str] = frozenset()
+        uncertain: frozenset[str] = frozenset()
+        dropped: frozenset[str] = frozenset()
+        sources: dict[str, tuple[int, int]] | None = None
         stated: set[str] = set()
         current = len(_recent_founder_messages(turn)) - 1
         request = EvaluationRequest(matter=matter, workflow=workflow)
@@ -1130,6 +1168,10 @@ class AiGateway:
                 message=turn.message,
                 prior=prior,
                 blueprint=_blueprint_values(company),
+                answered_in_words=understanding.previous_answer == "answered",
+                answers={
+                    f.fact_key: f.value for f in understanding.facts if f.source_turn == current
+                },
             )
             # The current message touched these without stating them (hedged, inferred or
             # contradicted): what was said about them before no longer stands.
@@ -1138,17 +1180,41 @@ class AiGateway:
                 for f in understanding.facts
                 if f.source_turn == current and f.fact_key not in trust.facts.conversational
             )
-            carried = carry(execution, trust.facts, turn.memory, hedged=hedged)
+            founder = _recent_founder_messages(turn)
+            uncertain = frozenset(
+                f.fact_key
+                for f in understanding.facts
+                if f.source_turn == current
+                and f.fact_key in hedged
+                and doubtful(sentence_of(founder, f))
+            )
             noted = turn.noted
             said_before = {
-                **{k: str(v) for k, v in turn.memory.said.items()},
+                **{k: str(r.value) for k, r in turn.memory.said.items()},
                 **_noted_facts(execution, noted),
             }
-            if _corrects(execution, understanding, current, said_before):
-                # A correction: only what the understanding still reads stands (found live: "it
-                # was raised with him before" corrected to "that was another operative", and the
-                # reading "discussed with him" from the same words stayed noted).
-                carried, noted = {}, {}
+            # A correction, or a statement made uncertain, replaces what was said about that fact
+            # and what rested on the same words; every other reading stands.
+            dropped = superseded(
+                turn.memory,
+                _corrected(execution, understanding, current, said_before) | hedged,
+                {f.fact_key for f in understanding.facts},
+            )
+            carried = {
+                k: v
+                for k, v in carry(execution, trust.facts, turn.memory, hedged=hedged).items()
+                if k not in dropped
+            }
+            noted = {q: v for q, v in noted.items() if _noted_key(execution, q) not in dropped}
+            sources = provenance(
+                [
+                    (f.fact_key, f.source_turn, f.excerpt)
+                    for f in sorted(understanding.facts, key=lambda f: f.source_turn != current)
+                    if f.provenance != "company_blueprint"
+                ],
+                current,
+                turn.memory.turns,
+            )
             stated = {
                 f.fact_key
                 for f in understanding.facts
@@ -1215,6 +1281,9 @@ class AiGateway:
             ),
             hedged=hedged,
             replied=understanding.previous_answer == "answered",
+            sources=sources,
+            uncertain=uncertain,
+            dropped=dropped,
         )  # fmt: skip
         return _Turn(evaluation, card, trust, prior, reconfirm, case, memory)
 
@@ -1283,15 +1352,14 @@ class AiGateway:
         earlier = result.memory.asked.get(
             MEMORY_JURISDICTION if requirement.kind == "jurisdiction" else requirement.key
         )
-        if earlier is not None and earlier.last == "hedged":
-            # Asked again after an uncertain answer (or, for the jurisdiction, an answer in the
-            # founder's own words): said so, never the bare question repeated.
-            lowered = question[:1].lower() + question[1:]
-            question = (
-                f"To settle it for the case, a plain yes or no helps: {lowered}"
-                if requirement.kind == "jurisdiction"
-                else f"You weren't certain earlier, so just to check: {lowered}"
-            )
+        if earlier is not None and earlier.last in AGAIN:
+            # Asked again (after an uncertain, rough or no answer; for the jurisdiction, an
+            # answer in the founder's own words): said so, never the bare question repeated
+            # (found in the final run: the same question again, word for word).
+            lead = AGAIN[earlier.last]
+            if requirement.kind == "jurisdiction" and earlier.last == "hedged":
+                lead = "To settle it for the case, a plain yes or no helps:"
+            question = f"{lead} {question[:1].lower()}{question[1:]}"
         kind = {"fact": "fact", "confirmation": "confirm"}.get(requirement.kind, requirement.kind)
         candidate = requirement.candidate
         if requirement.kind == "confirmation" and definition_question is not None:
@@ -1381,11 +1449,17 @@ class AiGateway:
         if fixed is not None:
             text, state = fixed
             result = self._evaluate(snapshot, company, turn, understanding, None, read, telemetry)
-            if state == "clarifying":
+            outside = OUTSIDE_MATTERS.get(understanding.intent)
+            if state == "clarifying" or outside is not None:
                 # Answered in words, not a fixed text (found live: "ok", "thanks, bye" and
-                # "what is this thing for?" got the same canned paragraph, again and again).
+                # "what is this thing for?" got the same canned paragraph, again and again; in
+                # the final run, a question outside the approved guidance got the same refusal
+                # three times, whatever it asked).
                 text = (
-                    self._light(provider, company, turn, founder, view, telemetry, deadline) or text
+                    self._light(
+                        provider, company, turn, founder, view, telemetry, deadline, outside
+                    )
+                    or text
                 )
             return self._reply(
                 company, snapshot, text, None, state, (), understanding, None, result, turn,
@@ -1552,15 +1626,17 @@ class AiGateway:
     def _light(
         self, provider: StructuredChatProvider, company: CompanyBlueprintContext,
         turn: FounderTurn, founder: Sequence[str], view: _SnapshotView, telemetry: Telemetry,
-        deadline: _Deadline,
+        deadline: _Deadline, outside: str | None = None,
     ) -> str | None:  # fmt: skip
         """A short reply in the model's words to a message with no matter to work on yet (a
-        start, a reaction, thanks, a goodbye, a question about HeroOS), or None for the fixed
+        start, a reaction, thanks, a goodbye, a question about HeroOS) or about something the
+        approved guidance doesn't cover (``outside``: what it is about), or None for the fixed
         text. It carries no approved guidance and passes the reply-safety and grounding checks;
         a provider failure fails the turn, as everywhere else."""
         coverage = list(view.catalog.coverage())
-        sections = {
+        sections: dict[str, object] = {
             "heroos_scope": {"what_heroos_does": SCOPE, "approved_guidance_covers": coverage},
+            **({"outside_heroos_guidance": outside} if outside is not None else {}),
             "company_context": company_view(company),
             "conversation": _recent_conversation(turn),
             "current_message": turn.message,
@@ -1671,7 +1747,7 @@ class AiGateway:
             **({"previous_heroos_question": previous} if previous else {}),
             "founder_messages": [{"turn": i, "text": text} for i, text in enumerate(founder)],
             # For a date the founder gives relatively ("yesterday"); a reading, never trusted.
-            "today": datetime.now(UTC).date().isoformat(),
+            "today": self.today().isoformat(),
         }
         current = len(founder) - 1
         result = self._phase(

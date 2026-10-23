@@ -275,6 +275,58 @@ def says_not_known(text: str) -> bool:
     return _NOT_KNOWING.search(normalized(text)) is not None
 
 
+def doubtful(text: str) -> bool:
+    """Words of doubt anywhere in the founder's words: a hedge, doubt about what they know,
+    hearsay, or not knowing."""
+    words = normalized(text)
+    return (
+        _HEDGES.search(words) is not None
+        or _DOUBT.search(words) is not None
+        or _HEARSAY.search(words) is not None
+        or says_not_known(text)
+    )
+
+
+MAX_LEADING_CHARS: Final = 400
+# A plain yes or no opening a longer answer: it ends at punctuation, a dash, or the conjunction
+# that goes on ("No. The rule was never explained to her", "Yes, but only once", "No and we
+# don't have any evidence either").
+_LEADING: Final = re.compile(r"(\w+)\s*(?:[,.;:!?]+|\s-+|\s(?=(?:and|but|so)\b))")
+
+
+def leading_answer(text: str) -> str | None:
+    """``yes`` or ``no`` when the message opens with a plain yes or no and goes on; None
+    otherwise (a bare answer is ``parse_yes_no``'s; "No idea" opens with no plain answer)."""
+    if len(text) > MAX_LEADING_CHARS:
+        return None
+    words = normalized(text).lstrip(" \"'(")
+    match = _LEADING.match(words)
+    if match is None or not words[match.end() :].strip(" .!?,;:-\"')"):
+        return None
+    first = match.group(1)
+    return "yes" if first in _YES else "no" if first in _NO else None
+
+
+def answer_in_words(schema: FactSchema, message: str, read: str | None) -> Value | None:
+    """The answer a longer reply to this fact's question opens with, when it can be relied on.
+
+    "No. The rule was never explained to her and she was not given the policy" answers "Had
+    the employee been told what was expected of them?" with no: the reply opens with a plain
+    yes or no, nothing in it is uncertain, and the understanding read the same answer for this
+    fact from it (``read``: its reading of the current message for this fact). "No, nobody has
+    heard from him" says nothing about where something happened: no such reading comes from
+    it, and the "No" alone answers nothing. Found live: a founder who answered "No. The rule
+    was never explained to her ..." was asked the same question again, three times.
+    """
+    lead = leading_answer(message)
+    if lead is None or read is None or schema.kind not in ("yes_no", "choice") or doubtful(message):
+        return None
+    answer = canonical(schema, lead)
+    if answer is None or answer == NOT_SURE or canonical(schema, read) != answer:
+        return None
+    return answer
+
+
 def contradicted(
     value: str, excerpt: str, schema: FactSchema | None = None, context: str | None = None
 ) -> bool:
@@ -368,8 +420,17 @@ def trust_facts(
     message: str,
     prior: PriorState,
     blueprint: Mapping[str, object],
+    answered_in_words: bool = False,
+    answers: Mapping[str, str] | None = None,
 ) -> TrustOutcome:
-    """This turn's facts by trust level, from what the founder said and the trusted prior state."""
+    """This turn's facts by trust level, from what the founder said and the trusted prior state.
+
+    A direct answer to the one question HeroOS asked is trusted: the answer on its own ("No"),
+    or a longer reply that opens with it ("No. The rule was never explained to her") when the
+    understanding read the message as answering that question (``answered_in_words``) and read
+    the same answer for its fact from it (``answers``: its readings of the current message, by
+    fact key, before any check; ``answer_in_words``).
+    """
     schemas = execution.schemas
     engine: dict[str, Value] = {}
     sources: dict[str, FactSource] = {}
@@ -386,8 +447,11 @@ def trust_facts(
     if len(prior.asked) == 1:
         asked = prior.asked[0]
         schema = schemas.get(asked.key)
+        read = (answers or {}).get(asked.key) if answered_in_words else None
         if asked.kind == "fact" and schema is not None:
             answer = canonical(schema, message)
+            if answer is None:
+                answer = answer_in_words(schema, message, read)
             if answer is not None:
                 engine[asked.key], sources[asked.key] = answer, "direct_answer"
                 answered = asked.key
@@ -395,11 +459,19 @@ def trust_facts(
             # The fact's own question asked again (HeroOS had a reading of what the founder
             # said): a direct answer to that question, never "yes, that's right".
             answer = canonical(schema, message)
+            if answer is None:
+                answer = answer_in_words(schema, message, read)
             if answer is not None:
                 engine[asked.key], sources[asked.key] = answer, "confirmation"
                 answered = asked.key
         elif asked.kind == "confirm" and schema is not None:
             reply = parse_yes_no(message)
+            lead = None if read is None or doubtful(message) else leading_answer(message)
+            if reply is None and lead is not None and read is not None:
+                # "Yes, that's right ..." confirms the reading; "No, ..." declines it (the
+                # understanding read the reply's own value for the fact: it must agree).
+                agrees = canonical(schema, read) == asked.candidate
+                reply = lead if (lead == "yes") == agrees else None
             if reply == "yes" and asked.candidate is not None and schema.valid(asked.candidate):
                 engine[asked.key], sources[asked.key] = asked.candidate, "confirmation"
                 answered = asked.key

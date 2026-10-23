@@ -587,7 +587,11 @@ def test_a_question_the_founder_didnt_answer_is_not_asked_again_at_once(
     other = "Can he be suspended while I sort this out?"
     assert founder.say(other, late(other, turn=1)).heroos.content == SAFE
     again = "And what about his contract?"
-    assert founder.say(again, late(again, turn=2)).heroos.content == SAFE_ASKING_POLICY
+    # Asked again, it says it is still needed (never the same words again).
+    assert founder.say(again, late(again, turn=2)).heroos.content == (
+        f"{SAFE} One thing I still need to know: had the employee been told what was expected "
+        "of them?"
+    )
 
 
 def test_a_contradiction_never_changes_the_case_and_corrections_append(
