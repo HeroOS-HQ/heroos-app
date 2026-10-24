@@ -229,6 +229,25 @@ def test_env_files_are_ignored_by_git_and_docker() -> None:
         assert {".env", ".env.*", "!.env.example"} <= lines, ignore_file
 
 
+def test_render_secret_file_artifacts_are_ignored_by_docker() -> None:
+    # Render places Secret Files in the build context's root too: never in an image.
+    lines = _lines(REPO_ROOT / ".dockerignore")
+    for name in (
+        "disciplinary-knowledge.private-knowledge.json",
+        "disciplinary.dev-1.private-execution-profile.json",
+    ):
+        assert {name, f"**/{name}"} <= lines, name
+
+
+def test_api_user_joins_only_the_render_secret_files_group() -> None:
+    dockerfile = (API_ROOT / "Dockerfile").read_text()
+
+    # Render's /etc/secrets is readable by group 1000; the user stays uid 1001, non-root.
+    assert "groupadd --gid 1000 render-secrets" in dockerfile
+    assert "useradd --system --uid 1001 --gid heroos --groups render-secrets heroos" in dockerfile
+    assert re.findall(r"^USER (.+)$", dockerfile, flags=re.MULTILINE) == ["heroos"]
+
+
 def test_api_image_copies_only_manifests_application_code_and_public_ca() -> None:
     dockerfile = (API_ROOT / "Dockerfile").read_text()
     copies = re.findall(r"^COPY\s+(.+)$", dockerfile, flags=re.MULTILINE)
