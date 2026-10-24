@@ -43,6 +43,7 @@ D3 = "8d217d768395"
 D4 = "c4a7e2d9b310"
 D5 = "671bbbfc74ae"
 D6 = "8860b86ef2ba"
+D7 = "da3c95517149"
 # The legacy users are bound under the development issuer, so the current API
 # can be exercised end to end with development tokens.
 LEGACY_ISSUER = DEVELOPMENT_ISSUER
