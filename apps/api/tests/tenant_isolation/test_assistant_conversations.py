@@ -393,7 +393,7 @@ def _message(tenant: Tenant, ids: dict[str, uuid.UUID], **overrides: Any) -> dic
         ("turn", {"turn_key": "KEY"}, UNIQUE_VIOLATION),
         ("conversation", {"checkpoint": []}, CHECK_VIOLATION),
         ("conversation", {"workflow_key": "probation"}, CHECK_VIOLATION),
-        ("conversation", {"case_id": "CASE", "workflow_key": None}, CHECK_VIOLATION),
+        # A Case without its workflow yet is a valid conversation since D7 (chat-first Case).
         ("conversation", {"case_id": "CASE", "workflow_key": "disciplinary"}, UNIQUE_VIOLATION),
         ("conversation", {"title": "two\nlines"}, CHECK_VIOLATION),
         ("conversation", {"revision": -1}, CHECK_VIOLATION),
@@ -619,14 +619,23 @@ def test_a_persisted_conversation_on_postgresql(
         )
         assert instance is not None
         assert instance.request_key == case_request_key(first.conversation_id)
-        (submission,) = session.scalars(select(WorkflowSubmission)).all()
-        # The founder message is a real, same-Company reference (enforced here).
-        assert (submission.origin, submission.source_message_id) == ("assistant", second.founder.id)
-        facts = session.execute(
-            text("SELECT fact_key, value FROM case_facts WHERE submission_id = :s"),
-            {"s": submission.id},
+        narrative, answer = session.scalars(
+            select(WorkflowSubmission).order_by(WorkflowSubmission.revision)
         ).all()
-        assert [(k, v) for k, v in facts] == [("context.policy_awareness", "yes")]
+        # Each founder message is a real, same-Company reference (enforced here): the first
+        # is the Case's narrative (chat-first Case), the second answers HeroOS's question.
+        assert (narrative.origin, narrative.source_message_id) == ("assistant", first.founder.id)
+        assert (answer.origin, answer.source_message_id) == ("assistant", second.founder.id)
+
+        def facts(submission: WorkflowSubmission) -> list[tuple[str, object]]:
+            rows = session.execute(
+                text("SELECT fact_key, value FROM case_facts WHERE submission_id = :s"),
+                {"s": submission.id},
+            ).all()
+            return [(k, v) for k, v in rows]
+
+        assert facts(narrative) == [("incident.narrative", LATE)]
+        assert facts(answer) == [("context.policy_awareness", "yes")]
         assert session.scalar(text("SELECT count(*) FROM case_subjects")) == 2  # the seeds only
         assert session.scalar(text("SELECT count(*) FROM workflow_progress_events")) == 0
 

@@ -23,6 +23,14 @@ FailureKind = Literal["rate_limited", "timeout", "unavailable"]
 class ChatTurn:
     role: Literal["user", "assistant"]
     content: str
+    # The start of the turn that is the same across requests (server-built reference data, never
+    # founder text or per-request state), sent before ``content``: a provider may cache it.
+    stable: str = ""
+
+    @property
+    def text(self) -> str:
+        """The whole turn as one text (a provider that doesn't cache sends this)."""
+        return f"{self.stable}\n{self.content}" if self.stable else self.content
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,17 +38,25 @@ class Completion:
     """One structured completion: the raw text (unvalidated) and reported usage."""
 
     text: str
+    # All input tokens, cached or not.
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # Of the input: read from the provider's prompt cache, and written to it (None: not reported).
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
 
 
 class AssistantError(Exception):
     """The provider gave no usable reply. ``kind`` is all a caller may show."""
 
-    def __init__(self, kind: FailureKind, *, retry_after: int | None = None) -> None:
+    def __init__(
+        self, kind: FailureKind, *, retry_after: int | None = None, status: int | None = None
+    ) -> None:
         super().__init__(kind)
         self.kind: FailureKind = kind
         self.retry_after = retry_after
+        # The provider's HTTP status when it refused the request (adapters only; never shown).
+        self.status = status
 
 
 class ChatProvider(Protocol):

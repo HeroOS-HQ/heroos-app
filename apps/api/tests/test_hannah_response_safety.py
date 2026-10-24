@@ -44,6 +44,7 @@ def test_the_reproduced_live_failure_is_replaced() -> None:
         ("I recommend terminating the employee.", "sanction_recommendation"),
         ("Suspend the worker immediately.", "sanction_recommendation"),
         ("I've already updated the case.", "action_claim"),
+        ("That confirms it happened at work, so I've recorded it.", "action_claim"),
         ("I've issued the formal warning.", "action_claim"),
         ("I've selected the serious-misconduct pathway.", "action_claim"),
         (

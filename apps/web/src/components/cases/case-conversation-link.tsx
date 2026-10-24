@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 
-import { caseWhen } from "@/components/app/cases-panel";
+import { caseWhen } from "@/lib/workflows/when";
 import { AdviserMark } from "@/components/app/workspace-chrome";
 import { ChevronRightIcon } from "@/components/site/icons";
 import type { ConversationSummary } from "@/lib/ask/conversation";

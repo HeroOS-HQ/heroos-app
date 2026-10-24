@@ -24,7 +24,7 @@ presented as a finding about the employee; changed answers are never presented
 as releasing a hold.
 """
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Final, Literal
@@ -47,6 +47,9 @@ Tone = Literal["info", "caution", "success"]
 ASSISTANT_ORIGIN: Final = SUBMISSION_ASSISTANT
 # How an Ask HeroOS update reads in the guided conversation and the Case history.
 ASSISTANT_UPDATE_TITLE: Final = "Case information updated through Ask HeroOS"
+# An Ask HeroOS submission that supersedes an answer an earlier submission gave (the founder's
+# validated correction): the earlier value stays in the record, superseded (``fact_versions``).
+ASSISTANT_CORRECTION_TITLE: Final = "Case information corrected through Ask HeroOS"
 
 _MONTHS: Final = (
     "January",
@@ -169,6 +172,8 @@ class SubmissionRecord:
     facts: Mapping[str, object]
     # ``structured`` (a step's form) or ``assistant`` (an Ask HeroOS turn, M2-NEW-07).
     origin: str = "structured"
+    # An Ask HeroOS submission's founder message (None for a step's form).
+    source_message_id: UUID | None = None
 
 
 def _jurisdiction_option_label(value: str) -> str:
@@ -365,9 +370,21 @@ def _saved_notice(
 
 
 def _assistant_notice(
-    submission: SubmissionRecord, questions: Mapping[str, Question], order: Sequence[str]
+    submission: SubmissionRecord,
+    questions: Mapping[str, Question],
+    order: Sequence[str],
+    written: Collection[str] = (),
 ) -> StatusNotice:
+    """``written``: the questions an earlier submission answered (a change to one corrects it)."""
     labels = [questions[k].label for k in order if k in submission.facts]
+    if any(k in written for k in submission.facts):
+        corrected = [questions[k].label for k in order if k in submission.facts and k in written]
+        return StatusNotice(
+            f"assistant:{submission.id}",
+            "info",
+            ASSISTANT_CORRECTION_TITLE,
+            "Corrected: " + ", ".join(corrected) + ". The earlier answer stays in the history.",
+        )
     return StatusNotice(
         f"assistant:{submission.id}",
         "info",
@@ -417,11 +434,14 @@ def compose(
     extra = {step.key: step for step in extra_steps}
     questions = {q.key: q for s in (*definition.steps, *extra_steps) for q in s.questions}
     order = list(questions)
+    written: set[str] = set()
     for submission in sorted(submissions, key=lambda s: s.revision):
         if submission.origin == ASSISTANT_ORIGIN:
             # Never shown as a form the employer filled in, and never restating a value.
-            messages.append(_assistant_notice(submission, questions, order))
+            messages.append(_assistant_notice(submission, questions, order, written))
+            written.update(submission.facts)
             continue
+        written.update(submission.facts)
         items = tuple(
             AnsweredItem(key, questions[key].label, display_answer(questions[key], value))
             for key, value in sorted(

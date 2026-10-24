@@ -82,6 +82,8 @@ class QuestionTarget:
     candidate: str | int | None = None
     # The server's own wording of the question (a deterministic check needs this answer).
     question: str | None = None
+    # The definition's own question, for a reply the server composes (never added otherwise).
+    prompt: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,6 +173,7 @@ def retrieve(
     established: Sequence[FactProposal],
     *,
     employee_unresolved: bool = False,
+    known: frozenset[str] = frozenset(),
 ) -> tuple[KnowledgeQuery, KnowledgeContext, tuple[str, ...], JurisdictionState]:
     """The knowledge request and the runtime's answer.
 
@@ -183,7 +186,7 @@ def retrieve(
     jurisdiction, state = jurisdiction_input(
         company, understanding, employee_unresolved=employee_unresolved
     )
-    known = frozenset(f.fact_key for f in established)
+    known = known | frozenset(f.fact_key for f in established)
     topics = understanding.topics
     query = _query(understanding, understanding.workflow, jurisdiction, topics, known, company)
     context = get_knowledge_context(bundle, query)
@@ -246,10 +249,11 @@ def question_targets(
     context: KnowledgeContext,
     understanding: UnderstandingProposal,
     established: Sequence[FactProposal],
+    known: frozenset[str] = frozenset(),
 ) -> tuple[QuestionTarget, ...]:
     """The highest-priority missing fact, and one more only if the same item needs it."""
     missing = set(context.missing_facts)
-    known = {f.fact_key for f in established}
+    known = known | {f.fact_key for f in established}
     tentative = {f.fact_key for f in understanding.facts if not f.establishes}
     facts = {f.key: f for f in bundle.facts}
     chosen: list[tuple[str, str]] = []
@@ -297,17 +301,25 @@ def plan_turn(
     company: CompanyBlueprintContext,
     *,
     employee_unresolved: bool = False,
+    known: frozenset[str] = frozenset(),
 ) -> TurnPlan:
-    """``employee_unresolved``: this employee's jurisdiction isn't confirmed (shared only)."""
+    """``employee_unresolved``: this employee's jurisdiction isn't confirmed (shared only).
+    ``known``: what the conversation already covered beyond this turn's understanding (trusted,
+    said earlier, not known, answered): never asked as a target."""
     established = established_facts(understanding)
     query, context, conflicted, state = retrieve(
-        bundle, understanding, company, established, employee_unresolved=employee_unresolved
+        bundle,
+        understanding,
+        company,
+        established,
+        employee_unresolved=employee_unresolved,
+        known=known,
     )
     if bundle is None:
         targets: tuple[QuestionTarget, ...] = ()
         actions: tuple[ActionNote, ...] = ()
     else:
-        targets = question_targets(bundle, context, understanding, established)
+        targets = question_targets(bundle, context, understanding, established, known)
         actions = requested_actions(bundle, context, query.topics)
     return TurnPlan(
         query=query,

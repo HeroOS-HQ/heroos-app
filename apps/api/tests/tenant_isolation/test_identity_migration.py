@@ -48,6 +48,7 @@ from tests.tenant_isolation.migration_helpers import (
     D4,
     D5,
     D6,
+    D7,
     LEGACY_ISSUER,
     PRE_B1,
     REFERENCE,
@@ -276,10 +277,14 @@ def test_current_api_requires_the_d5_schema_contract(legacy_db: LegacyDatabase) 
         with pytest.raises(IncompatibleSchemaError, match="contract is 8"):
             verify_runtime_role(engine)
         upgrade(legacy_db, D6)
+        # D6: the chat-first API creates Cases before their workflow is known (D7).
+        with pytest.raises(IncompatibleSchemaError, match="contract is 9"):
+            verify_runtime_role(engine)
+        upgrade(legacy_db, D7)
         verify_runtime_role(engine)
         with engine.connect() as conn:
-            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 9
-    assert API_MINIMUM_SCHEMA_CONTRACT == 9
+            assert conn.scalar(text("SELECT heroos_schema_contract()")) == 10
+    assert API_MINIMUM_SCHEMA_CONTRACT == 10
 
 
 # --- revocation and rollback --------------------------------------------------------

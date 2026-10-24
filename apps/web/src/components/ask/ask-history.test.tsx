@@ -179,17 +179,16 @@ describe("a stored Ask HeroOS conversation", () => {
       ],
       { conversationId: ID },
     );
-    const about = await screen.findByRole("region", { name: "About this conversation" });
+    // Chat-first Case: the light Case header over its chat.
+    const about = await screen.findByRole("banner", { name: "This case" });
+    expect(within(about).getByRole("heading", { level: 1 })).toHaveTextContent("Disciplinary case · 22 Oct");
     // The lifecycle is the Case's own: an action's Expert Review never pauses it.
-    expect(within(about).getByText("· In progress")).toBeInTheDocument();
-    expect(within(about).getAllByRole("link", { name: /Disciplinary case · 22 Oct|Open case/ })[0]).toHaveAttribute(
-      "href",
-      `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`,
-    );
+    expect(within(about).getByText("In progress")).toBeInTheDocument();
+    expect(within(about).getByRole("link", { name: "Case details" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`);
+    // Only what needs attention, each dimension apart (what HeroOS still needs, it asks in the chat).
     const attention = within(about).getByRole("list", { name: "Needs attention" });
     expect(within(attention).getByText("Expert review required before dismissal without notice")).toBeInTheDocument();
     expect(within(attention).getByText("Jurisdiction to confirm")).toBeInTheDocument();
-    expect(within(attention).getByText("Needs information")).toBeInTheDocument();
     // Checks that can't run are a technical note, never the Case's status.
     expect(within(about).getByRole("note")).toHaveTextContent("checks are temporarily unavailable");
     expect(about.textContent).not.toMatch(/Paused|Checks unavailable ·/);
@@ -219,21 +218,24 @@ describe("a stored Ask HeroOS conversation", () => {
     // The landing stays the question; History is a quiet control below it.
     expect(screen.getByRole("heading", { level: 1, name: "What can HR do for you today?" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "History" }));
-    const drawer = await screen.findByRole("dialog", { name: "Recent conversations" });
+    const drawer = await screen.findByRole("dialog", { name: "History" });
     expect(await within(drawer).findByText("Disciplinary case · 22 Oct")).toBeInTheDocument();
     expect(urls(fetcher)[0]).toBe(`${BASE}/conversations`);
-    fireEvent.click(within(drawer).getByRole("button", { name: "Show older conversations" }));
+    fireEvent.click(within(drawer).getByRole("button", { name: "Show older cases" }));
     expect(await within(drawer).findByText("Conversation")).toBeInTheDocument();
     expect(urls(fetcher)[1]).toBe(`${BASE}/conversations?before=${encodeURIComponent(cursor)}`);
-    expect(within(drawer).queryByRole("button", { name: "Show older conversations" })).toBeNull();
+    expect(within(drawer).queryByRole("button", { name: "Show older cases" })).toBeNull();
     // Titles and times, never a message preview.
     expect(drawer.textContent).not.toMatch(/SYNTHETIC|debug|JavaScript/);
     fireEvent.click(within(drawer).getByRole("button", { name: /^Conversation/ }));
     expect(await screen.findByText("[SYNTHETIC] That's outside what HeroOS helps with.")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(window.location.search).toBe(`?conversation=${OTHER}`);
-    // No Case and nothing to attend to: no status strip.
-    expect(screen.queryByRole("region", { name: "About this conversation" })).toBeNull();
+    // No Case record yet and nothing to attend to: a bare header, no attention list or details.
+    const header = screen.getByRole("banner", { name: "This case" });
+    expect(within(header).getByRole("heading", { level: 1 })).toHaveTextContent("New case");
+    expect(within(header).queryByRole("list", { name: "Needs attention" })).toBeNull();
+    expect(within(header).queryByRole("link", { name: "Case details" })).toBeNull();
   });
 
   it("shows the latest when the conversation moved on elsewhere, keeping the unsent words", async () => {
@@ -270,14 +272,14 @@ describe("a stored Ask HeroOS conversation", () => {
     expect(body.expectedRevision).toBe(2);
   });
 
-  it("starts a new conversation without storing anything or leaving the old one", async () => {
+  it("starts a new chat without storing anything or leaving the old one", async () => {
     window.history.replaceState(null, "", `/workspaces/${COMPANY_ID}?conversation=${ID}`);
     const fetcher = setup(
       [json(200, { conversation: conversation(1), messages: [founder(1, "[SYNTHETIC] Old."), heroos(2, "[SYNTHETIC] Old reply.")], nextBefore: null })],
       { conversationId: ID },
     );
     await screen.findByText("[SYNTHETIC] Old reply.");
-    fireEvent.click(screen.getByRole("button", { name: "New conversation" }));
+    fireEvent.click(screen.getByRole("button", { name: "New chat" }));
     expect(await screen.findByRole("heading", { level: 1, name: "What can HR do for you today?" })).toBeInTheDocument();
     expect(window.location.search).toBe("");
     // Only the read: nothing created, nothing deleted.

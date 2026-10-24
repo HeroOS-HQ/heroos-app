@@ -33,6 +33,7 @@ from typing import Any
 import pytest
 
 from app.assistant.gateway.service import (
+    MAX_FOUNDER_TURNS,
     OUTSIDE,
     OUTSIDE_HR,
     AiGateway,
@@ -43,6 +44,7 @@ from app.assistant.limits import UsageLimits
 from app.assistant.provider import AssistantError, ChatTurn
 from app.companies.blueprint import CompanyBlueprintContext
 from app.evaluation.evaluator import ConversationEvaluationService
+from app.evaluation.model import MissingRequirement
 from app.evaluation.presentation import PROVISIONAL
 from app.evaluation.snapshot import ExecutionRuntime
 from tests.fixtures.evaluation import PROBATION, Artifacts, codec
@@ -328,6 +330,60 @@ def test_i_and_s_a_suspension_letter_request_doesnt_skip_prerequisites(
     assert "here is the suspension notice" not in result.reply.lower()
 
 
+def answered(
+    chat: Conversation, needed: MissingRequirement, earlier: list[dict[str, Any]]
+) -> GatewayReply:
+    """A plain "Yes." to what HeroOS asks. What the founder said in their own words (the 20 days)
+    is confirmed only once they go ahead with the step it holds, never merely because it exists."""
+    if needed.kind == "confirmation":
+        ahead = "So can I suspend him for 20 days?"
+        asked = chat.say(
+            ahead,
+            understood(
+                ahead,
+                topics=["disciplinary_suspension"],
+                actions=[("opt-suspension", "suspend him")],
+                facts=earlier,
+                turn=chat.turn,
+            ),
+        )
+        assert asked.reply.endswith(
+            "Before you go ahead, I need a plain answer on something you mentioned earlier: for "
+            "proposed suspension days, is it 20?"
+        )
+    return chat.say("Yes.", understood("Yes.", topics=["disciplinary_suspension"], facts=earlier))
+
+
+def test_an_answer_to_another_question_never_asks_for_a_confirmation(
+    artifacts: Artifacts,
+) -> None:
+    """The founder answering HeroOS's questions isn't going ahead with the step: what they said in
+    their own words (the 20 days) is not asked back then (found in the coverage pass)."""
+    chat = Conversation(artifacts)
+    opening = "I want to suspend him without pay for 20 days as punishment."
+    chat.say(
+        opening,
+        understood(
+            opening,
+            topics=["disciplinary_suspension"],
+            actions=[("opt-suspension", "suspend him")],
+            facts=[fact("proposed_suspension_days", "20", "for 20 days")],
+        ),
+    )
+    earlier = [
+        fact(
+            "proposed_suspension_days", "20", "for 20 days", turn=0, provenance="prior_user_message"
+        )
+    ]
+    for _ in range(2):  # the opportunity to explain, then the investigation
+        result = chat.say(
+            "Yes.", understood("Yes.", topics=["disciplinary_suspension"], facts=earlier)
+        )
+    assert evaluation(result).missing[0].kind == "confirmation"
+    assert "is it 20" not in result.reply
+    assert "proposed_suspension_days" not in evaluation(result).facts.engine
+
+
 def test_j_over_the_cap_warns_then_blocks_only_on_explicit_insistence(
     artifacts: Artifacts,
 ) -> None:
@@ -354,9 +410,7 @@ def test_j_over_the_cap_warns_then_blocks_only_on_explicit_insistence(
         )
     ]
     while asked[-1].kind != "insistence" and len(asked) < 5:
-        result = chat.say(
-            "Yes.", understood("Yes.", topics=["disciplinary_suspension"], facts=earlier)
-        )
+        result = answered(chat, asked[-1], earlier)
         asked.append(evaluation(result).missing[0])
     assert [(m.key, m.kind) for m in asked[:-1]] == [
         ("given_opportunity_to_explain", "fact"),
@@ -370,7 +424,7 @@ def test_j_over_the_cap_warns_then_blocks_only_on_explicit_insistence(
     assert warned.facts.sources["proposed_suspension_days"] == "confirmation"
     assert warned.missing[0].kind == "insistence"
     targets = chat.provider.phase("response")[0].data["approved_knowledge"]["question_targets"]  # type: ignore[union-attr]
-    assert "go ahead" in targets[0]["ask"]  # the server's own question
+    assert "go ahead" in targets[0]["heroos_asks_after_your_reply"]  # the server's own question
     # Tone and repetition are not insistence.
     shouted = chat.say(
         "I WANT TO SUSPEND HIM FOR 20 DAYS!!!",
@@ -484,7 +538,7 @@ def test_o_no_jurisdiction_specific_result_while_unresolved(artifacts: Artifacts
     assert kind(conflicted) == "block"
     assert evaluation(conflicted).missing[0].kind == "jurisdiction"
     targets = chat.provider.phase("response")[0].data["approved_knowledge"]["question_targets"]  # type: ignore[union-attr]
-    assert "UAE Federal" in targets[0]["ask"]
+    assert "UAE Federal" in targets[0]["heroos_asks_after_your_reply"]
     answered = chat.say("Yes.", understood("Yes.", uncertainties=["jurisdiction_conflict"]))
     assert evaluation(answered).jurisdiction == FED
     assert evaluation(answered).jurisdiction_state == "resolved"
@@ -762,17 +816,9 @@ def test_an_off_topic_turn_never_drops_trusted_state(artifacts: Artifacts) -> No
             facts=[fact("proposed_suspension_days", "20", "for 20 days")],
         ),
     )
-    while (
-        evaluation(
-            result := chat.say(
-                "Yes.", understood("Yes.", topics=["disciplinary_suspension"], facts=facts)
-            )
-        )
-        .missing[0]
-        .kind
-        != "insistence"
-    ):
-        pass
+    result = chat.say("Yes.", understood("Yes.", topics=["disciplinary_suspension"], facts=facts))
+    while (needed := evaluation(result).missing[0]).kind != "insistence":
+        result = answered(chat, needed, facts)
     blocked = chat.say(
         "Yes, I still want to go ahead.", understood("Yes, I still want to go ahead.")
     )
@@ -789,7 +835,8 @@ def test_an_off_topic_turn_never_drops_trusted_state(artifacts: Artifacts) -> No
             topics=["disciplinary_suspension"],
             actions=[("opt-suspension", "that suspension")],
             facts=facts,
-            turn=chat.turn,
+            # Numbered within the messages the understanding reads (the newest ones).
+            turn=min(chat.turn, MAX_FOUNDER_TURNS),
         ),
     )
     assert kind(again) == "block"  # the insistence and the trusted facts came back

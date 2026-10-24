@@ -66,8 +66,11 @@ WORKFLOW_DECISION_CORRECTION = (
 )
 # M2-NEW-07: one Ask HeroOS turn (the conversation, its Case and facts, persisted).
 GATEWAY_MESSAGE = ("POST", "/companies/{company_id}/assistant/messages")
+# Chat-first Case: the employer saves what HeroOS noted from the conversation to its Case.
+NOTED_SAVE = ("POST", "/companies/{company_id}/assistant/conversations/{conversation_id}/noted")
 ADMIN_ROUTES = {
     GATEWAY_MESSAGE,
+    NOTED_SAVE,
     ADMIN_BLUEPRINT_UPDATE,
     WORKFLOW_CASE_CREATE,
     WORKFLOW_ANSWERS_SAVE,
@@ -109,7 +112,7 @@ GATEWAY_READS = {
     ("GET", "/companies/{company_id}/assistant/conversations/{conversation_id}"),
     ("GET", "/companies/{company_id}/assistant/conversations/{conversation_id}/messages"),
 }
-GATEWAY_ROUTES = {*GATEWAY_READS, GATEWAY_MESSAGE}
+GATEWAY_ROUTES = {*GATEWAY_READS, GATEWAY_MESSAGE, NOTED_SAVE}
 # Ask HeroOS's staging chat-only demo: a message POST that changes nothing, behind its own
 # switch (HEROOS_CHAT_ONLY_DEMO), through the Hannah demo's provider.
 CHAT_ONLY_MESSAGE = ("POST", "/companies/{company_id}/assistant/chat")
@@ -230,17 +233,19 @@ def test_assistant_routes_are_admin_only_switched_and_cannot_write() -> None:
         assert require_company_admin in calls, key
         assert get_company_admin_read_scope in calls, key
         assert get_company_admin_scope in calls, key
-    # The one Ask HeroOS write: the administrator scope, the role checked again in it.
-    calls = _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
-    assert require_company_admin in calls and get_company_admin_scope in calls
-    assert get_company_admin_read_scope not in calls
+    # The Ask HeroOS writes (the turn, saving what was noted): the administrator scope, the
+    # role checked again in it, and the chat-only switch obeyed.
+    for key in (GATEWAY_MESSAGE, NOTED_SAVE):
+        calls = _dependency_calls(routes[key].dependant)
+        assert require_company_admin in calls and get_company_admin_scope in calls, key
+        assert get_company_admin_read_scope not in calls, key
+        assert chat_only_demo in calls, key
     assert require_hannah_demo in _dependency_calls(routes[ASSISTANT_MESSAGE].dependant)
     # The gateway is not the demo: its own switch and prerequisites, never the demo's.
     assert require_hannah_demo not in _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
     # The chat-only demo: its own switch, never the Hannah demo's; the turn obeys it too.
     chat_only = _dependency_calls(routes[CHAT_ONLY_MESSAGE].dependant)
     assert require_chat_only in chat_only and require_hannah_demo not in chat_only
-    assert chat_only_demo in _dependency_calls(routes[GATEWAY_MESSAGE].dependant)
 
 
 def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
@@ -271,13 +276,15 @@ def test_the_assistant_cannot_reach_the_database_or_the_workflow() -> None:
 def test_the_gateway_never_reaches_the_web_or_source_documents() -> None:
     """M2-NEW-05: no open-web research, URL fetching, browsing or raw-source reading.
 
-    Only the provider adapter (``app.assistant.groq``) opens a connection, to
-    its fixed endpoint. The gateway itself imports no network, document or
-    evaluation machinery, and its instructions name no tool.
+    Only the provider adapters (``app.assistant.anthropic``, ``app.assistant.groq``)
+    open a connection, through ``app.assistant.transport``, to their fixed
+    endpoints. The gateway itself imports no network, document or evaluation
+    machinery, and its instructions name no tool.
     """
     forbidden = (
         "urllib", "httpx", "requests", "socket", "http.client", "aiohttp", "ssl", "scripts",
         "zipfile", "xml", "openpyxl", "docx", "subprocess", "app.assistant.groq",
+        "app.assistant.anthropic", "app.assistant.transport", "anthropic", "openai", "groq",
     )  # fmt: skip
     for path in (APP / "assistant" / "gateway").rglob("*.py"):
         imported = _imports(path)
@@ -348,6 +355,7 @@ def test_no_route_manages_access_to_existing_companies() -> None:
         "/companies/{company_id}/assistant/conversations",
         "/companies/{company_id}/assistant/conversations/{conversation_id}",
         "/companies/{company_id}/assistant/conversations/{conversation_id}/messages",
+        "/companies/{company_id}/assistant/conversations/{conversation_id}/noted",
     }
 
 

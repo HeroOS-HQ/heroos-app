@@ -79,6 +79,7 @@ AUTHORITY = "[SYNTHETIC] Licensing authority"
 CAROL = "carol-subject"
 POLICY = "employee_aware_of_relevant_policy"
 POLICY_QUESTION = "context.policy_awareness"
+NARRATIVE_QUESTION = "incident.narrative"
 TITLE = re.compile(r"^Disciplinary case · \d{1,2} [A-Z][a-z]{2}$")
 TICKETS = re.compile(r"ticket|submitted|notified|awaiting|we.ll reply|sent to", re.IGNORECASE)
 
@@ -315,12 +316,15 @@ def test_b_unclear_then_clarified_attaches_one_case_to_the_same_conversation(
     first = alice.say(
         "[SYNTHETIC] I need help with an employee.", understanding(intent="unclear", workflow=None)
     )
-    assert first["conversation"]["case"] is None
+    # Chat-first Case: the first message starts the conversation's Case, workflow not known yet.
+    case = first["conversation"]["case"]
+    assert case is not None and case["title"] == "New case"
     assert len(alice.detail()["messages"]) == 2
     said = "[SYNTHETIC] He has been late to work several times this month."
     second = alice.say(said, late(said, 1))
     assert second["conversation"]["id"] == first["conversation"]["id"]
-    assert second["conversation"]["case"] is not None
+    # The workflow attaches to that same Case: one Case for the conversation.
+    assert second["conversation"]["case"]["id"] == case["id"]
     assert cases(admin_engine, tenants.a.company) == before + 1
 
 
@@ -431,16 +435,23 @@ def test_e_a_salary_deduction_needs_expert_review_and_no_amount(alice: Admin) ->
     )
 
 
-def test_f_outside_heroos_is_stored_without_a_case(
+def test_f_outside_heroos_is_stored_in_its_case_without_a_workflow(
     alice: Admin, admin_engine: Engine, tenants: Tenants
 ) -> None:
     before = cases(admin_engine, tenants.a.company)
     result = alice.say(
         "[SYNTHETIC] Help me debug JavaScript.", understanding(intent="unsupported", workflow=None)
     )
-    assert result["conversation"]["case"] is None
+    # Chat-first Case: the conversation has its Case, and no workflow attaches to it.
+    case = result["conversation"]["case"]
+    assert case is not None and case["title"] == "New case"
     assert len(alice.detail()["messages"]) == 2
-    assert cases(admin_engine, tenants.a.company) == before
+    assert cases(admin_engine, tenants.a.company) == before + 1
+    with admin_engine.connect() as conn:
+        assert not conn.scalar(
+            text("SELECT count(*) FROM workflow_instances WHERE case_id = :case"),
+            {"case": case["id"]},
+        )
 
 
 # --- G ------------------------------------------------------------------------------------------
@@ -452,12 +463,18 @@ def test_g_a_correction_appends_and_the_latest_wins(
     said = "[SYNTHETIC] My employee has been late three times this month."
     case_id = alice.say(said, late(said))["conversation"]["case"]["id"]
     alice.say("No.", late("No.", 1))  # the direct answer to HeroOS's question: a Case fact
-    assert case_facts(admin_engine, case_id) == [(POLICY_QUESTION, "no")]
+    # The founder's first message is the Case's narrative (chat-first Case).
+    narrative = (NARRATIVE_QUESTION, said)
+    assert case_facts(admin_engine, case_id) == [narrative, (POLICY_QUESTION, "no")]
     # The correction, recorded on the Case: appended, the old fact kept, the latest wins.
     form_save(
         runtime_engine, tenants.a.context, case_id, {POLICY_QUESTION: "yes"}, "incident_context"
     )
-    assert case_facts(admin_engine, case_id) == [(POLICY_QUESTION, "no"), (POLICY_QUESTION, "yes")]
+    assert case_facts(admin_engine, case_id) == [
+        narrative,
+        (POLICY_QUESTION, "no"),
+        (POLICY_QUESTION, "yes"),
+    ]
     alice.say("[SYNTHETIC] Thanks.", late("[SYNTHETIC] Thanks.", 2))
     assert latest_record(admin_engine)["facts"]["engine_trusted"][POLICY] == "yes"
     assert len(alice.detail()["messages"]) == 6  # the conversation is kept whole

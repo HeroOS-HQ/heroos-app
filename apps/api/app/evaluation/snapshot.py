@@ -417,6 +417,25 @@ def _schemas(
             schemas[fact.key] = FactSchema(
                 fact.key, fact.label, "blueprint", blueprint=fact.blueprint
             )
+    # Chat-first Case: the definition's own intake questions that no knowledge fact holds
+    # (the Case's answers, e.g. whether the issue was raised before) are collected in the
+    # conversation too, under their question key and with the same trust rules. Never a
+    # sensitive question (or one a sensitive fact holds), the jurisdiction, or free text.
+    for question in questions.values():
+        if question.key in question_facts or question.sensitive:
+            continue
+        if question.options_from is not None:
+            continue  # the jurisdiction gate owns the jurisdiction
+        if question.kind == "choice":
+            values = tuple(o.value for o in question.options)
+            kind = "yes_no" if values == _YES_NO else "choice"
+            schemas[question.key] = FactSchema(
+                question.key, question.label, kind, question.options, question=question.key
+            )
+        elif question.kind == "date":
+            schemas[question.key] = FactSchema(
+                question.key, question.label, "date", question=question.key
+            )
     unknown = set(declared) - {f.key for f in knowledge.facts if not f.sensitive}
     if unknown:
         # The rule bundle types a fact the approved knowledge doesn't have.

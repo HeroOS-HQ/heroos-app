@@ -27,7 +27,6 @@ describe("browser/server boundary", () => {
     expect(clientFiles.map(({ path }) => path).sort()).toEqual([
       "components/app/account-menu.tsx",
       "components/app/back-forward-cache-guard.tsx",
-      "components/app/cases-panel.tsx",
       "components/app/workspace-header.tsx",
       "components/ask/ask-chat.tsx",
       "components/ask/ask-conversation.tsx",
@@ -98,6 +97,8 @@ describe("browser/server boundary", () => {
     expect(routes.map(({ path }) => path).sort()).toEqual([
       "app/bff/companies/[companyId]/ask/route.ts",
       "app/bff/companies/[companyId]/assistant/chat/route.ts",
+      // Chat-first Case: the employer saves what HeroOS noted to the conversation's Case.
+      "app/bff/companies/[companyId]/assistant/conversations/[conversationId]/noted/route.ts",
       "app/bff/companies/[companyId]/assistant/messages/route.ts",
       "app/bff/companies/[companyId]/blueprint/route.ts",
       "app/bff/companies/[companyId]/cases/[caseId]/assistant/messages/route.ts",
@@ -112,7 +113,7 @@ describe("browser/server boundary", () => {
     ]);
     for (const { path, text } of routes) {
       expect(text, path).toMatch(
-        /handle(Registration|BlueprintUpdate|AskStart|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview|AssistantMessage|GatewayMessage|AskChat)\(request/,
+        /handle(Registration|BlueprintUpdate|AskStart|CaseCreate|AnswersSave|PathwaySelect|TransitionRequest|DecisionRecord|DecisionCorrection|DocumentPreview|AssistantMessage|GatewayMessage|AskChat|NotedSave)\(request/,
       );
       expect(text, path).not.toMatch(/export async function GET/);
     }

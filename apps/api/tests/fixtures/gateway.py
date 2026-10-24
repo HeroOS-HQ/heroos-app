@@ -35,8 +35,10 @@ class Call:
 
     @property
     def data(self) -> dict[str, Any]:
-        """The data sections of the request (the first user message)."""
-        loaded: dict[str, Any] = json.loads(self.turns[0].content)
+        """The data sections of the request (the first user message, its stable part included)."""
+        first = self.turns[0]
+        loaded: dict[str, Any] = json.loads(first.stable) if first.stable else {}
+        loaded.update(json.loads(first.content))
         return loaded
 
     @property

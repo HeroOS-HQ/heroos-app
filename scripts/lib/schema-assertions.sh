@@ -183,7 +183,6 @@ EXPECTED_CONSTRAINTS=(
   uq_assistant_conversations_company_id_id
   uq_assistant_conversations_company_id_case_id
   ck_assistant_conversations_workflow_key
-  ck_assistant_conversations_case_workflow
   ck_assistant_conversations_revision
   ck_assistant_conversations_title
   ck_assistant_conversations_checkpoint
@@ -311,6 +310,15 @@ assert_schema() {
     return 1
   fi
   echo "Constraints OK: ${#EXPECTED_CONSTRAINTS[@]} expected constraints present"
+
+  # D7 (chat-first Case): a conversation's Case may exist before its workflow is
+  # known, so D6's case-requires-workflow check is gone.
+  if [[ "$(psql_db "${db}" "SELECT count(*) FROM pg_constraint c
+      JOIN pg_namespace n ON n.oid = c.connamespace
+      WHERE n.nspname = 'public' AND c.conname = 'ck_assistant_conversations_case_workflow';")" != "0" ]]; then
+    echo "Unexpected constraint: ck_assistant_conversations_case_workflow (dropped by D7)" >&2
+    return 1
+  fi
 
   # The cross-tenant guard must null only subject_id, never the tenant column.
   if [[ "$(psql_db "${db}" "SELECT pg_get_constraintdef(oid) FROM pg_constraint
@@ -446,11 +454,11 @@ assert_schema() {
       OR has_table_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE, DELETE, TRUNCATE')
       OR has_any_column_privilege('${RUNTIME_ROLE}', 'public.workflow_decision_records', 'UPDATE')
       OR has_any_column_privilege('${OPERATOR_ROLE}', 'public.workflow_decision_records', 'SELECT, INSERT, UPDATE')
-      OR heroos_schema_contract() <> 9;")" != "f" ]]; then
+      OR heroos_schema_contract() <> 10;")" != "f" ]]; then
     echo "Workflow tables: unexpected privileges or schema contract." >&2
     return 1
   fi
-  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 9)"
+  echo "Workflow tables OK (append-only for ${RUNTIME_ROLE}, nothing for ${OPERATOR_ROLE}, contract 10)"
 
   # M2-NEW-03 (D5): the Company Blueprint context is written by the API role
   # only (column-level INSERT and UPDATE); the operator neither reads nor

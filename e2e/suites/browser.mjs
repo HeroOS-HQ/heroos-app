@@ -372,7 +372,7 @@ export async function run(ctx) {
   await a.waitForText("What can HR do for you today?");
   const betaHtml = await a.html();
   check("UI-20", "after switching to Beta the page holds none of Alpha's private details", !betaHtml.includes("Alpha Holdings LLC") && !betaHtml.includes("Retail and wholesale"));
-  const memberAsk = await a.eval(`document.getElementById("ask-heroos")?.disabled === true && !document.querySelector('button[aria-label="Cases"]')`);
+  const memberAsk = await a.eval(`document.getElementById("ask-heroos")?.disabled === true && !document.querySelector('button[aria-label="History"]')`);
   await a.goto(`${webOrigin}/workspaces/${beta.companyId}/settings`);
   await a.waitForText("HeroOS uses this information");
   check("UI-21", "in Beta, founder A is a member: Ask HeroOS can't open cases and the Blueprint has no Edit", memberAsk && !(await a.eval(`Boolean(document.getElementById("edit-blueprint"))`)));
@@ -803,22 +803,20 @@ async function responsiveAndA11y(ctx, { alpha, open, shot }) {
       !looksFocused(idle) && idle.border !== FOCUS_BORDER && looksFocused(byKeyboard) && looksFocused(byMouse), JSON.stringify({ idle, byKeyboard, byMouse }));
     await ctx.screenshotOf(page, `a11y-12-ask-focused-${width}`, "form:has(#ask-heroos)");
 
-    const search = '[role="dialog"] input[type="search"]';
-    await page.waitForHydrated('button[aria-label="Cases"]');
-    await page.eval(`document.querySelector('button[aria-label="Cases"]').focus()`);
+    // Chat-first Case: History (the Company's conversations) replaced the Cases drawer and its search.
+    const history = '[role="dialog"][aria-labelledby="history-title"]';
+    const reached = (expression, message) => page.waitFor(expression, { message, timeout: 10_000 }).then(() => true, () => false);
+    await page.waitForHydrated('button[aria-label="History"]');
+    await page.eval(`document.querySelector('button[aria-label="History"]').focus()`);
     await page.press("Enter");
-    await page.waitFor(`document.querySelector(${JSON.stringify(search)})`, { message: "Cases drawer opened by keyboard" });
-    const searchIdle = await settled(search, false);
-    await tabTo(search);
-    const searchByKeyboard = await settled(search, true);
-    await page.eval("document.activeElement.blur()");
-    await settled(search, false);
-    await mouseInto(search);
-    const searchByMouse = await settled(search, true);
-    await ctx.screenshotOf(page, `a11y-13-search-focused-${width}`, '[role="dialog"]');
-    check("A11Y-13", `Search cases @${width}px: focus shows on the rounded field (keyboard and mouse), no rectangle on the input`,
-      searchIdle.border !== FOCUS_BORDER && looksFocused(searchByKeyboard) && looksFocused(searchByMouse), JSON.stringify({ searchIdle, searchByKeyboard, searchByMouse }));
+    const historyOpened = await reached(`Boolean(document.querySelector(${JSON.stringify(history)}))`, "History opened by keyboard");
+    const newChatFocused = await reached(`document.activeElement?.textContent.trim() === "New chat"`, "focus on New chat");
+    await ctx.screenshotOf(page, `a11y-13-history-${width}`, history);
     await page.press("Escape");
+    const historyClosed = await reached(`!document.querySelector(${JSON.stringify(history)})`, "History closed by Escape");
+    const focusReturned = await reached(`document.activeElement?.getAttribute("aria-label") === "History"`, "focus back on History");
+    check("A11Y-13", `History @${width}px: opens from the keyboard with focus on New chat, closes with Escape and returns focus to History`,
+      historyOpened && newChatFocused && historyClosed && focusReturned, JSON.stringify({ historyOpened, newChatFocused, historyClosed, focusReturned }));
   }
   await page.viewport(1440, 900);
 

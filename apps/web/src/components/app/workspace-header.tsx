@@ -1,13 +1,15 @@
 "use client";
 
 import { type ReactNode, useCallback, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
+
+import { ConversationHistory } from "@/components/ask/conversation-history";
 
 import { BrandMark } from "@/components/site/brand-mark";
 import { ClockIcon } from "@/components/site/icons";
 import type { CaseSummary } from "@/lib/workflows/model";
 
 import { AccountMenu, type MenuPage } from "./account-menu";
-import { CasesPanel } from "./cases-panel";
 import { ghostButton } from "./workspace-chrome";
 
 const noSubscription = () => () => {};
@@ -26,9 +28,13 @@ export type WorkspaceHeaderData = {
 
 /**
  * The workspace header (approved design): HeroOS's mark (back to Ask
- * HeroOS) and the Cases control on the left, the page's own centre (the open
- * case on a case page), and the account menu on the right. No permanent
- * navigation: the Blueprint and Company Space are in the account menu.
+ * HeroOS) and History on the left, the page's own centre (the open case on a
+ * case page), and the account menu on the right. No permanent navigation: the
+ * Blueprint and Company Space are in the account menu.
+ *
+ * History is the one list of cases (chat-first: one chat is one Case): it
+ * reopens a case's chat on Ask HeroOS. Case records from before, with no
+ * chat, are listed apart and open their case page.
  */
 export function WorkspaceHeader({
   data,
@@ -54,6 +60,7 @@ export function WorkspaceHeader({
   const closeCases = useCallback(() => setChosen(false), []);
   const casesButton = useRef<HTMLButtonElement>(null);
   const ask = `/workspaces/${encodeURIComponent(data.companyId)}`;
+  const go = (href: string) => window.location.assign(href);
 
   return (
     <>
@@ -68,14 +75,14 @@ export function WorkspaceHeader({
               <button
                 aria-expanded={casesOpen}
                 aria-haspopup="dialog"
-                aria-label="Cases"
+                aria-label="History"
                 className={ghostButton}
                 onClick={() => setChosen(true)}
                 ref={casesButton}
                 type="button"
               >
                 <ClockIcon className="size-5" />
-                <span className="hidden sm:inline">Cases</span>
+                <span className="hidden sm:inline">History</span>
               </button>
             </>
           ) : null}
@@ -100,15 +107,20 @@ export function WorkspaceHeader({
           />
         </div>
       </header>
-      {casesOpen && data.cases !== null ? (
-        <CasesPanel
-          cases={data.cases}
-          companyId={data.companyId}
-          currentCaseId={currentCaseId}
-          onClose={closeCases}
-          returnTo={casesButton}
-        />
-      ) : null}
+      {casesOpen && data.cases !== null
+        ? createPortal(
+            <ConversationHistory
+              companyId={data.companyId}
+              currentId={null}
+              legacyCases={data.cases.filter((item) => item.id !== currentCaseId)}
+              onChoose={(id) => go(`${ask}?conversation=${encodeURIComponent(id)}`)}
+              onClose={closeCases}
+              onNew={() => go(ask)}
+              returnTo={casesButton}
+            />,
+            document.body,
+          )
+        : null}
     </>
   );
 }

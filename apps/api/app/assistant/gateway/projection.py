@@ -223,7 +223,11 @@ def _redact(texts: Iterable[str], redactor: list[tuple[re.Pattern[str], str]]) -
     return out
 
 
-def knowledge_view(bundle: KnowledgeBundle, plan: TurnPlan) -> KnowledgeView:
+def knowledge_view(
+    bundle: KnowledgeBundle, plan: TurnPlan, meanings: Mapping[str, str] | None = None
+) -> KnowledgeView:
+    """The approved knowledge and question targets the reply may use; ``meanings``: what a
+    Case-backed fact means exactly (the routing catalog's), so a question asks just that."""
     context = plan.context
     redactor = _redactor(bundle)
     budget = KNOWLEDGE_BUDGET_CHARS
@@ -309,11 +313,14 @@ def knowledge_view(bundle: KnowledgeBundle, plan: TurnPlan) -> KnowledgeView:
             "id": t.id,
             "about": t.label,
             "mode": t.mode,
-            **({"ask": t.question} if t.question else {}),
+            **({"means": meanings[t.fact_key]} if meanings and t.fact_key in meanings else {}),
+            # A deterministic check's question: HeroOS asks it itself, in these words.
+            **({"heroos_asks_after_your_reply": t.question} if t.question else {}),
         }
         for t in plan.targets
     ]
     shown += [t.label for t in plan.targets] + [t.question for t in plan.targets if t.question]
+    shown += [meanings[t.fact_key] for t in plan.targets if meanings and t.fact_key in meanings]
     shown += limitations
     data: dict[str, object] = {
         "knowledge_status": STATUS[context.status],

@@ -5,7 +5,9 @@ from typing import Any
 
 import pytest
 
+from app.assistant.gateway.memory import AskRecord, ConversationMemory, Reading
 from app.assistant.gateway.service import snapshot_versions
+from app.conversations.bridge import NARRATIVE_KEY
 from app.conversations.checkpoint import (
     SCHEMA,
     CaseView,
@@ -23,6 +25,7 @@ from app.evaluation.facts import Asked
 from app.evaluation.model import TwoState
 from app.evaluation.snapshot import ExecutionSnapshot
 from app.workflows.conditions import Tri
+from app.workflows.definition import OptionsFrom
 from tests.fixtures.evaluation import PROBATION, Artifacts
 
 POLICY = "employee_aware_of_relevant_policy"
@@ -64,6 +67,32 @@ def test_a_checkpoint_round_trips_as_plain_bounded_codes(snapshot: ExecutionSnap
     assert decode(encode(Checkpoint(""))) == Checkpoint("")
 
 
+def test_the_conversations_memory_round_trips_and_an_older_checkpoint_has_none(
+    snapshot: ExecutionSnapshot,
+) -> None:
+    memory = ConversationMemory(
+        said={
+            POLICY: Reading("yes", 3, 0),
+            "misconduct_level": Reading("stated", 1),
+            # Readings that only cover their question keep how.
+            "incident_discussed_with_employee": Reading("yes", 2, 1, "implied"),
+            "evidence_available": Reading("yes", 4, 0, "uncertain"),
+            "incident.date": Reading("2026-10-12", 4, 1, "rough"),
+        },
+        asked={POLICY: AskRecord(2, "unanswered"), "jurisdiction": AskRecord(1, "approximate")},
+        turns=5,
+        told=("opt-warning:unknown",),
+    )
+    checkpoint = Checkpoint(snapshot_versions(snapshot), trusted_state(), memory=memory)
+    assert decode(encode(checkpoint)) == checkpoint
+    older = stored(snapshot)
+    assert "memory" not in older and decode(older) is not None
+    assert decode(older).memory == ConversationMemory()  # type: ignore[union-attr]
+    # Remembered before readings had a source: the values stand, their source is unknown.
+    before = {**stored(snapshot), "memory": {"said": {POLICY: "yes"}, "asked": {}}}
+    assert decode(before).memory == ConversationMemory(said={POLICY: Reading("yes", 0)})  # type: ignore[union-attr]
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -82,6 +111,19 @@ def test_a_checkpoint_round_trips_as_plain_bounded_codes(snapshot: ExecutionSnap
         {"voided": [f"k{i}" for i in range(30)]},
         {"case_revision": "1"},
         {"case_revision": True},
+        {"memory": {"said": {}}},
+        {"memory": {"said": {"x": "a value with spaces"}, "asked": {}}},
+        {"memory": {"said": {}, "asked": {"x": [0, "answered"]}}},
+        {"memory": {"said": {}, "asked": {"x": [1, "maybe"]}}},
+        {"memory": {"said": {"x": ["yes", 0, 0, "probably"]}, "asked": {}, "turns": 1}},
+        {"memory": {"said": {"x": ["yes", 0, 0, "stated", 1]}, "asked": {}, "turns": 1}},
+        {"memory": {"said": {}, "asked": {"x": [True, "answered"]}}},
+        {"memory": {"said": {"x": "yes"}, "asked": {}, "turns": 2}},  # a source is required
+        {"memory": {"said": {"x": ["yes", -1, 0]}, "asked": {}, "turns": 2}},
+        {"memory": {"said": {"x": ["yes", 1, 99]}, "asked": {}, "turns": 2}},
+        {"memory": {"said": {}, "asked": {}, "turns": True}},
+        {"memory": {"said": {}, "asked": {}, "turns": 1, "told": "opt-warning:unknown"}},
+        {"memory": {"said": {}, "asked": {}, "turns": 1, "told": [""]}},
     ],
 )
 def test_anything_it_cant_vouch_for_is_rejected(
@@ -98,8 +140,21 @@ def test_a_malformed_document_is_rejected(data: object) -> None:
 def test_only_collectable_case_questions_back_facts(snapshot: ExecutionSnapshot) -> None:
     execution = snapshot.execution("disciplinary")
     assert execution is not None
-    # Never the jurisdiction (the gate owns it), a sensitive question or a Blueprint value.
-    assert case_backed(execution) == {POLICY: QUESTION}
+    backed = case_backed(execution)
+    # Knowledge facts: never the jurisdiction (the gate owns it), a sensitive question or a
+    # Blueprint value.
+    assert {key: question for key, question in backed.items() if key != question} == {
+        POLICY: QUESTION
+    }
+    # Chat-first Case: the definition's other intake questions, under their own key. Only a
+    # choice or a date: never sensitive, the jurisdiction or free text (the narrative).
+    own = [key for key, question in backed.items() if key == question]
+    assert own and NARRATIVE_KEY not in own
+    for key in own:
+        question = execution.definition.question(key)
+        assert question is not None and question.kind in ("choice", "date"), key
+        assert not question.sensitive, key
+        assert question.options_from is not OptionsFrom.COMPANY_JURISDICTION, key
 
 
 def test_a_new_conversation_starts_with_nothing(snapshot: ExecutionSnapshot) -> None:

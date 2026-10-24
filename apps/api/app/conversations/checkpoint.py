@@ -17,7 +17,9 @@ It is a projection, never a source of truth:
   ``case_facts``;
 - a Case fact the founder's newest statement contradicted stays out of the
   evaluation (``voided``) until the founder confirms a value or the Case
-  records a newer one, so a conversation is never looser than M2-NEW-06's;
+  records a newer one, so a conversation is never looser than M2-NEW-06's (a
+  validated explicit correction of a fact the conversation wrote supersedes it
+  in the Case itself: ``app.conversations.bridge.correction_changes``);
 - the founder's answer about the employee's jurisdiction is bound to the
   Company jurisdiction it was given under; the Case's own confirmation counts
   when it is stricter or newer;
@@ -35,6 +37,16 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Final
 
+from app.assistant.gateway.memory import (
+    CERTAINTIES,
+    MAX_REMEMBERED,
+    MAX_TURNS,
+    OUTCOMES,
+    UNKNOWN_WORDS,
+    AskRecord,
+    ConversationMemory,
+    Reading,
+)
 from app.assistant.gateway.service import snapshot_versions
 from app.db.models.assistant import MAX_CHECKPOINT_BYTES
 from app.evaluation.continuation import (
@@ -148,6 +160,13 @@ class Checkpoint:
     # The Company Blueprint's confirmed employment jurisdiction it was written under.
     company_jurisdiction: str | None = None
     reviews: Reviews = field(default_factory=Reviews)
+    # Chat-first Case: what the founder said that the Case could hold (Case question key ->
+    # the server's canonical reading), shown for the employer to save to the Case with one
+    # explicit action. A reading, never a trusted fact: nothing is saved until they do.
+    noted: Mapping[str, Value] = field(default_factory=dict)
+    # What the conversation covered (``app.assistant.gateway.memory``): for the next turn's
+    # questions and wording only, never trusted.
+    memory: ConversationMemory = field(default_factory=ConversationMemory)
 
 
 def encode(checkpoint: Checkpoint) -> dict[str, object]:
@@ -177,6 +196,23 @@ def encode(checkpoint: Checkpoint) -> dict[str, object]:
             "matter": checkpoint.reviews.matter,
         },
     }
+    if checkpoint.noted:
+        data["noted"] = dict(sorted(checkpoint.noted.items())[:MAX_FACTS])
+    memory = checkpoint.memory
+    if memory.said or memory.asked or memory.turns or memory.told:
+        data["memory"] = {
+            "said": {
+                # A reading that only covers its question keeps how ("implied", "uncertain" or
+                # "rough").
+                k: [r.value, r.turn, r.words, *([] if r.certainty == "stated" else [r.certainty])]
+                for k, r in list(memory.said.items())[-MAX_REMEMBERED:]
+            },
+            "asked": {
+                k: [r.times, r.last] for k, r in list(memory.asked.items())[-MAX_REMEMBERED:]
+            },
+            "turns": memory.turns,
+            "told": list(memory.told[-MAX_REMEMBERED:]),
+        }
     if len(_json(data)) > MAX_CHECKPOINT_BYTES:  # pragma: no cover - bounded by the limits above
         raise ValueError("checkpoint exceeds its bound")
     return data
@@ -215,6 +251,71 @@ def _reviews(data: object) -> Reviews | None:
     return Reviews(tuple(actions), matter)
 
 
+def _count(value: object, low: int, high: int) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+def _reading(entry: object, *, sourced: bool) -> Reading | None:
+    """One remembered reading: [value, message, words], and how it covers its question when it
+    only covers it ([..., "implied"]); before readings had a source, the value alone (its message
+    and words unknown)."""
+    if not sourced:
+        return Reading(entry, 0) if isinstance(entry, (str, int)) and _value(entry) else None
+    if (
+        not isinstance(entry, list)
+        or len(entry) not in (3, 4)
+        or not _value(entry[0])
+        or not _count(entry[1], 0, MAX_TURNS)
+        or not _count(entry[2], UNKNOWN_WORDS, MAX_FACTS)
+        or (len(entry) == 4 and entry[3] not in CERTAINTIES[1:])
+    ):
+        return None
+    return Reading(entry[0], entry[1], entry[2], *entry[3:])
+
+
+def _memory(data: object) -> ConversationMemory | None:
+    """The stored memory, or None for anything malformed (an absent one is empty)."""
+    if data is None:
+        return ConversationMemory()
+    if not isinstance(data, dict) or set(data) not in (
+        {"said", "asked"},
+        {"said", "asked", "turns"},
+        {"said", "asked", "turns", "told"},
+    ):
+        return None
+    said, asked, turns = data["said"], data["asked"], data.get("turns", 0)
+    told = data.get("told", [])
+    if (
+        not isinstance(said, dict)
+        or len(said) > MAX_REMEMBERED
+        or not isinstance(asked, dict)
+        or len(asked) > MAX_REMEMBERED
+        or not _count(turns, 0, MAX_TURNS)
+        or not isinstance(told, list)
+        or len(told) > MAX_REMEMBERED
+        or not all(_key(t) for t in told)
+    ):
+        return None
+    readings: dict[str, Reading] = {}
+    for key, entry in said.items():
+        reading = _reading(entry, sourced="turns" in data)
+        if not _key(key) or reading is None:
+            return None
+        readings[key] = reading
+    records: dict[str, AskRecord] = {}
+    for key, entry in asked.items():
+        if (
+            not _key(key)
+            or not isinstance(entry, list)
+            or len(entry) != 2
+            or not _count(entry[0], 1, 1000)
+            or entry[1] not in OUTCOMES
+        ):
+            return None
+        records[key] = AskRecord(entry[0], entry[1])
+    return ConversationMemory(said=readings, asked=records, turns=turns, told=tuple(told))
+
+
 def decode(data: object) -> Checkpoint | None:
     """The stored checkpoint, or None for anything it can't vouch for (never raises)."""
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
@@ -225,8 +326,11 @@ def decode(data: object) -> Checkpoint | None:
     asked, engine, two_state = data.get("asked"), data.get("engine"), data.get("two_state")
     actions, voided, revision = data.get("actions"), data.get("voided"), data.get("case_revision")
     company, reviews = data.get("company_jurisdiction"), _reviews(data.get("reviews"))
+    noted = data.get("noted", {})
+    memory = _memory(data.get("memory"))
     if (
-        not isinstance(versions, str)
+        memory is None
+        or not isinstance(versions, str)
         or (workflow is not None and not _key(workflow))
         or (jurisdiction is not None and jurisdiction not in _JURISDICTION_ANSWERS)
         or (company is not None and not _value(company))
@@ -246,6 +350,9 @@ def decode(data: object) -> Checkpoint | None:
         or len(voided) > MAX_VOIDED
         or not all(_key(k) for k in voided)
         or (revision is not None and (not isinstance(revision, int) or isinstance(revision, bool)))
+        or not isinstance(noted, dict)
+        or len(noted) > MAX_FACTS
+        or not all(_key(k) and _value(v) for k, v in noted.items())
     ):
         return None
     questions: list[Asked] = []
@@ -285,6 +392,8 @@ def decode(data: object) -> Checkpoint | None:
         case_revision=revision,
         company_jurisdiction=company,
         reviews=reviews,
+        noted=dict(noted),
+        memory=memory,
     )
 
 

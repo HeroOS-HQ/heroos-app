@@ -56,6 +56,8 @@ const API_STATUS = {
     stage_in_progress: true,
     held_steps: [],
   },
+  // Chat-first Case: what the founder said that the Case could hold, waiting to be saved.
+  noted: [{ label: "Raised with the employee before", answer: "Yes" }],
 };
 const STATUS = {
   lifecycle: "in_progress",
@@ -75,6 +77,7 @@ const STATUS = {
     stageInProgress: true,
     heldSteps: [],
   },
+  noted: [{ label: "Raised with the employee before", answer: "Yes" }],
 };
 const API_CONVERSATION = {
   id: CONVERSATION_ID,

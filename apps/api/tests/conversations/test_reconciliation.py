@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.assistant.gateway.service import FALLBACK_LEADS, AiGateway, _Turn, uncertainty
 from app.auth.models import AuthenticatedCompanyContext
 from app.cases.mutation import FormOrigin, apply_case_fact_changes, evaluate_case
+from app.conversations.bridge import NARRATIVE_KEY
 from app.conversations.checkpoint import decode
 from app.conversations.service import AskConversations, TurnRequest
 from app.db.models import (
@@ -147,8 +148,9 @@ def concurrent_turn(
     message: str,
     proposal: Any,
     action: Callable[[], None],
+    targets: tuple[str, ...] = (),
 ) -> tuple[Any, ScriptedProvider]:
-    chat = ScriptedProvider(proposal, response(SAFE, ["q1"]))
+    chat = ScriptedProvider(proposal, response(SAFE, list(targets)))
     service = AskConversations(
         During(gateway(founder.evaluation, chat), action),  # type: ignore[arg-type]
         policy="disabled",
@@ -209,7 +211,13 @@ def test_a_prerequisite_recorded_meanwhile_turns_a_stale_block_into_guidance(
     other = add_admin(db, alice_context.company_id)
     again = "And now, can I give him a written warning?"
     result, chat = concurrent_turn(
-        db, founder, again, warn(again, 2), lambda: form_save(db, other, case_id, {QUESTION: "yes"})
+        db,
+        founder,
+        again,
+        warn(again, 2),
+        lambda: form_save(db, other, case_id, {QUESTION: "yes"}),
+        # The Case already holds the answer when the turn starts: nothing is asked about it.
+        targets=(),
     )
     assert len(chat.calls) == 2  # no third request to reconcile
     # The current, authoritative result is recorded; the stale Block's words are discarded.
@@ -354,6 +362,8 @@ def test_an_unrelated_change_keeps_the_models_words(
         late(NEXT, 1),
         lambda: form_save(db, alice_context, case_id, {"incident.history": "new"}, "initial_facts"),
     )
+    # The model's words are kept. The question asked last turn (and not answered by this message)
+    # isn't asked again at once.
     assert result.heroos.content == SAFE
     assert result.heroos.outcome is not None and result.heroos.outcome["kind"] == "guidance"
 
@@ -404,7 +414,7 @@ def test_a_historical_value_the_current_runtime_rejects_stays_history(
             text(
                 "INSERT INTO workflow_submissions (id, company_id, instance_id, step_key, "
                 "revision, idempotency_key, submitted_by_user_id, origin) VALUES "
-                "(:id, :company, :instance, 'incident_context', 1, :key, :user, 'structured')"
+                "(:id, :company, :instance, 'incident_context', 2, :key, :user, 'structured')"
             ),
             {
                 "id": submission.hex,
@@ -427,12 +437,13 @@ def test_a_historical_value_the_current_runtime_rejects_stays_history(
                 "key": QUESTION,
             },
         )
-        session.execute(text("UPDATE workflow_instances SET revision = 1"))
+        # After the narrative (chat-first Case), the Case's first submission.
+        session.execute(text("UPDATE workflow_instances SET revision = 2"))
         session.commit()
     founder.say(NEXT, late(NEXT, 1))
     assert POLICY not in last_record(db)["facts"]["engine_trusted"]
     with db() as session:
-        assert [f.value for f in session.scalars(select(CaseFact)).all()] == ["maybe"]
+        assert [f.value for f in session.scalars(select(CaseFact)).all()] == [LATE, "maybe"]
 
 
 # --- separate matters ---------------------------------------------------------------------------
@@ -447,7 +458,9 @@ def test_a_separate_matter_never_writes_into_the_case(
     result = founder.say(said, late(said, 1, uncertainties=["multiple_matters"]))
     assert result.case_id == case_id
     with db() as session:
-        assert session.scalars(select(CaseFact)).all() == []
+        # Only the first message's narrative: nothing of the other matter reaches the Case.
+        facts = session.scalars(select(CaseFact)).all()
+        assert [(f.fact_key, f.value) for f in facts] == [(NARRATIVE_KEY, LATE)]
         (conversation,) = session.scalars(select(AssistantConversation)).all()
         assert session.scalar(select(AssistantTurnEvaluation.multiple_matters).limit(1).offset(1))
         heroos = session.scalars(

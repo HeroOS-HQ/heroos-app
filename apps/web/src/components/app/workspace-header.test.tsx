@@ -1,12 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { Membership, Workspace, WorkspaceDetails } from "@/lib/server/heroos-api";
 import { parseCaseSummary } from "@/lib/workflows/model";
 import { COMPANY_ID } from "@/test/fixtures";
 import { apiCaseSummary, CASE_ID, OTHER_CASE_ID } from "@/test/workflow-fixtures";
 
-import { caseWhen, groupCases } from "./cases-panel";
 import { CompanyShell } from "./company-shell";
 import { AdviserMark } from "./workspace-chrome";
 
@@ -44,6 +43,16 @@ function shell({
 }
 
 const menuButton = () => screen.getByRole("button", { name: "Account menu: Gamma Trading" });
+/** History lists the Company's chats from the BFF: none here, so every case is an earlier record. */
+const noChats = () =>
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(JSON.stringify({ items: [], nextBefore: null }), { status: 200, headers: { "Content-Type": "application/json" } })),
+  );
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("the workspace header", () => {
   it("has three destinations only: Ask HeroOS (the mark), and the Company Blueprint and Company Space in the account menu", () => {
@@ -98,21 +107,24 @@ describe("the workspace header", () => {
     expect(screen.getByRole("link", { name: "Switch workspace" })).toHaveAttribute("href", "/workspaces");
   });
 
-  it("has a Cases control only for those who can see cases", () => {
+  it("has a History control only for those who can see cases", () => {
     const { unmount } = shell();
-    expect(screen.getByRole("button", { name: "Cases" })).toHaveAttribute("aria-haspopup", "dialog");
+    expect(screen.getByRole("button", { name: "History" })).toHaveAttribute("aria-haspopup", "dialog");
     unmount();
     shell({ cases: null, membership: { ...ADMIN, role: "member", canUpdateBlueprint: false } });
-    expect(screen.queryByRole("button", { name: "Cases" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "History" })).toBeNull();
   });
 
-  it("opens the Cases drawer from the old case-list links (?cases=open), and closes it with Escape", async () => {
+  it("opens History from the old case-list links (?cases=open), with earlier case records apart, and closes it with Escape", async () => {
+    noChats();
     shell({ initialCasesOpen: true });
-    const drawer = await screen.findByRole("dialog", { name: "Cases" });
-    expect(within(drawer).getAllByRole("link", { name: /SYNTHETIC/ })).toHaveLength(2);
-    expect(within(drawer).getByRole("link", { name: /Attendance concern/ })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`);
+    const drawer = await screen.findByRole("dialog", { name: "History" });
+    // Chat-first Case: cases with no chat are listed apart and open their case page.
+    const records = within(await within(drawer).findByRole("region", { name: "Earlier case records" }));
+    expect(records.getAllByRole("link", { name: /SYNTHETIC/ })).toHaveLength(2);
+    expect(records.getByRole("link", { name: /Attendance concern/ })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`);
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Cases" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "History" })).toBeNull();
   });
 
   it("shows the same current HeroOS symbol as HeroOS's own mark in the conversation, never the old logo", () => {
@@ -126,14 +138,6 @@ describe("the workspace header", () => {
     expect(headerLogos).not.toContain("/branding/heroos-logo-symbol.png");
   });
 
-  it("shows the search field's focus on its rounded border, never as a rectangle on the input", async () => {
-    shell({ initialCasesOpen: true });
-    const drawer = await screen.findByRole("dialog", { name: "Cases" });
-    const search = within(drawer).getByRole("searchbox", { name: "Search your cases" });
-    expect(search).toHaveClass("focus-visible:outline-hidden!");
-    expect(search.closest("label")).toHaveClass("rounded-xl", "focus-within:border-hero-blue");
-  });
-
   it("starts with the skip link, gives the page one main region and says it's a demonstration environment", () => {
     shell();
     expect(screen.getAllByRole("link")[0]).toHaveTextContent("Skip to content");
@@ -142,21 +146,3 @@ describe("the workspace header", () => {
   });
 });
 
-describe("the Cases drawer's times", () => {
-  const now = new Date(2026, 9, 21, 15, 30);
-  it("groups today's cases first, newest first, then the rest", () => {
-    const today = summary({ id: CASE_ID, title: "A", updated_at: new Date(2026, 9, 21, 9, 12).toISOString() });
-    const later = summary({ id: OTHER_CASE_ID, title: "B", updated_at: new Date(2026, 9, 21, 11, 0).toISOString() });
-    const old = summary({ id: "c4e0a000-0000-4000-8000-0000000000c3", title: "C", updated_at: new Date(2026, 9, 16, 9, 0).toISOString() });
-    expect(groupCases([today, old, later], now).map((group) => [group.label, group.cases.map((item) => item.title)])).toEqual([
-      ["Today", ["B", "A"]],
-      ["Earlier", ["C"]],
-    ]);
-  });
-
-  it("says the time today, the day this year and the year before that", () => {
-    expect(caseWhen(new Date(2026, 9, 21, 9, 12).toISOString(), now)).toBe("09:12");
-    expect(caseWhen(new Date(2026, 9, 16, 9, 0).toISOString(), now)).toBe("16 Oct");
-    expect(caseWhen(new Date(2025, 11, 2, 9, 0).toISOString(), now)).toBe("2 Dec 2025");
-  });
-});

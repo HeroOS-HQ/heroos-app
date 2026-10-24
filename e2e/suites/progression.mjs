@@ -100,7 +100,7 @@ export async function run(ctx) {
   const recordDisabled = await page.eval(`[...document.querySelectorAll("#next-steps button")].find((b) => b.textContent.trim() === "Record my decision").disabled`);
   check("PROG-1", "the recorded intake offers the employer's own pathway choice, announces the synthetic test rules and suggests nothing",
     opened.includes("Synthetic test rules") && opened.includes("Less serious") && opened.includes("Serious misconduct") &&
-      opened.includes("Unable to determine: needs review") && opened.includes("doesn't classify the incident, suggest a pathway") &&
+      opened.includes("Unable to determine: needs review") && opened.includes("doesn't classify the incident, choose a pathway for you") &&
       recordDisabled === true,
     opened.slice(0, 300));
   await ctx.screenshot(page, "progression-pathway-1440");

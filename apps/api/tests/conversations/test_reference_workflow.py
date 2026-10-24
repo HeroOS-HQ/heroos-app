@@ -365,15 +365,19 @@ def test_a_a_greeting_gets_a_greeting_and_a_situation_becomes_a_case(
     journey: Journey, db: sessionmaker[Session]
 ) -> None:
     hello = journey.ask("Hi Hannah", absent("Hi Hannah"))
-    # No model request for a greeting, nothing evaluated, no Case, and "Hi" is no fact.
+    # No model request for a greeting and nothing evaluated. Chat-first Case: the conversation
+    # has its bare Case from the first message, but "Hi" is no fact.
     assert journey.chat is not None and journey.chat.calls == []
     assert last_heroos(hello)["text"] == GREETING
-    assert hello["conversation"]["case"] is None and journey.case is None
-    assert rows(db, CaseFact) == 0
+    assert hello["conversation"]["case"]["title"] == "New case"
+    greeted = journey.case
+    assert greeted is not None and rows(db, CaseFact) == 0
 
     situation = journey.ask(ABSENT, absent(turn=1, topics=("workplace_reminder",)))
-    assert journey.case is not None
+    # The workflow attaches to the same Case; the situation is its narrative.
+    assert journey.case == greeted
     assert situation["conversation"]["status"]["workflow"]["key"] == "disciplinary"
+    assert journey.view()["answers"]["incident.narrative"] == ABSENT
     # One focused question, phrased by HeroOS (never the whole question group).
     targets = journey.sections()["approved_knowledge"]["question_targets"]
     assert 1 <= len(targets) <= 3
@@ -396,7 +400,8 @@ def test_a_a_greeting_gets_a_greeting_and_a_situation_becomes_a_case(
                 WorkflowSubmission.revision
             )
         ).all()
-    assert [tuple(o) for o in origins] == [("ask_heroos", "assistant")]
+    # The narrative, then the answer: both Ask HeroOS submissions.
+    assert [tuple(o) for o in origins] == [("ask_heroos", "assistant")] * 2
 
 
 # --- B, C: pathway ownership and serious misconduct --------------------------------------------
@@ -866,9 +871,58 @@ def test_the_case_view_is_read_only_labels_and_follows_the_turns_snapshot(
         "Serious misconduct",
         "Unable to determine: needs review",
     ]
-    assert "can't be changed from the chat" in progress["who_changes_it"]
+    assert "Nothing said in the chat changes it." in progress["who_changes_it"]
     assert data["conversation"]["status"]["position"]["pathway"] is None
     # Unchanged copy of the view: no ids of any kind.
     flat = repr(deepcopy(progress))
     assert journey.case is not None and journey.case not in flat
     assert "opt-" not in flat and "EX-" not in flat
+
+
+def test_an_optional_case_question_is_offered_once(journey: Journey) -> None:
+    """Found live: HeroOS asked for the incident date again right after the founder talked about
+    something else; in the final run, the same optional question came back a few turns later.
+    An optional Case question is offered once: the next one is offered instead."""
+
+    def offered() -> list[str]:
+        targets = journey.sections()["approved_knowledge"]["question_targets"]
+        return [t["about"] for t in targets]
+
+    journey.ask(ABSENT, absent(topics=("workplace_reminder",)))
+    history = "Raised with the employee before"
+    # HeroOS asks whether it came up before (an optional Case question, one at a time; a date
+    # comes last)...
+    journey.ask(
+        "Yes.",
+        absent("Yes.", turn=1, topics=("workplace_reminder",)),
+        response(f"{SAFE} Has this come up with him before?", ["c1"]),
+    )
+    assert offered() == [history]
+    # ...the founder talks about something else: never offered again, now or later.
+    other = "What should I say to him when he's back?"
+    journey.ask(other, absent(other, turn=2, topics=("workplace_reminder",)), response(SAFE, []))
+    assert history not in offered() and len(offered()) == 1
+    later = "OK, thanks."
+    journey.ask(later, absent(later, turn=3, topics=("workplace_reminder",)), response(SAFE, []))
+    assert history not in offered()
+
+
+def test_when_the_required_question_cant_be_asked_the_case_record_questions_can(
+    journey: Journey,
+) -> None:
+    """Robustness pass, found live: once the founder said they don't know the one thing the checks
+    needed, HeroOS kept to methodology questions and never reached what the Case record needs.
+    The memory persists through the checkpoint: the required question isn't asked again, and the
+    Case's open questions are offered instead."""
+    first = journey.ask(ABSENT, absent(topics=("workplace_reminder",)))
+    required = last_heroos(first)["text"].rsplit(". ", 1)[-1]
+    assert required.endswith("?")
+    unknown = "No idea, I'd have to check."
+    data = absent(unknown, turn=1, topics=("workplace_reminder",))
+    data["previous_question_answer"] = "does_not_know"
+    reply = journey.ask(unknown, data)
+    assert required not in last_heroos(reply)["text"]
+    offered = [t["about"] for t in journey.sections()["approved_knowledge"]["question_targets"]]
+    assert offered == ["Raised with the employee before"]
+    state = journey.sections()["conversation_state"]
+    assert state["founder_does_not_know"]

@@ -13,7 +13,9 @@ import { AdviserTurn, type Outcome as Tone } from "./response-tone";
  * The Case's own formal steps, inside the Ask HeroOS conversation (M2-NEW-08).
  *
  * The Case is one continuous conversation; the workflow engine stays behind
- * it. Ordinary facts come from the conversation itself. What only the
+ * it. Ordinary facts come from the conversation itself (HeroOS asks about
+ * what the case record still needs, in its own words): while any is open,
+ * nothing here asks for it or sends the founder to a form. What only the
  * employer can do (choose the pathway, start or complete a stage, answer a
  * stage's checklist, acknowledge a caution) and the few answers the
  * conversation never collects (whether the company's jurisdiction applies to
@@ -37,7 +39,8 @@ const READ = { headers: { Accept: "application/json" }, cache: "no-store", crede
 export type CaseStep =
   | { kind: "hold"; title: string; body: string }
   | { kind: "question"; stepKey: string; question: Question }
-  | { kind: "details"; open: number }
+  /** A sensitive step's open questions, answered together (never in words). */
+  | { kind: "screening"; stepKey: string; title: string; questions: Question[] }
   | { kind: "gate"; title: string; body: string }
   | { kind: "pathway"; options: PathwayOption[] }
   | { kind: "checklist"; stepKey: string; stage: string; question: ChecklistQuestion }
@@ -56,8 +59,13 @@ export function nextCaseStep(view: WorkflowView): CaseStep | null {
   const structured = open.find(
     ({ step, question }) => question.kind === "choice" && (question.key === JURISDICTION_QUESTION || step.sensitive),
   );
+  if (structured?.step.sensitive) {
+    const questions = open.filter(({ step }) => step.key === structured.step.key).map(({ question }) => question);
+    return { kind: "screening", stepKey: structured.step.key, title: structured.step.title, questions };
+  }
   if (structured) return { kind: "question", stepKey: structured.step.key, question: structured.question };
-  if (open.length > 0) return { kind: "details", open: open.length };
+  // The conversation collects the rest: nothing to press yet.
+  if (open.length > 0) return null;
   const progression = view.progression;
   if (progression === null || progression.status.code === "unavailable") return null;
   if (progression.gate) return { kind: "gate", title: progression.gate.title, body: progression.gate.body };
@@ -110,14 +118,17 @@ export function CaseSteps({
   caseId,
   revision,
   onChanged,
+  onAsk,
   fetcher,
 }: {
   companyId: string;
   caseId: string;
-  /** The conversation's revision: a new turn may have changed the Case. */
+  /** Changes whenever the Case may have changed (a new turn, a saved note): it is read again. */
   revision: number;
   /** The employer changed the Case here (the conversation's status may read differently now). */
   onChanged?: () => void;
+  /** Words to put in the founder's box (never sent by themselves), e.g. "I'm not sure". */
+  onAsk?: (words: string) => void;
   fetcher?: typeof fetch;
 }) {
   const [view, setView] = useState<WorkflowView | null>(null);
@@ -126,6 +137,8 @@ export function CaseSteps({
   // The pathway chosen while its cautions are shown, and the cautions acknowledged.
   const [chosen, setChosen] = useState<string | null>(null);
   const [acknowledged, setAcknowledged] = useState<string | null>(null);
+  // A screening's answers while the employer picks them (saved together).
+  const [picks, setPicks] = useState<Record<string, string>>({});
   const { busy, send } = useCaseRequest({ companyId, caseId, fetcher });
 
   useEffect(() => {
@@ -160,6 +173,7 @@ export function CaseSteps({
     setDone(request.route === "answers" ? null : recorded(result.view));
     setChosen(null);
     setAcknowledged(null);
+    setPicks({});
     onChanged?.();
   }
 
@@ -195,7 +209,7 @@ export function CaseSteps({
       tone: "guidance",
       body: (
         <>
-          <p>For the case record, HeroOS needs your answer:</p>
+          <p>One quick check for your case record:</p>
           <p className="font-bold">{step.question.prompt}</p>
           {optionButtons(
             step.question.options,
@@ -205,17 +219,47 @@ export function CaseSteps({
         </>
       ),
     };
-  } else if (step?.kind === "details") {
+  } else if (step?.kind === "screening") {
+    const complete = step.questions.every((question) => picks[question.key] !== undefined);
     card = {
       tone: "guidance",
+      title: step.title,
       body: (
-        <p>
-          {step.open === 1 ? "One case detail is" : `${step.open} case details are`} still open. Tell me in your own words, or{" "}
-          <a className="font-bold text-hero-blue-ink underline underline-offset-2" href={caseHref}>
-            review the case details
-          </a>
-          .
-        </p>
+        <>
+          <p>
+            A short safety screening for your case record. Answer each one with the buttons: these answers stay in the
+            case and are never asked in the chat.
+          </p>
+          <ul className="space-y-3">
+            {step.questions.map((question) => (
+              <li className="space-y-1.5" key={question.key}>
+                <p className="text-[0.9375rem] font-semibold">{question.prompt}</p>
+                <div aria-label={question.label} className="flex flex-wrap gap-2" role="group">
+                  {question.options.map((option) => (
+                    <button
+                      aria-pressed={picks[question.key] === option.value}
+                      className={`${buttonSecondary} aria-[pressed=true]:border-hero-navy aria-[pressed=true]:bg-hero-blue-tint`}
+                      disabled={busy}
+                      key={option.value}
+                      onClick={() => setPicks((current) => ({ ...current, [question.key]: option.value }))}
+                      type="button"
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <button
+            className={buttonPrimary}
+            disabled={busy || !complete}
+            onClick={() => void act({ route: "answers", stepKey: step.stepKey, answers: picks })}
+            type="button"
+          >
+            Save to case
+          </button>
+        </>
       ),
     };
   } else if (step?.kind === "gate") {
@@ -275,6 +319,17 @@ export function CaseSteps({
                   <span className="text-sm font-normal text-hero-navy/80">{item.description}</span>
                 </button>
               ))}
+              {onAsk ? (
+                <button
+                  className={choiceButton}
+                  disabled={busy}
+                  onClick={() => onAsk("I'm not sure which pathway fits this case. Can you help me think it through?")}
+                  type="button"
+                >
+                  <span>I&apos;m not sure</span>
+                  <span className="text-sm font-normal text-hero-navy/80">Talk it through with HeroOS first. Nothing is recorded.</span>
+                </button>
+              ) : null}
             </div>
           )}
         </>

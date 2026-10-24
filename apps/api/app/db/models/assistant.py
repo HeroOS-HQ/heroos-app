@@ -112,11 +112,7 @@ class AssistantConversation(TimestampMixin, Base):
             f"workflow_key IS NULL OR {_one_of('workflow_key', WORKFLOW_KEYS)}",
             name="ck_assistant_conversations_workflow_key",
         ),
-        # A Case is only ever attached for an established workflow.
-        CheckConstraint(
-            "case_id IS NULL OR workflow_key IS NOT NULL",
-            name="ck_assistant_conversations_case_workflow",
-        ),
+        # The Case may exist before its workflow is known (D7: no case/workflow shape check).
         CheckConstraint(
             f"revision >= 0 AND revision <= {MAX_TURNS}", name="ck_assistant_conversations_revision"
         ),

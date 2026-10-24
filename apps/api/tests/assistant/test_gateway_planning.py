@@ -16,6 +16,7 @@ import pytest
 
 from app.assistant.gateway import planning
 from app.assistant.gateway.planning import (
+    QuestionTarget,
     jurisdiction_input,
     plan_turn,
     question_targets,
@@ -317,3 +318,19 @@ def test_a_conflict_on_one_topic_leaves_the_others(
     assert any("in conflict" in limitation for limitation in view["limitations"])  # type: ignore[union-attr]
     alone = plan_turn(bundle, proposal(topics=("delay_increase_or_promotion",)), company(FED))
     assert alone.context.status is KnowledgeStatus.SOURCE_CONFLICT
+
+
+def test_a_question_target_carries_what_its_fact_means_exactly(bundle: KnowledgeBundle) -> None:
+    """Final semantics pass: the reply words its question from the same definition the
+    understanding reads (the history question asks whether it was raised, never whether it
+    happened before)."""
+    plan = plan_turn(bundle, proposal(topics=("formal_warning",)), company(FED))
+    target = QuestionTarget("c1", "incident.history", "Raised with the employee before", "ask")
+    plan = replace(plan, targets=(target,))
+    means = "Earlier occasions: raised with the employee before."
+    view = knowledge_view(bundle, plan, {"incident.history": means})
+    assert view.data["question_targets"] == [
+        {"id": "c1", "about": "Raised with the employee before", "mode": "ask", "means": means}
+    ]
+    assert means in view.texts
+    assert "means" not in json.dumps(knowledge_view(bundle, plan).data["question_targets"])

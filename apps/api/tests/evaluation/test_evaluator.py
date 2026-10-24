@@ -517,3 +517,50 @@ def test_a_structurally_different_workflow_uses_the_same_core(artifacts: Artifac
         "heroos.conversation-evaluation/1"
     )
     assert clear.provenance is not None and clear.provenance.workflow == PROBATION
+
+
+def test_what_the_founder_said_they_dont_know_is_never_asked_again(
+    snapshot: ExecutionSnapshot,
+) -> None:
+    """Found live: 'no idea, I'd have to check' (not a bare answer) was asked again turn after
+    turn. Said or answered, "not sure" means the founder must find out, not be asked again."""
+    policy = "employee_aware_of_relevant_policy"
+    asked = run(snapshot, topics=("workplace_reminder",))
+    assert [m.key for m in asked.missing] == [policy]
+    said = evaluate_conversation(
+        snapshot,
+        EvaluationRequest(
+            matter="supported",
+            workflow="disciplinary",
+            company_jurisdiction=FED,
+            facts=TrustedFactState(conversational={policy: "not_sure"}),
+            topics=("workplace_reminder",),
+        ),
+    )
+    assert said.missing == ()
+    assert condition(said, "EX-FED-POLICY").status == "unknown"
+
+
+# --- the definition's AskWhen premises ------------------------------------------------------
+
+
+def test_a_question_is_asked_only_once_the_definitions_premise_holds() -> None:
+    """The connection to work is asked only for conduct outside work (found live: it was asked
+    about lateness and rudeness at work, because the off-duty rule reads both inputs)."""
+    from types import SimpleNamespace
+
+    from app.evaluation.evaluator import _premise_holds
+    from app.workflows.definition import DISCIPLINARY_V2
+
+    execution: Any = SimpleNamespace(definition=DISCIPLINARY_V2)
+
+    def asks(trusted: dict[str, object]) -> bool:
+        return _premise_holds(execution, "context.work_connection", trusted)
+
+    assert not asks({})
+    assert not asks({"context.location": "at_work"})
+    assert not asks({"context.location": "not_sure"})
+    assert asks({"context.location": "outside_work"})
+    # A question with no premise, or no Case question at all, is always askable.
+    assert _premise_holds(execution, "context.location", {})
+    assert _premise_holds(execution, None, {})

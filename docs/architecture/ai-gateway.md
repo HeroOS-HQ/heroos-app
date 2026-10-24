@@ -17,7 +17,8 @@ activation prerequisite below holds. While it is unavailable, Ask HeroOS
 works exactly as before (M2-NEW-02): Send opens a guided Disciplinary case.
 
 - Code: `apps/api/app/assistant/gateway/` (orchestration), `apps/api/app/api/gateway.py`
-  (routes), `apps/api/app/assistant/groq.py` (provider adapter),
+  (routes), `apps/api/app/assistant/anthropic.py` and `apps/api/app/assistant/groq.py`
+  (provider adapters, through `apps/api/app/assistant/transport.py`),
   `apps/api/app/assistant/response_safety.py` (reply checks).
 - Web: `components/ask/ask-conversation.tsx`, `lib/ask/conversation.ts`,
   `POST /bff/companies/{id}/assistant/messages`.
@@ -283,13 +284,31 @@ plain question. No model text survives.
 The existing `ChatProvider` abstraction is extended, not replaced:
 `StructuredChatProvider.complete_json(system, turns, *, temperature,
 max_completion_tokens, timeout) -> Completion` (text plus reported token
-usage). The GroqCloud adapter implements it on its fixed HTTPS endpoint with
-`response_format: json_object`, a server-side key, no tools, no browsing, no
-retrieval, refused redirects, and clamped temperature (≤ 0.3), completion
-budget (≤ 2,048 tokens) and timeout (≤ 30 s). The gateway asks for
-temperature 0.0 (understanding) and 0.2 (response), 1,200 tokens each.
-Provider and model are server configuration only. There is no automatic
-fallback to another provider. Changing either (or the model's version) is a
+usage). Two adapters implement it, each on its own fixed HTTPS endpoint with
+its own server-side key, no tools, no browsing, no retrieval, refused
+redirects, no retries, a response read up to 256 KiB, and a completion
+budget (≤ 2,048 tokens) and timeout (≤ 30 s) clamped whatever the gateway
+asks:
+
+- **Anthropic** (`anthropic`, `ANTHROPIC_API_KEY`): the native Messages API
+  (`POST https://api.anthropic.com/v1/messages`), the instruction as
+  `system`, `effort: low`. No temperature is sent (current Claude models
+  refuse one) and no thinking setting (the model's adaptive default, within
+  `max_tokens`). Only text blocks are read; a declined (`refusal`) or
+  otherwise incomplete reply, or any tool block, fails as `unavailable`. The
+  JSON comes from the gateway's instructions (the request carries no
+  schema); a Markdown code fence around the object is removed and nothing
+  else is changed.
+- **GroqCloud** (`groq`, `GROQ_API_KEY`): OpenAI-compatible chat completions
+  with `response_format: json_object` and a temperature clamped to ≤ 0.3.
+
+The gateway asks for temperature 0.0 (understanding) and 0.2 (response),
+1,200 tokens each, and validates every object itself, whichever adapter
+answered. Provider and model are server configuration only: the configured
+provider uses only its own key, and a missing key leaves the gateway
+unavailable (logged as `AI gateway provider key missing (provider=…, key=…)`).
+There is no automatic fallback to another provider, and the provider is
+never inferred from which keys exist. Changing either (or the model's version) is a
 controlled change, evaluated before it serves founders (§13). CI uses a
 scripted fake (`tests/fixtures/gateway.py`).
 
@@ -318,9 +337,13 @@ any other way inside a test run can't call out either
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `HEROOS_AI_GATEWAY_ENABLED` | `false` | The switch |
-| `HEROOS_AI_GATEWAY_PROVIDER` | unset | `groq` (the only adapter) |
-| `HEROOS_AI_GATEWAY_MODEL` | unset | A model identifier, never a URL |
-| `GROQ_API_KEY` | unset | Server-side secret (shared with the Hannah demo) |
+| `HEROOS_AI_GATEWAY_PROVIDER` | unset | `anthropic` or `groq` |
+| `HEROOS_AI_GATEWAY_MODEL` | unset | A model identifier of that provider, never a URL |
+| `HEROOS_AI_GATEWAY_UNDERSTANDING_MODEL` | `HEROOS_AI_GATEWAY_MODEL` | The understanding phase's model (reading the founder's message), of the same provider |
+| `HEROOS_AI_GATEWAY_RESPONSE_MODEL` | `HEROOS_AI_GATEWAY_MODEL` | The model of every other request: the reply, its rewrite, light replies |
+| `HEROOS_AI_GATEWAY_PROMPT_CACHE` | `true` | Anthropic prompt caching of each request's stable part (the instruction and the stable data). A cached request the provider refuses is sent once without caching, and caching then stays off for that model until restart. No effect with `groq`; the Hannah demo is never cached |
+| `ANTHROPIC_API_KEY` | unset | Server-side secret, used only when a provider setting says `anthropic` |
+| `GROQ_API_KEY` | unset | Server-side secret, used only when a provider setting says `groq` |
 | `HEROOS_AI_GATEWAY_APPROVAL` | unset | Reference of HeroOS's approval of this deployment's AI configuration (provider, data protection terms, environment), e.g. a privacy decision id |
 | `HEROOS_AI_GATEWAY_ALLOW_DEVELOPMENT_KNOWLEDGE` | `false` | Allows a bundle that is development or synthetic content; production refuses it |
 | `HEROOS_AI_GATEWAY_ACCOUNT_LIMIT` | 10 | Founder turns per account per 5 minutes |
@@ -496,5 +519,7 @@ the gateway is activated (§13).
 - Without `HEROOS_EVALUATION_CONTINUATION_KEY`, the continuation key lives in
   one process and carries only what HeroOS asked: after a restart HeroOS may
   ask a question again (M2-NEW-06 adds the shared key for trusted state).
-- One provider adapter (GroqCloud); another provider is another class with
-  the same shape.
+- Two provider adapters (Anthropic, GroqCloud); another provider is another
+  class with the same shape. The Anthropic adapter sends no JSON schema:
+  schema-constrained output would need each phase's schema passed through
+  `complete_json`.

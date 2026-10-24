@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { parseCaseSummary } from "@/lib/workflows/model";
 import { COMPANY_ID } from "@/test/fixtures";
@@ -17,6 +17,10 @@ import {
 } from "@/test/workflow-fixtures";
 
 import { CaseWorkspace } from "./case-workspace";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const reply = (status: number, body: unknown) =>
@@ -112,7 +116,12 @@ describe("CaseWorkspace", () => {
     expect(screen.getByRole("heading", { name: "Initial facts", level: 2 })).toBeInTheDocument();
   });
 
-  it("names the case in the header, with a new question and the Cases drawer (search, the current case marked)", () => {
+  it("names the case in the header, with a new question and History (earlier case records apart, the open one left out)", async () => {
+    // History lists the Company's chats from the BFF: none here, so the cases are earlier records.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ items: [], nextBefore: null }), { status: 200, headers: { "Content-Type": "application/json" } })),
+    );
     const fetcher = renderWorkspace();
     const header = within(screen.getByRole("banner"));
     // The thread's turns are articles labelled by their headings, not page landmarks.
@@ -121,21 +130,19 @@ describe("CaseWorkspace", () => {
     expect(header.getByRole("link", { name: "New question" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}`);
     expect(header.queryByRole("link", { name: /Dashboard|HR Services|All cases/ })).toBeNull();
 
-    fireEvent.click(header.getByRole("button", { name: "Cases" }));
-    const drawer = within(screen.getByRole("dialog", { name: "Cases" }));
-    const list = drawer.getByRole("navigation", { name: "Your cases" });
-    expect(within(list).getAllByRole("link")).toHaveLength(2);
-    expect(within(list).getByRole("link", { current: "page" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}/cases/${CASE_ID}`);
-    fireEvent.change(drawer.getByRole("searchbox", { name: "Search your cases" }), { target: { value: "other" } });
-    expect(within(list).getAllByRole("link").map((a) => a.textContent)).toEqual([expect.stringContaining("[SYNTHETIC] Other case")]);
-    fireEvent.change(drawer.getByRole("searchbox", { name: "Search your cases" }), { target: { value: "no such case" } });
-    expect(within(list).queryAllByRole("link")).toHaveLength(0);
-    expect(drawer.getByText(/No cases match/)).toBeInTheDocument();
-    expect(drawer.getByRole("link", { name: "New question" })).toHaveAttribute("href", `/workspaces/${COMPANY_ID}`);
-    // Searching is local: nothing is requested.
+    fireEvent.click(header.getByRole("button", { name: "History" }));
+    const drawer = within(await screen.findByRole("dialog", { name: "History" }));
+    expect(drawer.getByRole("button", { name: "New chat" })).toBeInTheDocument();
+    // Chat-first Case: the cases with no chat are earlier records; the open case isn't repeated.
+    const records = within(await drawer.findByRole("region", { name: "Earlier case records" }));
+    expect(records.getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      [expect.stringContaining("[SYNTHETIC] Other case"), `/workspaces/${COMPANY_ID}/cases/${OTHER_CASE_ID}`],
+    ]);
+    expect(drawer.queryByRole("link", { name: /Attendance concern/ })).toBeNull();
+    // The case page's own reads are untouched by History.
     expect(fetcher).not.toHaveBeenCalled();
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(screen.queryByRole("dialog", { name: "Cases" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "History" })).toBeNull();
   });
 
   it("opens the case status from the header: the hold (never folded), the next step, facts and history, the rest folded away", async () => {
