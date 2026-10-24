@@ -29,3 +29,10 @@ coverage
 **/coverage
 
 *.log
+
+# Private artifacts installed as Render Secret Files: Render also places those in
+# the build context's root, and they must never reach an image.
+disciplinary-knowledge.private-knowledge.json
+**/disciplinary-knowledge.private-knowledge.json
+disciplinary.dev-1.private-execution-profile.json
+**/disciplinary.dev-1.private-execution-profile.json

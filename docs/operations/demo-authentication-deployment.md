@@ -131,8 +131,10 @@ at startup.
 No Secret File. The public Supabase Root 2021 CA is committed at
 `apps/api/certs/supabase-root-2021-ca.crt` and built into the image at
 `/app/certs/supabase-root-2021-ca.crt` (root-owned, mode 0444). The API runs as
-uid 1001, and Render Secret Files under `/etc/secrets` are reported to be
-readable by root only; an unreadable CA fails every connection closed.
+uid 1001; Render Secret Files under `/etc/secrets` are readable by group 1000,
+which that user joins only to read private bundles installed there (the
+Dockerfile). The CA stays in the image: it's public, and an unreadable CA would
+fail every connection closed.
 
 | CA | Value |
 | --- | --- |
