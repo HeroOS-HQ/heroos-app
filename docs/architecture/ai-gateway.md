@@ -339,6 +339,9 @@ any other way inside a test run can't call out either
 | `HEROOS_AI_GATEWAY_ENABLED` | `false` | The switch |
 | `HEROOS_AI_GATEWAY_PROVIDER` | unset | `anthropic` or `groq` |
 | `HEROOS_AI_GATEWAY_MODEL` | unset | A model identifier of that provider, never a URL |
+| `HEROOS_AI_GATEWAY_UNDERSTANDING_MODEL` | `HEROOS_AI_GATEWAY_MODEL` | The understanding phase's model (reading the founder's message), of the same provider |
+| `HEROOS_AI_GATEWAY_RESPONSE_MODEL` | `HEROOS_AI_GATEWAY_MODEL` | The model of every other request: the reply, its rewrite, light replies |
+| `HEROOS_AI_GATEWAY_PROMPT_CACHE` | `true` | Anthropic prompt caching of each request's stable part (the instruction and the stable data). A cached request the provider refuses is sent once without caching, and caching then stays off for that model until restart. No effect with `groq`; the Hannah demo is never cached |
 | `ANTHROPIC_API_KEY` | unset | Server-side secret, used only when a provider setting says `anthropic` |
 | `GROQ_API_KEY` | unset | Server-side secret, used only when a provider setting says `groq` |
 | `HEROOS_AI_GATEWAY_APPROVAL` | unset | Reference of HeroOS's approval of this deployment's AI configuration (provider, data protection terms, environment), e.g. a privacy decision id |
